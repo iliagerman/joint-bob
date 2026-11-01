@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { createPiProfileProviderEditor } from "./pi-profile-providers.js";
 import { createSearchableSelect } from "./searchable-select.js";
 import { brandIcon, menuIcon } from "./icons.js";
 import { confirmAction, toast } from "./shell.js";
@@ -6,6 +7,7 @@ import { confirmAction, toast } from "./shell.js";
 const PROVIDERS = [
   { id: "claude", name: "Claude", via: "Claude subscription", brand: "claude" },
   { id: "openai-codex", name: "ChatGPT", via: "ChatGPT subscription via Pi", brand: "openai" },
+  { id: "pi", name: "Pi", via: "Multiple providers · API keys and OAuth", brand: "pi" },
 ];
 const PAGE_SIZE = { profiles: 4, pools: 4, workspaces: 6, overrides: 5 };
 const HISTORY_WARNING = "The next turn may send conversation history under a different provider account. Running turns keep their current account.";
@@ -198,7 +200,7 @@ function poolForm() {
   members.append(...poolEditor.profileIds.map((_, index) => poolMemberRow(index)));
   const addMember = actionButton("Add profile", "subscription-pool-member-add", () => { poolEditor.profileIds.push(""); rerender("pools"); }, { icon: "plus" });
   const fallback = el("div", { className: "pool-fallback-grid" });
-  fallback.append(...PROVIDERS.map((provider) => fallbackModelControl(provider.id)));
+  fallback.append(...PROVIDERS.filter((provider) => provider.id !== "pi").map((provider) => fallbackModelControl(provider.id)));
   if (modelCatalogError) fallback.append(el("p", { className: "settings-hint", text: `Model suggestions unavailable: ${modelCatalogError}. You can enter a model ID.` }));
   const save = actionButton(poolEditor.id ? "Save pool" : "Create pool", "subscription-pool-save", savePool, { icon: poolEditor.id ? "check" : "plus", className: "primary profile-action" });
   const actions = el("div", { className: "profile-actions" }); actions.append(save);
@@ -214,10 +216,10 @@ async function savePool() {
   if (new Set(profileIds).size !== profileIds.length) throw new Error("Choose each profile only once");
   const members = profileIds.map((id) => profileNamed(id));
   if (members.some((profile) => !profile || profile.shared)) throw new Error("Pools can contain only your private profiles");
-  if (new Set(members.map((profile) => profile.provider)).size > 1 && members.some((profile) => !poolEditor.fallbackModels[profile.provider]?.trim())) {
+  if (new Set(members.map((profile) => profile.provider)).size > 1 && members.some((profile) => profile.provider !== "pi" && !poolEditor.fallbackModels[profile.provider]?.trim())) {
     throw new Error("Choose a fallback model for each provider in a mixed pool");
   }
-  const fallbackModels = Object.fromEntries(PROVIDERS.map(({ id }) => [id, poolEditor.fallbackModels[id]?.trim()]).filter(([, value]) => value));
+  const fallbackModels = Object.fromEntries(PROVIDERS.filter(({ id }) => id !== "pi").map(({ id }) => [id, poolEditor.fallbackModels[id]?.trim()]).filter(([, value]) => value));
   const payload = { name: poolEditor.name.trim(), profileIds, fallbackModels };
   if (poolEditor.id) await api(`/api/provider-profiles/pools/${poolEditor.id}`, { method: "PUT", body: JSON.stringify(payload) });
   else await api("/api/provider-profiles/pools", { method: "POST", body: JSON.stringify(payload) });
@@ -236,7 +238,7 @@ function poolCard(pool) {
     if (profile) row.lastChild.dataset.poolStatusId = profile.id;
     members.append(row);
   }
-  const fallback = el("p", { className: "settings-hint", text: `Fallback models: ${PROVIDERS.map(({ id, name }) => `${name}: ${pool.fallbackModels[id] || "not configured"}`).join(" · ")}` });
+  const fallback = el("p", { className: "settings-hint", text: `Fallback models: ${PROVIDERS.filter(({ id }) => id !== "pi").map(({ id, name }) => `${name}: ${pool.fallbackModels[id] || "not configured"}`).join(" · ")}` });
   const actions = el("div", { className: "profile-actions" });
   actions.append(actionButton("Edit", "subscription-pool-edit", () => {
     poolEditor = { id: pool.id, name: pool.name, profileIds: [...pool.members].sort((a, b) => a.position - b.position).map(({ profileId }) => profileId), fallbackModels: { ...pool.fallbackModels }, customModels: new Set() };
@@ -343,6 +345,7 @@ function simulationSection() {
 /** The pill names the state; the line beside it says only what the pill does not. */
 function statusOf(body) {
   if (body.login?.state === "waiting") return { kind: "pending", label: "Sign-in in progress", detail: body.login.message };
+  if (body.provider === "pi") return { kind: body.signedIn ? "ok" : "warn", label: body.signedIn ? "Providers configured" : "No providers configured", detail: body.message };
   if (body.signedIn) return { kind: "ok", label: "Signed in on this node", detail: "Tokens refresh automatically here." };
   if (body.twin) return { kind: "twin", label: `Using the sign-in on ${body.twin}`, detail: "Turns here borrow short-lived tokens from it." };
   if (body.message.startsWith("Sign in on this node")) return { kind: "warn", label: "Not signed in", detail: `Sign in on this node or on a twin.${body.message.slice("Sign in on this node".length)}` };
@@ -365,7 +368,7 @@ function profileCard(profile) {
     showStatus(status, { kind: "checking", label: "Checking…" });
     const body = await api(`/api/provider-profiles/${profile.id}/status`);
     profileStatuses.set(profile.id, body);
-    showStatus(status, statusOf(body));
+    showStatus(status, profile.provider === "pi" && body.signedIn ? { kind: "ok", label: "Providers configured", detail: body.message } : statusOf(body));
     for (const item of root.querySelectorAll(`[data-pool-status-id="${CSS.escape(profile.id)}"]`)) item.textContent = statusOf(body).label;
     signIn.hidden = body.signedIn; signOut.hidden = !body.signedIn;
     if (body.login?.state === "waiting") showLogin(profile, login, body.login, checkStatus);
@@ -389,8 +392,12 @@ function profileCard(profile) {
     await api(`/api/provider-profiles/${profile.id}`, { method: "DELETE" }); await loadProviderProfiles({ keepPending: true });
   }, { icon: "trash", className: "ghost danger profile-action" });
   const actions = el("div", { className: "profile-actions" });
-  actions.append(actionButton("Check status", "provider-profile-check", checkStatus, { icon: "refresh" }), signIn, signOut, share, remove);
+  actions.append(actionButton("Check status", "provider-profile-check", checkStatus, { icon: "refresh" }), ...(profile.provider === "pi" ? [] : [signIn, signOut]), share, remove);
   card.append(head, status, actions, login);
+  if (profile.provider === "pi") {
+    const editor = createPiProfileProviderEditor(profile, (state, settled) => showLogin(profile, login, state, settled), checkStatus);
+    card.append(editor.root);
+  }
   void checkStatus().catch((error) => showStatus(status, { kind: "error", label: "Status unavailable", detail: error.message }));
   return card;
 }

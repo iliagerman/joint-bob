@@ -20,6 +20,7 @@ export class ProfileLogins {
   private readonly logins = new Map<string, Login>();
 
   start(owner: string, id: string, provider: string, driver: LoginDriver, persist: (credential: Credential) => Promise<void>): ProfileLoginStatus {
+    if (this.logins.get(id)?.status.state === "waiting") throw new Error("A login for this profile is already in progress on this node");
     if ([...this.logins.values()].some((login) => login.provider === provider && login.status.state === "waiting")) throw new Error("A login for this provider is already in progress on this node");
     const controller = new AbortController();
     const login: Login = { owner, provider, controller, status: { state: "waiting", message: "Starting sign-in on this node" }, timeout: setTimeout(() => this.cancel(owner, id), 15 * 60_000) };

@@ -15,6 +15,14 @@ test("node-local profile API validates scopes, protects secrets, and refuses sel
     const created = await api<{ profile: { id: string; label: string } }>(node, session, "POST", "/provider-profiles", { provider: "openai-codex", label: "Personal" });
     assert.equal(created.status, 201);
     const id = created.body.profile.id;
+    const piCreated = await api<{ profile: { id: string } }>(node, session, "POST", "/provider-profiles", { provider: "pi", label: "Pi providers" });
+    assert.equal(piCreated.status, 201);
+    const piId = piCreated.body.profile.id;
+    const piProviders = await api<{ providers: Array<{ id: string; configured: boolean; methods: Array<{ id: string }> }> }>(node, session, "GET", `/provider-profiles/${piId}/providers`);
+    assert.equal(piProviders.status, 200);
+    assert.ok(piProviders.body.providers.some((item) => item.id === "zai" && item.methods.some((method) => method.id === "api_key")));
+    assert.equal((await api(node, session, "POST", `/provider-profiles/${piId}/providers/zai/login`, { methodId: "oauth" })).status, 400);
+    assert.equal((await api(node, session, "DELETE", `/provider-profiles/${piId}`)).status, 200);
     const listed = await api<{ profiles: Array<{ id: string }> }>(node, session, "GET", "/provider-profiles");
     assert.deepEqual(listed.body.profiles.map((item) => item.id), [id]);
     assert.doesNotMatch(JSON.stringify(listed.body), /refreshToken|accessToken|auth\.json/);
@@ -29,6 +37,9 @@ test("node-local profile API validates scopes, protects secrets, and refuses sel
     assert.deepEqual(memberList.body.profiles, []);
     for (const [method, endpoint, body] of [
       ["GET", `/provider-profiles/${id}/status`, undefined],
+      ["GET", `/provider-profiles/${id}/providers`, undefined],
+      ["POST", `/provider-profiles/${id}/providers/zai/login`, { methodId: "api_key" }],
+      ["DELETE", `/provider-profiles/${id}/providers/zai`, undefined],
       ["POST", `/provider-profiles/${id}/login`, {}],
       ["POST", `/provider-profiles/${id}/logout`, {}],
       ["PUT", `/provider-profiles/${id}/sharing`, { shared: true }],

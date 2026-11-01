@@ -297,6 +297,14 @@ async function availableModelsWithProfiles() {
       available.push(...modelRuntime.getModels(piProvider));
     }
   }
+  const { profileModelRuntime } = await import("./provider-profiles/service.js");
+  const seen = new Set(available.map((model) => `${model.provider}/${model.id}`));
+  for (const profile of profiles.filter((item) => item.provider === "pi")) {
+    for (const model of await (await profileModelRuntime(profile)).getAvailable()) {
+      const key = `${model.provider}/${model.id}`;
+      if (!seen.has(key)) { seen.add(key); available.push(model); }
+    }
+  }
   return available;
 }
 
@@ -705,28 +713,37 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   let selected: import("./provider-profiles/store.js").ProviderProfile | undefined;
   hooks.modelCredential = async (provider) => {
     if (!selected) return nodePiCredential(provider);
+    if (selected.provider === "pi") return (await import("./provider-profiles/pi-credentials.js")).piProfileCredential(selected, provider);
     const providerId = selected.provider === "claude" ? "anthropic" : "openai-codex";
     if (provider !== providerId) throw new Error("Selected pool profile does not match the Pi model provider");
     return profiles.profileAccessCredential(selected);
   };
+  hooks.modelProfileIsolated = async () => selected?.provider === "pi";
   hooks.modelCredentialList = async () => {
+    if (selected?.provider === "pi") return (await (await profiles.profileModelRuntime(selected)).listCredentials()).map(({ providerId, type }) => ({ providerId, type }));
     const entries = await nodePiCredentialList() as Array<{ providerId: string; type: "oauth" | "api_key" }>;
     if (!selected) return entries;
     const providerId = selected.provider === "claude" ? "anthropic" : "openai-codex";
     return [...entries.filter((entry) => entry.providerId !== providerId), { providerId, type: "oauth" }];
   };
+  selected = await profiles.bootstrapPiProfile(options.projectId, conversationId);
   const runtime = currentRuntime();
   const handle = runtime.name
     ? await (await import("./harnesses/pi/remote.js")).createRemotePiSession(options, runtime, hooks, piSessionDefaults())
-    : await createCoreSession(await createSessionModelRuntime(hooks.modelCredential, hooks.modelCredentialList), {
+    : await createCoreSession(await createSessionModelRuntime(hooks.modelCredential, hooks.modelCredentialList, hooks.modelProfileIsolated), {
       cwd: options.cwd, agentDir: getAgentDir(), sessionRoot: piSessionPath(), sessionPath: options.sessionPath,
       sessionId: options.sessionId, safeguardsEnabled: options.safeguardsEnabled, defaults: piSessionDefaults(),
     }, hooks);
+  selected = undefined;
   handle.withModelProfile = async (provider, work) => {
     const previous = selected;
-    selected = await profiles.projectProviderProfile(options.projectId, conversationId, provider);
+    selected = await profiles.projectProviderProfile(options.projectId, conversationId, provider, "pi");
     try {
-      if (selected) await profiles.profileAccessCredential(selected);
+      if (selected?.provider === "pi") {
+        if (!await (await import("./provider-profiles/pi-credentials.js")).piProfileCredential(selected, provider)) {
+          throw new (await import("./provider-profiles/pool-execution.js")).PoolAttemptFailure("unavailable", false, `Configure ${provider} in Pi profile ${selected.label} on this node. No other account was used.`);
+        }
+      } else if (selected) await profiles.profileAccessCredential(selected);
       return await useProviderProfile(selected, work);
     } finally { selected = previous; }
   };

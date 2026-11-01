@@ -102,6 +102,7 @@ async function open(key: string, inputs: PiCoreInputs) {
   const models = await createSessionModelRuntime(
     async (provider) => await hook(key, "modelCredential", [provider]) as Credential | undefined,
     async () => await hook(key, "modelCredentialList", []) as Array<{ providerId: string; type: Credential["type"] }>,
+    async () => await hook(key, "modelProfileIsolated", []) as boolean,
   );
   const handle = await createCoreSession(models, inputs, hooks);
   sessions.set(key, handle);

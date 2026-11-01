@@ -62,6 +62,7 @@ export interface PiCoreHooks {
   credentialsNow?(sessionId: string, conversationId: string): PiCredentials;
   resources(conversationId: string): Promise<PiResources>;
   modelCredential?(provider: string): Promise<NonNullable<ReturnType<typeof import("@earendil-works/pi-coding-agent").readStoredCredential>> | undefined>;
+  modelProfileIsolated?(): Promise<boolean>;
   modelCredentialList?(): Promise<Array<{ providerId: string; type: "oauth" | "api_key" }>>;
   /** Guardian's decision on a tool call, a tool's output or a person's message, made by the server. */
   guardian?(conversationId: string, request: GuardianRequest): Promise<GuardianVerdict>;

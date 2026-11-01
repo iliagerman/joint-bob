@@ -11,7 +11,7 @@ const fallbackModelsSchema = z.object({
 }).strict();
 const manifestMemberSchema = z.object({
   profileId: uuid,
-  provider: z.enum(["claude", "openai-codex"]),
+  provider: z.enum(["claude", "openai-codex", "pi"]),
   label: z.string().trim().min(1).max(80),
   position: z.number().int().nonnegative(),
 }).strict();

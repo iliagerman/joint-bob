@@ -161,7 +161,9 @@ export class PiSession implements HarnessSession {
     if (service.sessionIsBusy(this.handle)) throw new Error("Pi session is busy");
     const currentModel = this.handle.session.model;
     if (!currentModel || currentModel.provider !== settings.provider || currentModel.id !== settings.modelId) {
-      await service.setSessionModel(this.handle.session, settings.provider, settings.modelId);
+      const changeModel = () => service.setSessionModel(this.handle.session, settings.provider, settings.modelId);
+      if (this.handle.withModelProfile) await this.handle.withModelProfile(settings.provider, changeModel);
+      else await changeModel();
     }
     const levels = this.handle.session.getAvailableThinkingLevels();
     if (!levels.includes(settings.reasoning as Parameters<typeof this.handle.session.setThinkingLevel>[0])) {

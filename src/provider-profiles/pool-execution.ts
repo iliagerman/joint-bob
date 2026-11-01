@@ -33,6 +33,7 @@ function profileProviderForModel(provider: string): ProfileProvider | undefined 
 
 export function resolvePoolModelSettings(engine: HarnessId, candidateProvider: ProfileProvider, initial: HarnessModelSettings,
   mapping?: PoolClassifierModelMapping, fallbackModel?: string): HarnessModelSettings {
+  if (candidateProvider === "pi" && engine === "pi") return initial;
   if (profileProviderForModel(initial.provider) === candidateProvider) return initial;
   if (engine !== "pi") throw new Error("This harness cannot switch providers while using a subscription pool");
   if (mapping && profileProviderForModel(mapping.provider) === candidateProvider) {

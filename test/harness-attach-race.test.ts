@@ -51,7 +51,7 @@ function fixture(overrides: Record<string, any> = {}) {
   const mocks: Record<string, any> = {
     resourceOwner: () => undefined, flags: {}, getProjectLock: async () => null,
     withoutAutomationProfile: (action: () => any) => action(),
-    runAsAccount: (_account: unknown, action: () => any) => action(),
+    runAsAccount: (_account: unknown, action: () => any) => action(), actingAccount: () => undefined,
     runWithAutomationProfile: (_assignment: unknown, action: () => any) => action(),
     queuedSettingsSchema: { parse: (value: any) => value }, socketMessageSchema: { parse: (value: any) => value },
     getConversationRecord: async () => ({ conversationId: "conversation", ...(scheduled ? { cronTaskId: "schedule" } : {}) }),

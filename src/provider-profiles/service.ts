@@ -1,6 +1,6 @@
 import { chmod, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { ModelRuntime, readStoredCredential } from "../pi-sdk.js";
+import { ModelRuntime, readStoredCredential, getAgentDir } from "../pi-sdk.js";
 import { actingAccount, asNode } from "../account-context.js";
 import { automationProfileContext, poolProfileContext } from "./context.js";
 import { resolveDataDirectory } from "../data-directory.js";
@@ -17,6 +17,7 @@ export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, li
 
 export type ProfileCredential = NonNullable<ReturnType<typeof readStoredCredential>>;
 const runtimes = new Map<string, Promise<ModelRuntime>>();
+const catalogs = new Map<string, import("../harnesses/pi/provider-catalog.js").PiProviderCatalog>();
 export function openAIAuthPath(profile: ProviderProfile): string {
   return path.join(resolveDataDirectory(), "provider-profile-auth", profile.id, "auth.json");
 }
@@ -26,32 +27,73 @@ export async function profileModelRuntime(profile: ProviderProfile): Promise<Mod
     runtime = (async () => {
       await mkdir(path.dirname(openAIAuthPath(profile)), { recursive: true, mode: 0o700 });
       await chmod(path.dirname(openAIAuthPath(profile)), 0o700);
-      return ModelRuntime.create({ authPath: openAIAuthPath(profile), modelsPath: null, refreshOnCreate: false });
+      const modelRuntime = await ModelRuntime.create({ authPath: openAIAuthPath(profile), modelsPath: null, refreshOnCreate: false });
+      if (profile.provider === "pi") {
+        const { createPiProviderCatalog } = await import("../harnesses/pi/provider-catalog.js");
+        const { agentResourcePaths, piAgentResourcePaths } = await import("../agent-resources.js");
+        const { getSettings } = await import("../settings.js");
+        const { protectPiProfileRuntime } = await import("./pi-auth.js");
+        const catalog = await createPiProviderCatalog(modelRuntime, { agentDir: getAgentDir(), strictResourceIsolation: getSettings().strictResourceIsolation,
+          packagesFile: agentResourcePaths().piPackages, extensionPaths: piAgentResourcePaths().extensions });
+        catalogs.set(profile.id, catalog);
+        await protectPiProfileRuntime(modelRuntime, () => true, { authPath: openAIAuthPath(profile) });
+      }
+      return modelRuntime;
     })();
     runtimes.set(profile.id, runtime);
     runtime.catch(() => runtimes.delete(profile.id));
   }
-  return runtime;
+  const models = await runtime;
+  if (profile.provider === "pi") await catalogs.get(profile.id)!.refreshIfChanged();
+  return models;
 }
 
-export async function projectProviderProfile(projectId: string, conversationId: string | undefined, provider: string): Promise<ProviderProfile | undefined> {
+export async function bootstrapPiProfile(projectId: string, conversationId: string | undefined): Promise<ProviderProfile | undefined> {
+  const pool = poolProfileContext();
+  if (pool) return pool.provider === "pi" ? projectProviderProfile(projectId, conversationId, "", "pi") : undefined;
+  const automation = automationProfileContext();
+  if (automation?.profileId) {
+    const profile = accessibleProviderProfile(automation.accountId, automation.profileId, "automation");
+    return profile.provider === "pi" ? profile : undefined;
+  }
+  const accountId = automation?.accountId ?? actingAccount()?.accountId;
+  if (!accountId) return undefined;
+  const project = await asNode(() => getProject(projectId));
+  if (!project) throw new Error("Project not found");
+  const { resolveSubscriptionChoice } = await import("./pools.js");
+  const choice = resolveSubscriptionChoice(accountId, "pi", { projectId, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive");
+  return choice?.kind === "profile" ? choice.profile : undefined;
+}
+
+export async function projectProviderProfile(projectId: string, conversationId: string | undefined, provider: string, engine: "claude" | "pi" = "claude"): Promise<ProviderProfile | undefined> {
   const targetProvider = provider === "anthropic" ? "claude" : provider;
   const poolProfile = poolProfileContext();
   if (poolProfile) {
-    if (poolProfile.provider !== targetProvider) throw new Error("Selected pool profile does not match the turn's provider");
+    if (poolProfile.provider === "pi" && poolProfile.clusterId) {
+      const { getClusterNode } = await import("../cluster.js");
+      if (poolProfile.poolOwnerNodeId !== (await getClusterNode()).id) {
+        const { PoolAttemptFailure } = await import("./pool-execution.js");
+        throw new PoolAttemptFailure("unavailable", false, "Pi profile credentials stay on their configured node; this pool member is unavailable here");
+      }
+    }
+    if (poolProfile.provider !== targetProvider && !(engine === "pi" && poolProfile.provider === "pi")) throw new Error("Selected pool profile does not match the turn's provider");
     return poolProfile.profile ?? { id: poolProfile.profileId, owner: "", label: poolProfile.label, provider: poolProfile.provider, createdAt: "", shared: false };
   }
   const automation = automationProfileContext();
   const accountId = automation?.accountId ?? actingAccount()?.accountId;
   if (automation?.profileId) {
     const profile = accessibleProviderProfile(automation.accountId, automation.profileId, "automation");
-    if (profile.provider !== targetProvider) throw new Error("Selected automation profile does not match the turn's provider");
+    if (profile.provider !== targetProvider && !(engine === "pi" && profile.provider === "pi")) throw new Error("Selected automation profile does not match the turn's provider");
     return profile;
   }
-  if (targetProvider !== "claude" && targetProvider !== "openai-codex") return undefined;
   if (!accountId) return undefined;
   const project = await asNode(() => getProject(projectId));
   if (!project) throw new Error("Project not found");
+  if (engine === "pi") {
+    const selected = resolveProviderProfile(accountId, "pi", { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive");
+    if (selected) return selected.profile;
+  }
+  if (targetProvider !== "claude" && targetProvider !== "openai-codex") return undefined;
   const profile = resolveProviderProfile(accountId, targetProvider, { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive")?.profile;
   if (!profile && accountId !== adminAccountId()) throw new Error("Select your own subscription profile on this node. No other user's account was used.");
   return profile;
@@ -104,6 +146,7 @@ export async function claudeProfileAccessToken(profile: ProviderProfile): Promis
  * undefined when the user never signed in here (or signed out). Twins borrow from this.
  */
 export async function localProfileCredential(profile: ProviderProfile): Promise<ProfileOAuthCredential | undefined> {
+  if (profile.provider === "pi") throw new Error("Pi profile credentials stay on this node; OAuth token borrowing is unavailable");
   const message = `Sign in to ${profile.label} again on this node. No other account was used.`;
   const providerId = profile.provider === "claude" ? "anthropic" : "openai-codex";
   const refresh = async () => {
@@ -125,6 +168,7 @@ type ProfileOAuthCredential = Extract<ProfileCredential, { type: "oauth" }>;
 
 export async function startProfileLogin(owner: string, id: string) {
   const profile = providerProfile(owner, id);
+  if (profile.provider === "pi") throw new Error("Choose a provider and login method for this Pi profile");
   if (profile.provider === "claude") {
     const current = await profileLoginState(profile);
     if (current.signedIn) throw new Error("Sign out before replacing this Claude profile login");
@@ -167,6 +211,7 @@ export async function refreshedProfileCredential(profile: ProviderProfile): Prom
 /** Where a turn on this node would get the profile's token: here, from a twin, or nowhere. */
 export async function profileAvailability(profile: ProviderProfile): Promise<{ signedIn: boolean; twin: string | null; message: string }> {
   const local = await profileLoginState(profile);
+  if (profile.provider === "pi") return { ...local, twin: null };
   if (local.signedIn || local.message !== "Sign in on this node") return { ...local, twin: null };
   const { holder, unchecked } = await twinLoginHolder(profile);
   if (holder) return { signedIn: false, twin: holder, message: `Uses the sign-in on ${holder}. Turns here borrow short-lived tokens from it.` };
@@ -175,6 +220,11 @@ export async function profileAvailability(profile: ProviderProfile): Promise<{ s
 }
 
 export async function profileLoginState(profile: ProviderProfile): Promise<{ signedIn: boolean; message: string }> {
+  if (profile.provider === "pi") {
+    const runtime = await profileModelRuntime(profile);
+    const entries = await runtime.listCredentials();
+    return { signedIn: entries.length > 0, message: entries.length ? `Configured on this node: ${entries.map((entry) => runtime.getProvider(entry.providerId)?.name ?? entry.providerId).join(", ")}` : "Sign in on this node" };
+  }
   if (profile.provider === "openai-codex") {
     const credential = readStoredCredential("openai-codex", openAIAuthPath(profile));
     return { signedIn: credential?.type === "oauth", message: credential?.type === "oauth" ? "Signed in. Tokens refresh automatically on this node." : "Sign in on this node" };
@@ -198,8 +248,12 @@ export async function logoutProfile(profile: ProviderProfile): Promise<void> {
       runtimes.delete(profile.id);
     });
   } else {
-    await (await profileModelRuntime(profile)).logout("openai-codex");
+    const runtime = await profileModelRuntime(profile);
+    const providers = profile.provider === "pi" ? (await runtime.listCredentials()).map((entry) => entry.providerId) : ["openai-codex"];
+    for (const provider of providers) await runtime.logout(provider);
     await rm(path.dirname(openAIAuthPath(profile)), { recursive: true, force: true });
+    catalogs.get(profile.id)?.dispose();
+    catalogs.delete(profile.id);
     runtimes.delete(profile.id);
   }
 }

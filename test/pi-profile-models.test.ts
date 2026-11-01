@@ -33,4 +33,13 @@ test("signed-in Claude and ChatGPT profiles both offer their Pi models when the 
   const anthropic = await offered("anthropic");
   assert.ok(anthropic.some((model) => model.id.startsWith("claude-")), "a signed-in Claude profile offers Pi's Claude models");
   assert.ok((await offered("openai-codex")).length > 0, "Codex models stay offered alongside Claude models");
+  const pi = createProviderProfile(account.accountId, { label: "Pi API keys", provider: "pi" });
+  await mkdir(path.dirname(openAIAuthPath(pi)), { recursive: true, mode: 0o700 });
+  await writeFile(openAIAuthPath(pi), JSON.stringify({ zai: { type: "api_key", key: "fixture-zai" }, openai: { type: "api_key", key: "fixture-openai" } }), { mode: 0o600 });
+  const { profileModelRuntime } = await import("../src/provider-profiles/service.js");
+  const catalog = await profileModelRuntime(pi);
+  assert.ok((await offered("zai")).length > 0, `a Pi profile offers z.ai models with its API key; known=${catalog.getModels("zai").map((model) => model.id)}, available=${(await catalog.getAvailable("zai")).map((model) => model.id)}`);
+  assert.ok((await offered("openai")).length > 0, "the same Pi profile also offers OpenAI API-key models");
+  const all = await runAsAccount(account, listAvailableModels);
+  assert.equal(new Set(all.map((model) => `${model.provider}/${model.id}`)).size, all.length, "model catalog has no duplicates");
 });

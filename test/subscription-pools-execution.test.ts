@@ -73,6 +73,23 @@ test("cross-provider Pi attempts use the classifier mapping or pool fallback, ne
   assert.throws(() => resolvePoolModelSettings("claude", "openai-codex", { provider: "claude", modelId: "claude-sonnet", reasoning: "default" }, undefined, "gpt-fallback"), /cannot switch providers/);
 });
 
+test("Pi pool members keep the requested model and remain excluded from Claude-only attempts", async () => {
+  const piCandidates = [{ id: "missing", provider: "pi" as const }, { id: "configured", provider: "pi" as const }, ...candidates];
+  const initial = { provider: "zai", modelId: "glm-5.2", reasoning: "high" };
+  assert.deepEqual(resolvePoolModelSettings("pi", "pi", initial), initial);
+  assert.deepEqual(resolvePoolModelSettings("pi", "pi", { ...initial, provider: "openai" }), { ...initial, provider: "openai" });
+  assert.throws(() => resolvePoolModelSettings("claude", "pi", initial), /cannot switch providers/);
+  assert.deepEqual(orderPoolCandidates(piCandidates, "claude", true).map(({ id }) => id), ["a", "c"]);
+  const tried: string[] = [];
+  const result = await runPoolAttempts(piCandidates, "pi", async (candidate) => {
+    tried.push(candidate.id);
+    if (candidate.id === "missing") throw new PoolAttemptFailure("unavailable", false, "Requested provider not configured");
+    return candidate.id;
+  }, async () => {});
+  assert.equal(result, "configured");
+  assert.deepEqual(tried, ["missing", "configured"]);
+});
+
 test("provider error classification recognizes quota and auth responses only before output", async () => {
   const { classifyPoolAttemptFailure } = await import("../src/provider-profiles/pool-execution.js");
   assert.equal(classifyPoolAttemptFailure(Object.assign(new Error("429 rate limit exceeded"), { status: 429 }), false)?.reason, "quota");

@@ -8,7 +8,7 @@ import { adminAccountId } from "../ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, type ReplicationEvent } from "../replication.js";
 import { settingsDatabase } from "../settings-store.js";
 
-export const profileProviderSchema = z.enum(["claude", "openai-codex"]);
+export const profileProviderSchema = z.enum(["claude", "openai-codex", "pi"]);
 export type ProfileProvider = z.infer<typeof profileProviderSchema>;
 export const profileInputSchema = z.object({ label: z.string().trim().min(1).max(80), provider: profileProviderSchema }).strict();
 const scopeSchema = z.enum(["default", "workspace", "project", "conversation"]);

@@ -14,6 +14,7 @@ test("login sends only interaction metadata to its owner and persists tokens aft
   assert.equal(logins.status("bob", "p"), undefined);
   assert.equal(logins.status("alice", "p")?.prompt?.type, "manual_code");
   assert.throws(() => logins.answer("bob", "p", "wrong"), /no pending/);
+  assert.throws(() => logins.start("alice", "p", "zai", async () => { throw new Error(); }, async () => {}), /already in progress/);
   assert.throws(() => logins.start("bob", "q", "claude", async () => { throw new Error(); }, async () => {}), /already in progress/);
   logins.answer("alice", "p", "private-code");
   await tick();

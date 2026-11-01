@@ -182,7 +182,7 @@ function selectedHarness(settings: QueuedSettings): HarnessId { return settings.
 interface TurnSubscriptionPool { id: string; fallbackModels: Partial<Record<ProfileProvider, string>>; candidates: PoolProfileContext[]; sameProviderOnly: boolean }
 function profileProviderForRuntime(provider: string): ProfileProvider | undefined {
   if (provider === "anthropic" || provider === "claude") return "claude";
-  return provider === "openai-codex" ? provider : undefined;
+  return provider === "openai-codex" ? provider : "pi";
 }
 async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<TurnSubscriptionPool | undefined> {
   const engine = queued.settings?.harnessId ?? connection.engine;
@@ -202,9 +202,10 @@ async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, qu
   if (queued.automationProfile?.profileId || !preferred) return undefined;
   const accountId = queued.automationProfile?.accountId ?? actingAccount()?.accountId ?? queued.author?.accountId ?? connection.author?.accountId;
   if (!accountId) return undefined;
-  const choice = resolveSubscriptionChoice(accountId, preferred, {
-    projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId,
-  }, queued.automationProfile ? "automation" : "interactive");
+  const scope = { projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId };
+  const usage = queued.automationProfile ? "automation" : "interactive";
+  const choice = (engine === "pi" ? resolveSubscriptionChoice(accountId, "pi", scope, usage) : undefined)
+    ?? resolveSubscriptionChoice(accountId, preferred, scope, usage);
   if (choice?.kind !== "pool") return undefined;
   const profiles = poolCandidates(choice.pool, preferred);
   return { id: choice.pool.id, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",

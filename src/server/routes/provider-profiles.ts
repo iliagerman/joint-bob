@@ -17,6 +17,7 @@ import { applyClusterSubscriptionPoolEvent, assignedClusterPoolsForOwner, cluste
 import { localProfileCredential, logoutProfile, profileAvailability, profileLoginState, startProfileLogin } from "../../provider-profiles/service.js";
 import { borrowTwinCredential, TWIN_PROFILE_TOKEN_PATH } from "../../provider-profiles/twin-login.js";
 import { profileLogins } from "../../provider-profiles/login.js";
+import { piProfileProviders, startPiProfileLogin, removePiProfileProvider } from "../../provider-profiles/pi-credentials.js";
 import { profileBusy } from "../../provider-profiles/execution.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
@@ -35,6 +36,7 @@ function route(work: (request: Request, response: Response) => unknown) {
     try { await work(request, response); }
     catch (error) {
       if (error instanceof z.ZodError) { sendError(response, 400, "Invalid provider profile request"); return; }
+      if (error instanceof Error && /login method unavailable|Expected Pi profile|Choose a provider/.test(error.message)) { sendError(response, 400, error.message); return; }
       if (error instanceof ClusterV2HttpError) { sendError(response, error.statusCode, error.message); return; }
       if (error instanceof Error && /not found/i.test(error.message)) { sendError(response, 404, error.message); return; }
       if (error instanceof Error && /selection|assignment|assigned|in progress|busy|pending sign-in|already signed in|finishing|automation only/i.test(error.message)) { sendError(response, 409, error.message); return; }
@@ -124,9 +126,25 @@ app.delete("/api/provider-profiles/pools/:id", route(async (request, response) =
   deleteSubscriptionPool(accountId, poolId);
   response.json({ ok: true });
 }));
+app.get("/api/provider-profiles/:id/providers", route(async (request, response) => {
+  response.json({ providers: await piProfileProviders(profile(request, response)) });
+}));
+app.post("/api/provider-profiles/:id/providers/:providerId/login", route(async (request, response) => {
+  const selected = profile(request, response); editable(selected.id);
+  if (profileLogins.status(owner(response), selected.id)?.state === "waiting") throw new Error("A login is in progress");
+  const { methodId } = z.object({ methodId: z.enum(["api_key", "oauth"]) }).strict().parse(request.body);
+  const providerId = z.string().min(1).max(200).parse(request.params.providerId);
+  response.json({ login: await startPiProfileLogin(owner(response), selected.id, providerId, methodId) });
+}));
+app.delete("/api/provider-profiles/:id/providers/:providerId", route(async (request, response) => {
+  const selected = profile(request, response); editable(selected.id);
+  if (profileLogins.status(owner(response), selected.id)?.state === "waiting") throw new Error("A login is in progress");
+  await removePiProfileProvider(selected, z.string().min(1).max(200).parse(request.params.providerId));
+  response.json({ ok: true });
+}));
 app.get("/api/provider-profiles/:id/status", route(async (request, response) => {
   const selected = profile(request, response);
-  response.json({ ...await profileAvailability(selected), login: profileLogins.status(owner(response), selected.id) ?? null });
+  response.json({ ...await profileAvailability(selected), provider: selected.provider, login: profileLogins.status(owner(response), selected.id) ?? null });
 }));
 app.get("/api/provider-profiles/:id/login", route((request, response) => {
   const selected = profile(request, response);

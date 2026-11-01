@@ -50,6 +50,7 @@ export async function createPiProviderCatalog(modelRuntime: ModelRuntime, option
     refreshIfChanged: async () => {
       const current = configurationSnapshot(options);
       if (current === snapshot) return;
+      for (const providerId of modelRuntime.getRegisteredProviderIds()) modelRuntime.unregisterProvider(providerId);
       await session.reload();
       await modelRuntime.getAvailable();
       snapshot = current;
