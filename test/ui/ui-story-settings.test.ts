@@ -69,7 +69,7 @@ test("Settings → Story mode saves instructions, places, code and voices on thi
   await page.getByTestId("story-save-status").getByText("Saved on this node").waitFor();
   assert.deepEqual(puts, [{
     instructions: "Explain it like a lecture.", backdrops: true, locations: LOCATIONS.filter((id) => id !== "rooftop"), moods: false, codeSlides: true, codeWriteup: false,
-    maxCodeLines: 8, ask: true, narrate: true, voiceProvider: "auto", hostVoice: "af_heart", cohostVoice: "bf_emma", elevenHostVoice: "EXAVITQu4vr4xnSDxMaL", elevenCohostVoice: "CwhRBWXzGAHq8TQ4Fs17", speed: 1.1,
+    maxCodeLines: 8, ask: true, narrate: true, voiceProvider: "auto", hostVoice: "af_heart", cohostVoice: "bf_emma", elevenHostVoice: "EXAVITQu4vr4xnSDxMaL", elevenCohostVoice: "CwhRBWXzGAHq8TQ4Fs17", speed: 1.1, voiceChosen: true,
   }]);
 
   // Switching the places off hides the list, and the choice survives a reload of the tab.

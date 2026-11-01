@@ -79,6 +79,8 @@ const collect = () => ({
   elevenHostVoice: inputs.elevenHost.value.trim(),
   elevenCohostVoice: inputs.elevenCohost.value.trim(),
   speed: Number(inputs.speed.value),
+  // Saving this tab is a choice of voice, so the first-use question is not asked afterwards.
+  voiceChosen: true,
 });
 
 export async function loadStorySettings() {

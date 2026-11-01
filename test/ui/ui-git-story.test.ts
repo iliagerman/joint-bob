@@ -357,6 +357,8 @@ test("the activity panel Story button writes a conversation's first story once, 
       latest = { thread, saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } };
       return route.fulfill({ json: latest });
     }
+    // The narrator check runs on this test's node, which has no local voice and no ElevenLabs account.
+    if (url.pathname.endsWith("/story-voice")) return route.continue();
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
@@ -364,9 +366,19 @@ test("the activity panel Story button writes a conversation's first story once, 
   await page.getByTestId("git-review-close-button").click();
   if (await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded") !== "true") await page.getByTestId("chat-activity-toggle").click();
 
-  // No story yet: one click writes it from the files the conversation claimed and its commits.
+  // The first story on this node asks which voice narrates, and keeps the answer.
   await page.getByTestId("activity-story-button").click();
+  const voiceQuestion = page.getByTestId("choice-dialog");
+  await voiceQuestion.waitFor();
+  assert.equal(await page.locator("#choiceTitle").innerText(), "Which voice should narrate?");
+  const options = page.getByTestId("choice-option");
+  assert.deepEqual((await options.allInnerTexts()).map((text) => text.split("\n")[0]), ["Open-source voice (Kokoro)", "ElevenLabs", "No voice"]);
+  assert.match(await options.nth(1).innerText(), /ElevenLabs secret/, "an option that cannot work yet says what it needs");
+  await options.nth(2).click();
+  await page.getByTestId("choice-accept-button").click();
   await page.getByTestId("git-story-title").waitFor();
+  const stored = await page.evaluate(async () => (await (await fetch("/api/story-settings")).json()).settings);
+  assert.deepEqual({ narrate: stored.narrate, voiceChosen: stored.voiceChosen }, { narrate: false, voiceChosen: true });
   assert.equal(await page.getByTestId("git-story-podcast").count(), 0, "Story opens the written story, not the Activity overview movie");
   const { conversationId, ...request } = posts[0] as { conversationId: string };
   assert.ok(conversationId);
@@ -396,6 +408,7 @@ test("the activity panel Story button writes a conversation's first story once, 
   await page.getByTestId("git-review-close-button").click();
   await page.getByTestId("activity-story-button").click();
   await page.getByTestId("git-story-title").waitFor();
+  assert.equal(await voiceQuestion.isVisible(), false, "the voice is asked only once on this node");
   await page.getByTestId("git-story-phase").nth(1).waitFor();
   assert.match(await page.getByTestId("git-story-panel").innerText(), /Errors show inline instead of in a dialog/);
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Regenerate story");
@@ -523,7 +536,7 @@ window.SpeechSynthesisUtterance = function (text) { this.text = text; };
 Object.defineProperty(window, "speechSynthesis", { value: { speak(utterance) { window.__spoken.push(utterance.text); setTimeout(() => { utterance.onstart?.(); setTimeout(() => utterance.onend?.(), 300); }, 10); }, cancel() {}, pause() {}, resume() {} } });`;
 
 const LOCATIONS = ["podcast", "classroom", "lecture", "coffeehouse", "street", "train", "server", "matrix", "rooftop"];
-const storySettings = { instructions: "", backdrops: true, locations: LOCATIONS, moods: true, codeSlides: true, codeWriteup: true, maxCodeLines: 12, ask: true, narrate: true, hostVoice: "af_heart", cohostVoice: "am_michael", speed: 1 };
+const storySettings = { instructions: "", backdrops: true, locations: LOCATIONS, moods: true, codeSlides: true, codeWriteup: true, maxCodeLines: 12, ask: true, narrate: true, hostVoice: "af_heart", cohostVoice: "am_michael", speed: 1, voiceChosen: true };
 const recapItems = [["What changed", "Empty names are rejected."], ["Why", "Users saw a blank greeting."], ["What we give up", "Nothing."], ["How you notice", "An error shows."]].map(([label, text]) => ({ label, text }));
 const script = {
   title: "Greeting with an empty-name error",
@@ -548,16 +561,19 @@ const answered = {
 // A stand-in for audio playback: this Chrome cannot decode a clip, so each one "plays" briefly and then ends.
 const FAKE_AUDIO = `window.Audio = class { constructor(src = "") { this.src = src; } pause() {} play() { setTimeout(() => this.onended?.(), 60); return Promise.resolve(); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`;
 
-interface StoryFixture { via?: "story" | "overview"; overviewPosts?: Array<Record<string, unknown>>; storyCalls?: string[]; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
+interface StoryFixture { via?: "story" | "overview"; answerVoice?: string; settingsPuts?: Array<Record<string, unknown>>; installs?: number[]; overviewPosts?: Array<Record<string, unknown>>; storyCalls?: string[]; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
 
 async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, fixture: StoryFixture) {
   await page.addInitScript(FAKE_SPEECH);
   await page.addInitScript(FAKE_AUDIO);
   const settings = { ...storySettings, ...fixture.settings };
-  await page.route("**/api/story-settings", (route) => route.fulfill({ json: { settings, defaultInstructions: "default", locations: LOCATIONS.map((id) => ({ id, label: id })), voices: [{ id: "af_heart", label: "Heart" }], voice: { allowed: true, installed: fixture.kokoro, installing: false, installError: null, reason: null } } }));
+  await page.route("**/api/story-settings", (route) => {
+    if (route.request().method() === "PUT") { fixture.settingsPuts?.push(route.request().postDataJSON()); Object.assign(settings, route.request().postDataJSON()); }
+    return route.fulfill({ json: { settings, defaultInstructions: "default", locations: LOCATIONS.map((id) => ({ id, label: id })), voices: [{ id: "af_heart", label: "Heart" }], voice: { allowed: true, installed: fixture.kokoro, installing: false, installError: null, reason: null } } });
+  });
   // The narrator belongs to the project, so the project's narration route answers it.
   const narration = async (route: Route) => {
-    if (route.request().method() === "GET") return route.fulfill({ json: { provider: fixture.kokoro ? "kokoro" : null, available: fixture.kokoro, reason: fixture.kokoro ? null : "This project has no ElevenLabs key." } });
+    if (route.request().method() === "GET") return route.fulfill({ json: { provider: fixture.kokoro ? "kokoro" : null, available: fixture.kokoro, reason: fixture.kokoro ? null : "This project has no ElevenLabs key.", local: { allowed: true, installed: fixture.kokoro, installing: false, installError: null, reason: null } } });
     fixture.spoken?.push(route.request().postDataJSON());
     if (fixture.narration) return route.fulfill({ status: fixture.narration, json: { error: "The narrator could not speak the line." } });
     return route.fulfill({ contentType: "audio/wav", body: "RIFF" });
@@ -575,6 +591,7 @@ async function openSavedStory(page: Page, environment: { username: string; passw
       return route.fulfill({ contentType: "application/x-ndjson", body: lines.map((line) => JSON.stringify(line)).join("\n") });
     }
     if (path.endsWith("/story-podcast") && route.request().method() === "GET") return route.fulfill({ json: { script: fixture.script ?? null } });
+    if (path.endsWith("/story-voice/install")) { fixture.installs?.push(Date.now()); return route.fulfill({ json: { local: { allowed: true, installed: false, installing: true, installError: null, reason: null } } }); }
     if (path.endsWith("/story-voice")) return narration(route);
     if (path.endsWith("/story-podcast")) {
       const body = route.request().postDataJSON() as { question?: string };
@@ -597,6 +614,12 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   const opened = () => fixture.via === "overview" ? (fixture.overviewPosts?.length ?? 0) > 0 : page.locator("#gitReviewDialog[open]").count();
   for (let attempt = 0; attempt < 40 && !(await opened()); attempt += 1) {
     await page.getByTestId(fixture.via === "overview" ? "activity-overview-button" : "activity-story-button").click();
+    if (fixture.answerVoice) {
+      // Until the conversation is active the click only says so; once it is, the first-use voice question opens.
+      try { await page.getByTestId("choice-dialog").waitFor({ timeout: 2_000 }); } catch { continue; }
+      await page.getByTestId("choice-option").filter({ hasText: fixture.answerVoice }).click();
+      await page.getByTestId("choice-accept-button").click();
+    }
     await page.waitForTimeout(250);
   }
 }
@@ -776,4 +799,21 @@ test("the activity panel header keeps its tabs, Story and Overview on one row, e
   for (const id of ["activity-activity-tab", "activity-chat-tab", "activity-story-button", "activity-overview-button"]) {
     assert.equal(await page.getByTestId(id).locator("svg").isVisible(), true, `${id} has an icon`);
   }
+});
+
+test("Activity overview asks once which voice narrates, saves it, and installs the open-source voice where the project is narrated", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const settingsPuts: Array<Record<string, unknown>> = [];
+  const installs: number[] = [];
+  const overviewPosts: Array<Record<string, unknown>> = [];
+  await openSavedStory(page, environment, node.url, { kokoro: false, script, settings: { voiceChosen: false }, settingsPuts, installs, overviewPosts, answerVoice: "Open-source voice (Kokoro)", via: "overview" });
+  await page.getByTestId("git-story-podcast").waitFor();
+  assert.equal(settingsPuts.length, 1);
+  assert.deepEqual({ voiceProvider: settingsPuts[0].voiceProvider, narrate: settingsPuts[0].narrate, voiceChosen: settingsPuts[0].voiceChosen }, { voiceProvider: "kokoro", narrate: true, voiceChosen: true });
+  assert.equal(installs.length, 1, "the voice installs through the project's route, on the computer that narrates");
+  assert.equal((overviewPosts[0].settings as { voiceProvider: string }).voiceProvider, "kokoro", "the movie uses the voice just chosen");
+  await page.getByRole("button", { name: "Close Activity overview" }).click();
+  await page.getByTestId("activity-overview-button").click();
+  await page.locator(".toast-message", { hasText: "Preparing the Activity overview" }).last().waitFor();
+  assert.equal(await page.getByTestId("choice-dialog").isVisible(), false, "the voice is asked once");
 });

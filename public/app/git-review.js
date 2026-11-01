@@ -10,6 +10,7 @@ import { fillModelOptions, fillThinkingOptions, selectedModel, selectModel } fro
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
+import { voiceForThisNode } from "./voice-choice.js";
 
 // Conversation file lists are agent claims checked against pending Git paths, not proof
 // of ownership. Another conversation can edit the same file.
@@ -843,7 +844,9 @@ for (const button of [elements.activityStoryButton, elements.navStoryButton]) {
   button.addEventListener("click", () => {
     const session = activeChatSession();
     if (!session) { toast("Open a conversation first"); return; }
-    openConversationStory(session.conversationId ?? session.id).catch((error) => toast(error.message));
+    voiceForThisNode()
+      .then((settings) => settings && openConversationStory(session.conversationId ?? session.id))
+      .catch((error) => toast(error.message));
   });
 }
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());

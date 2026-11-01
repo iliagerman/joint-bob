@@ -5,6 +5,7 @@ import { elements } from "./elements.js";
 import { playStoryPodcast } from "./git-story-podcast.js";
 import { projectGitUrl } from "./project-git-url.js";
 import { toast } from "./shell.js";
+import { voiceForThisNode } from "./voice-choice.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
 
@@ -33,13 +34,13 @@ async function openActivityOverview(conversationId) {
   const target = { projectId: state.activeProjectId, nodeId: state.activeNodeId, taskId: state.activeTaskId };
   if (!target.projectId) { toast("Select a project first"); return; }
   const url = (route, params) => projectGitUrl(target, route, params);
+  const settings = await voiceForThisNode();
+  if (!settings) return;
   setWriting(true);
   let thread;
   let script;
-  let settings;
   let voice;
   try {
-    ({ settings } = await api("/api/story-settings"));
     toast("Preparing the Activity overview. A new one takes a minute or two.", 6000);
     ({ thread, script } = await requestMovie(url("overview"), { conversationId, settings }, () => {}));
     voice = await api(url("story-voice", { voiceProvider: settings.voiceProvider }));

@@ -66,6 +66,8 @@ export const storySettingsSchema = z.object({
   elevenHostVoice: z.string().regex(ELEVEN_VOICE_ID, "Use an ElevenLabs voice ID"),
   elevenCohostVoice: z.string().regex(ELEVEN_VOICE_ID, "Use an ElevenLabs voice ID"),
   speed: z.number().min(0.7).max(1.3),
+  /** False until the viewer picks a voice on this node, the first time they make a story or an Activity overview. */
+  voiceChosen: z.boolean().default(false),
 }).strict().refine((settings) => !settings.backdrops || settings.locations.length > 0, { message: "Choose at least one location, or turn locations off", path: ["locations"] });
 export type StorySettings = z.infer<typeof storySettingsSchema>;
 
@@ -85,6 +87,7 @@ export const DEFAULT_STORY_SETTINGS: StorySettings = {
   elevenHostVoice: "EXAVITQu4vr4xnSDxMaL",
   elevenCohostVoice: "CwhRBWXzGAHq8TQ4Fs17",
   speed: 1,
+  voiceChosen: false,
 };
 
 export function getStorySettings(): StorySettings {
