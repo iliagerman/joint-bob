@@ -3,10 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.184.1 — 2026-11-01
 
-- Changed installing the local story voice to be available only to admins.
-- Changed the appearance settings' saved browser data to be recognized as a display preference, with no change to how themes or text sizes look.
+- Changed installing the local story voice to be limited to the node admin, and the Install button in Settings is now hidden from members.
 
 ## 2.184.0 — 2026-11-01
 
