@@ -94,6 +94,8 @@ function fixture(overrides: Record<string, any> = {}) {
     claimQueuedPrompt: () => { claims++; queue = []; return true; },
     saveDifficulty: () => {}, authoredPromptText: (_p: any, _c: any, text: string) => text,
     sendHarnessStatus: () => {},
+    // No Guardian review is open on the conversation.
+    onGuardianEvent: () => () => {}, pendingGuardianReviews: () => [], decideGuardianReview: () => false, cancelGuardianReviews: () => {},
     DEFAULT_AUTO_RESPOND_INSTRUCTIONS: "", DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS: "",
     ...overrides,
   };
