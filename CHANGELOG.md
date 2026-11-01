@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.184.0 — 2026-11-01
 
-- Changed the focus mode chat menu into tiles: Activity now has its own button, Tools opens a tile grid with every other chat tool, and the run settings, navigation and action buttons are regrouped with shorter labels.
+- Added an Activity tile to the phone's chat menu that opens the activity panel.
+- Changed the phone's chat menu into a compact grid of tiles, where Tools opens a submenu listing only the conversation tools instead of the whole chat toolbar.
+- Changed Mark done and Auto respond to share the bottom dock of the phone's chat menu, with shorter labels for the chat menu's other actions.
 
 ## 2.183.0 — 2026-11-01
 
