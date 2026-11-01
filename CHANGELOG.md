@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.183.0 — 2026-11-01
+
+- Added a feather to the Snufkin hat in the app icon, tab icon and splash.
+
 ## 2.182.1 — 2026-11-01
 
 - Changed the app icon, tab icon and splash back to a Snufkin hat, redrawn as a soft floppy hat with a drooping tip so it no longer looks like a sailboat at small sizes.
