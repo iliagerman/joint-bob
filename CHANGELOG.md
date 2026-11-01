@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.190.4 — 2026-11-01
+
+- Fixed the mobile menu button showing a dark square behind the Joint Bob logo. The button now has no background, border or shadow, and the logo is drawn without its tile.
+
 ## 2.190.3 — 2026-11-01
 
 - Changed worktree pull requests to upload text files together in size-bounded batches instead of one request per file, reducing GitHub rate-limit failures on large changes. Binary and oversized files use paced uploads while preserving their contents and executable permissions.
