@@ -5133,6 +5133,22 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .relay-section > .relay-list { flex: 1 1 0; min-height: 0; }
 .relay-form-section { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px; }
 /* ---- Webhooks: list view and tabbed detail view ---- */
+#settingsPanel-webhooks { position: relative; }
+#webhooksStatus[data-state="info"] {
+  position: absolute;
+  margin: 0;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  max-width: calc(100% - 32px);
+  padding: 12px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--panel);
+  text-align: center;
+  pointer-events: none;
+}
 .webhooks-view { display: flex; flex-direction: column; gap: 10px; flex: 1 1 0; min-height: 0; min-width: 0; }
 .webhooks-view[hidden] { display: none; }
 .webhooks-view > .relay-list { flex: 1 1 0; min-height: 0; }

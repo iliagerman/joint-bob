@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the webhook list jumping while a webhook opens; the loading message now appears centered over the list.
+
 ## 2.189.1 — 2026-11-01
 
 - Fixed Activity overview narration staying silent on its first line in Safari; it now plays there.
