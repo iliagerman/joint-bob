@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.190.2 — 2026-11-01
+
+- Fixed story and Activity overview narration being refused by the browser before it played, so narration clips now play in Safari and Chrome.
+
 ## 2.190.1 — 2026-11-01
 
 - Changed Activity overview to wait up to three minutes while the open-source voice installs or updates, with the progress card saying so, and then play the movie with sound instead of silently.
