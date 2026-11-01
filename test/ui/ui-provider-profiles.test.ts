@@ -25,6 +25,14 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   assert.match(await page.getByTestId("provider-profiles").innerText(), /never goes through the relay/);
   assert.equal(await page.getByTestId("harness-config-card").getByTestId("provider-profiles").count(), 0, "profiles are not inside the harness card");
 
+  let posted = 0;
+  page.on("request", (request) => { if (request.url().endsWith("/api/provider-profiles") && request.method() === "POST") posted += 1; });
+  await page.getByTestId("provider-profile-label").fill("   ");
+  await page.getByTestId("provider-profile-add").click();
+  await page.locator(".toast-message", { hasText: "Enter a profile name first." }).waitFor();
+  assert.equal(posted, 0, "an empty name is not sent");
+  assert.equal(await page.getByTestId("provider-profile-label").evaluate((input) => input === document.activeElement), true);
+
   await page.getByTestId("provider-profile-provider-openai-codex").click();
   for (let i = 1; i <= 5; i += 1) {
     await page.getByTestId("provider-profile-label").fill(`Account ${i}`);

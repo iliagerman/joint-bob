@@ -136,6 +136,7 @@ function profilesSection() {
   }
   const name = el("input", { testid: "provider-profile-label" }); name.maxLength = 80; name.placeholder = "Profile name, e.g. Work account"; name.setAttribute("aria-label", "Profile name");
   const add = actionButton("Add profile", "provider-profile-add", async () => {
+    if (!name.value.trim()) { name.focus(); throw new Error("Enter a profile name first."); }
     await api("/api/provider-profiles", { method: "POST", body: JSON.stringify({ provider: newProvider, label: name.value }) });
     pages.profiles = Math.floor(profiles.length / PAGE_SIZE.profiles); await loadProviderProfiles({ keepPending: true });
   }, { icon: "plus", className: "primary profile-action" });
