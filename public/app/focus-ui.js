@@ -33,17 +33,14 @@ const actionButtons = Object.fromEntries([
   "focusMarkDone", "focusAddSecret", "focusAutoRespond", "focusActivity", "focusTools", "focusNewConversation", "focusNewNote",
   "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusConversations", "focusCosts", "focusSettings",
 ].map(id => [id, document.getElementById(id)]));
+// Buttons that work in every view sit in the same place and order everywhere; the chat adds its own around them.
 const chatPlacement = {
-  "#focusChatDock": ["focusMarkDone", "focusAutoRespond", "focusNewConversation", "focusNewNote", "focusAddSecret", "focusConversations"],
-  "#focusChatMore": ["focusActivity", "focusTools", "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusCosts", "focusSettings"],
-  ".focus-global-actions": [],
-  ".focus-navigation": [],
+  "#focusDock": ["focusMarkDone", "focusAutoRespond", "focusNewConversation", "focusNewNote", "focusAddSecret", "focusConversations"],
+  "#focusMore": ["focusActivity", "focusTools", "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusCosts", "focusSettings"],
 };
 const viewPlacement = {
-  "#focusChatDock": ["focusMarkDone", "focusAddSecret", "focusAutoRespond"],
-  "#focusChatMore": [],
-  ".focus-global-actions": ["focusNewConversation", "focusNewNote", "focusRecents", "focusRunning", "focusReviews"],
-  ".focus-navigation": ["focusProjects", "focusConversations", "focusCosts", "focusSettings"],
+  "#focusDock": ["focusNewConversation", "focusNewNote", "focusConversations"],
+  "#focusMore": ["focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusCosts", "focusSettings"],
 };
 
 const harnessPicker = createSearchableSelect({ id: "focusHarness", testid: "focus-harness", label: "Harness", prompt: "Choose a harness", placeholder: "Search harnesses", emptyText: "No harnesses found" });
@@ -77,16 +74,15 @@ function showMenu(show = menu.hidden) {
   if (show) { fab.hidden = false; syncQuickActionLabels(); syncMenuLayout(); }
   else if (menu.contains(document.activeElement)) fab.focus();
 }
-/** The chat menu has one submenu, Tools; every other view shows only its main list. */
+/** The chat menu has one submenu, Tools; every view shows the same tiles and dock for the shared buttons. */
 function syncMenuLayout(section = "") {
   menu.dataset.section = section;
   const inChat = currentView() === "chat";
   const tools = section === "tools";
   document.querySelector("#focusBack").hidden = !tools;
   document.querySelector("#focusChatQuickActions").hidden = !inChat || tools;
-  document.querySelector("#focusChatDock").hidden = !inChat || tools;
-  document.querySelector(".focus-global-actions").hidden = inChat;
-  document.querySelector(".focus-navigation").hidden = inChat;
+  document.querySelector("#focusMore").hidden = tools;
+  document.querySelector("#focusDock").hidden = tools;
   actionButtons.focusTools.setAttribute("aria-expanded", String(tools));
   toolsList.hidden = !tools;
   if (tools) renderTools();
@@ -189,8 +185,9 @@ export function syncQuickActionLabels() {
   effortPicker.setValue(elements.reasoningLevelSelect.value);
   effortPicker.disabled = elements.reasoningLevelSelect.disabled;
   renderNodeSegments();
-  document.querySelector("#focusMarkDoneLabel").textContent = elements.chatDoneButton.querySelector(".chat-action-label").textContent;
-  document.querySelector("#focusMarkDone").disabled = elements.chatDoneButton.disabled;
+  // Chat-only buttons are detached outside a chat, so they are reached through actionButtons, not the document.
+  actionButtons.focusMarkDone.querySelector("#focusMarkDoneLabel").textContent = elements.chatDoneButton.querySelector(".chat-action-label").textContent;
+  actionButtons.focusMarkDone.disabled = elements.chatDoneButton.disabled;
 }
 
 /** Sets a toolbar select and fires its change, so the toolbar's own handler does the work. */
@@ -281,10 +278,10 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#focusNewConversation").onclick = start;
   document.querySelector("#conversationSearchCreateButton").onclick = start;
   decorateControls();
-  document.querySelector("#focusMarkDone").onclick = () => { showMenu(false); elements.chatDoneButton.click(); };
-  document.querySelector("#focusAddSecret").onclick = () => { showMenu(false); openNewSecretAccount(); };
-  document.querySelector("#focusAutoRespond").onclick = () => { showMenu(false); elements.autoRespondButton.click(); };
-  document.querySelector("#focusActivity").onclick = () => { showMenu(false); elements.activityToggleButton.click(); };
+  actionButtons.focusMarkDone.onclick = () => { showMenu(false); elements.chatDoneButton.click(); };
+  actionButtons.focusAddSecret.onclick = () => { showMenu(false); openNewSecretAccount(); };
+  actionButtons.focusAutoRespond.onclick = () => { showMenu(false); elements.autoRespondButton.click(); };
+  actionButtons.focusActivity.onclick = () => { showMenu(false); elements.activityToggleButton.click(); };
   actionButtons.focusTools.onclick = (event) => { event.stopPropagation(); syncMenuLayout("tools"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusBack").onclick = backToControls;
   for (const [id, action] of [["focusNewNote", createNote], ["focusRecents", openRecentSessions], ["focusReviews", inspectReviews], ["focusRunning", inspectRunning]]) {

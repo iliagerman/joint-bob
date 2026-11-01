@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
-for (const theme of ["light", "dark"]) test(`focus mobile headers and transparent FAB submenus stay compact and aligned (${theme})`, { timeout: 180_000 }, async t => {
+for (const theme of ["light", "dark"]) test(`focus mobile headers and shared FAB buttons look the same in every view (${theme})`, { timeout: 180_000 }, async t => {
   const { page, environment, node } = await nativeUiFixture(t);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -18,6 +18,7 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
   await page.getByTestId("settings-focus-ui-toggle").check();
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
   await page.getByTestId("settings-cancel-button").click();
+  const sharedStyles = new Map<string, string>();
   for (const view of ["projects", "sessions", "chat"]) {
     if (view === "sessions") await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
     if (view === "chat") await page.locator("#sessionList .session-card").first().click();
@@ -37,8 +38,10 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
     for (const id of ["focus-new-conversation", "focus-new-note", "focus-reviews", "focus-running", "focus-settings"]) {
       const button = page.getByTestId(id);
       assert.equal(await button.locator("svg").count(), 1, `${id} has an outline icon`);
-      // The chat action dock has filled tiles by design; the workspace list stays transparent.
-      if (view !== "chat") assert.equal(await button.evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)", `${id} is transparent, not browser-grey`);
+      // Buttons that work in every view keep the same tile style in every view.
+      const style = await button.evaluate(el => { const css = getComputedStyle(el); return `${css.backgroundColor} ${css.borderRadius} ${css.flexDirection}`; });
+      if (sharedStyles.has(id)) assert.equal(style, sharedStyles.get(id), `${id} looks the same on ${view}`);
+      else sharedStyles.set(id, style);
     }
     await page.screenshot({ path: `tmp/focus-${theme}-${view}-menu.png` });
     await page.getByTestId("focus-close").click();
