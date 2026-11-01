@@ -63,14 +63,15 @@
         <div id="focusContextActions"></div>
         <div id="focusChatQuickActions" hidden>
           <div class="focus-setting"><span class="focus-setting-label">Harness</span><span id="focusHarnessSelect"></span></div>
-          <div class="focus-setting"><span class="focus-setting-label">Model</span><span id="focusModelSelect"></span></div>
+          <div class="focus-setting focus-setting-wide"><span class="focus-setting-label">Model</span><span id="focusModelSelect"></span></div>
           <div class="focus-setting"><span class="focus-setting-label">Effort</span><span id="focusEffortSelect"></span></div>
-          <div class="focus-setting"><span class="focus-setting-label">Runs on</span><div id="focusNodeList"></div></div>
+          <div class="focus-setting focus-setting-wide"><span class="focus-setting-label">Runs on</span><div id="focusNodeList"></div></div>
           <div id="focusChatMore" class="focus-more">
-            <button type="button" id="focusTools" data-testid="focus-tools" title="More tools & actions"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5"/><path d="M12.5 17h6.5"/></svg>Tools</button>
+            <button type="button" id="focusActivity" data-testid="focus-activity" title="Show the activity panel"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.5 4.5v15"/></svg>Activity</button>
+            <button type="button" id="focusTools" data-testid="focus-tools" aria-haspopup="true" aria-expanded="false" title="Git, files, tasks and the other conversation tools"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.1L4 16.7V20h3.3l5.3-5.3a4 4 0 0 0 5.1-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Tools</button>
           </div>
-          <div id="focusChatLinks" class="focus-links"></div>
         </div>
+        <div id="focusToolsList" class="focus-tools-list" data-testid="focus-tools-list" hidden></div>
         <div id="focusChatControls" hidden></div>
       </div>
       <div id="focusChatDock" class="focus-dock" aria-label="Quick actions" hidden>
@@ -79,11 +80,11 @@
         <button type="button" id="focusAutoRespond" data-testid="focus-auto-respond" title="Auto respond"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 13-5"/><path d="M18 3.5V7h-3.5"/><path d="M19.5 12a7.5 7.5 0 0 1-13 5"/><path d="M6 20.5V17h3.5"/></svg>Auto respond<span class="focus-state" aria-hidden="true"></span></button>
       </div>
       <div class="focus-global-actions" aria-label="Workspace actions">
-        <button type="button" id="focusNewConversation" data-testid="focus-new-conversation">New conversation…</button>
-        <button type="button" id="focusNewNote" data-testid="focus-new-note">New note…</button>
-        <button type="button" id="focusRecents" data-testid="focus-recents">Recent conversations</button>
-        <button type="button" id="focusRunning" data-testid="focus-running">Running conversations<span id="focusRunningCount" class="focus-pending-badge running-badge" data-running-count data-testid="focus-running-count" aria-hidden="true" hidden>0</span></button>
-        <button type="button" id="focusReviews" data-testid="focus-reviews">Needs review<span id="focusReviewCount" class="focus-pending-badge" data-testid="focus-review-count" aria-hidden="true" hidden>0</span></button>
+        <button type="button" id="focusNewConversation" data-testid="focus-new-conversation"><span class="focus-label-long">New conversation…</span><span class="focus-label-short">New chat</span></button>
+        <button type="button" id="focusNewNote" data-testid="focus-new-note"><span class="focus-label-long">New note…</span><span class="focus-label-short">New note</span></button>
+        <button type="button" id="focusRecents" data-testid="focus-recents"><span class="focus-label-long">Recent conversations</span><span class="focus-label-short">Recent</span></button>
+        <button type="button" id="focusRunning" data-testid="focus-running"><span class="focus-label-long">Running conversations</span><span class="focus-label-short">Running</span><span id="focusRunningCount" class="focus-pending-badge running-badge" data-running-count data-testid="focus-running-count" aria-hidden="true" hidden>0</span></button>
+        <button type="button" id="focusReviews" data-testid="focus-reviews"><span class="focus-label-long">Needs review</span><span class="focus-label-short">Review</span><span id="focusReviewCount" class="focus-pending-badge" data-testid="focus-review-count" aria-hidden="true" hidden>0</span></button>
       </div>
       <div class="focus-navigation">
         <button type="button" id="focusProjects" data-testid="focus-projects">All projects</button>

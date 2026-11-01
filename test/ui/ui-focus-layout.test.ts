@@ -53,14 +53,27 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
   await page.getByTestId("auto-respond-cancel-button").click();
   await page.getByTestId("focus-controls-button").click();
   await page.locator("#focusControls").waitFor();
+  await page.getByTestId("focus-activity").click();
+  await page.locator("#activityPanel").waitFor({ state: "visible" });
+  await page.getByTestId("activity-panel-close").click();
+  await page.getByTestId("focus-controls-button").click();
+  await page.locator("#focusControls").waitFor();
   await page.getByTestId("focus-tools").click();
-  await page.locator("#chatToolbar").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#focusContextTitle").textContent(), "Tools & actions");
-  for (const id of ["chat-open-browser-button", "chat-git-button", "chat-share-button", "background-tasks-open"]) {
-    assert.equal(await page.getByTestId(id).isVisible(), true, `${id} stays reachable in focus mode`);
+  assert.equal(await page.locator("#focusContextTitle").textContent(), "Tools");
+  assert.equal(await page.locator("#chatToolbar").isVisible(), false, "Tools lists the tools, not the toolbar");
+  for (const id of ["chat-open-browser-button", "chat-git-button", "chat-share-button", "background-tasks-open", "chat-files-button", "chat-more-dashboard-button"]) {
+    assert.equal(await page.getByTestId(`focus-tool-${id}`).isVisible(), true, `${id} is reachable from Tools`);
   }
-  await page.getByTestId("background-tasks-open").click();
+  for (const id of ["chat-done-button", "chat-auto-respond-button", "chat-activity-toggle"]) {
+    assert.equal(await page.getByTestId(`focus-tool-${id}`).count(), 0, `${id} is on the main menu, not repeated in Tools`);
+  }
+  assert.equal(await page.getByTestId("focus-model").isVisible(), false, "the run settings stay on the main menu");
+  await page.screenshot({ path: `tmp/focus-${theme}-tools.png` });
+  await page.getByTestId("focus-tool-background-tasks-open").click();
   await page.getByTestId("background-tasks-close").click();
+  await page.getByTestId("focus-controls-button").click();
+  await page.locator("#focusControls").waitFor();
+  await page.getByTestId("focus-tools").click();
   await page.getByTestId("focus-back").click();
   await page.getByTestId("focus-harness").click();
   assert.ok(await page.getByTestId("focus-harness-option").count() > 0, "harness dropdown lists harnesses");

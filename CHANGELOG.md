@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed the focus mode chat menu into tiles: Activity now has its own button, Tools opens a tile grid with every other chat tool, and the run settings, navigation and action buttons are regrouped with shorter labels.
+
 ## 2.183.0 — 2026-11-01
 
 - Added a feather to the Snufkin hat in the app icon, tab icon and splash.

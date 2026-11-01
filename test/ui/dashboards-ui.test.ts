@@ -183,7 +183,7 @@ test("on a phone, the project sheet and the conversation tools open dashboard mo
   await page.locator("body.view-chat").waitFor();
   await page.getByTestId("focus-controls-button").click();
   await page.getByTestId("focus-tools").click();
-  await page.getByTestId("chat-more-dashboard-button").click();
+  await page.getByTestId("focus-tool-chat-more-dashboard-button").click();
   await page.locator("#dashboardDialog[open]").waitFor();
   assert.match(await page.getByTestId("dashboard-eyebrow").textContent() ?? "", /Conversation dashboard/);
 });
