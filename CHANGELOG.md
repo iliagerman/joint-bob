@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed installing the local story voice to be available only to admins.
+
 ## 2.184.0 — 2026-11-01
 
 - Added an Activity tile to the phone's chat menu that opens the activity panel.

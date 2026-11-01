@@ -1727,7 +1727,7 @@
               <option value="elevenlabs">ElevenLabs only, with the project's ElevenLabs secret</option>
             </select></label>
             <p class="settings-hint">Local voice is Kokoro-82M on this computer's CPU. It needs no key and is offered only on computers with at least 8 GB of memory and 4 cores; smaller computers never download it. Installing it downloads the package once, from the public npm registry, without GPU libraries.</p>
-            <button class="ghost compact" type="button" id="storyInstallLocal" data-testid="story-install-local">Install local voice</button>
+            <button class="ghost compact" type="button" id="storyInstallLocal" data-testid="story-install-local" data-admin-only>Install local voice</button>
             <label>Local voice for Maya<select id="storyHostVoice" data-testid="story-host-voice"></select></label>
             <label>Local voice for Jonah<select id="storyCohostVoice" data-testid="story-cohost-voice"></select></label>
             <label>ElevenLabs voice ID for Maya<input id="storyElevenHost" type="text" maxlength="32" autocomplete="off" data-testid="story-eleven-host" /></label>

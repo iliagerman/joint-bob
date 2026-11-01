@@ -45,6 +45,8 @@ export const ADMIN_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "PUT", path: /^\/conversation-summary\/(settings|relay-policy|instructions|skill-instructions)$/ },
   // The AGENTS.md every project's agents read on this node and the owner's other machines.
   { method: "PUT", path: /^\/instructions\/global\/content$/ },
+  // Local story voice: npm installs the Kokoro runtime into this node's data directory.
+  { method: "POST", path: /^\/story-settings\/local-voice\/install$/ },
 ];
 
 /** Express matches routes whatever their letter case and with a trailing slash, so the gate
