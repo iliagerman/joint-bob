@@ -678,7 +678,9 @@ export async function applyProjectMetadata(
     throw new ResourceSharingError("Only original owner may send project metadata", 403);
   }
   const db = await projectDatabase();
-  db.exec("SAVEPOINT project_metadata_receive");
+  // Reserve the writer before reading: a WAL snapshot cannot be upgraded after another
+  // connection commits, and busy_timeout cannot wait out SQLITE_BUSY_SNAPSHOT.
+  db.exec("BEGIN IMMEDIATE");
   try {
     applyProjectResourcePolicyInDatabase(db, localNodeId, senderNodeId, envelope.statement);
     if (!hasCurrentResourcePolicyContext(db, localNodeId, envelope.statement)) {
@@ -694,9 +696,9 @@ export async function applyProjectMetadata(
       saveIncomingProject(db, { ...envelope, metadata }, managedHome);
     }
     recordProjectMetadataReceipt(db, envelope);
-    db.exec("RELEASE project_metadata_receive");
+    db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK TO project_metadata_receive; RELEASE project_metadata_receive");
+    db.exec("ROLLBACK");
     throw error;
   }
 }

@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Fixed webhook conversations failing to refresh their memory access while the database was busy with another save.
+- Fixed shared project name and color updates from other nodes being rejected when the database was busy with another write.
 
 ## 2.185.0 — 2026-11-01
 
