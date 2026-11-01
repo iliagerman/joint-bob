@@ -113,7 +113,7 @@ export function narrationProvider(projectId: string, settings: StorySettings = g
   const elevenReason = eleven && "conflict" in eleven
     ? `This project has ${eleven.conflict} ElevenLabs secret accounts at the same level. Keep one so the narrator is clear.`
     : "This project has no ElevenLabs secret. Add a secret account of type ElevenLabs (Settings → Secrets) and attach it to the project.";
-  const localReason = kokoro.reason ?? "Local voice is not installed on this node. Install it in Settings → Story mode.";
+  const localReason = kokoro.reason ?? "Local voice is not installed on this node. Install it in Settings → Activity overview.";
   if (settings.voiceProvider === "kokoro") return kokoroReady ? { provider: "kokoro", reason: null } : { provider: null, reason: localReason };
   if (settings.voiceProvider === "elevenlabs") return elevenReady ? { provider: "elevenlabs", reason: null } : { provider: null, reason: elevenReason };
   if (kokoroReady) return { provider: "kokoro", reason: null };

@@ -367,6 +367,7 @@ test("the activity panel Story button writes a conversation's first story once, 
   // No story yet: one click writes it from the files the conversation claimed and its commits.
   await page.getByTestId("activity-story-button").click();
   await page.getByTestId("git-story-title").waitFor();
+  assert.equal(await page.getByTestId("git-story-podcast").count(), 0, "Story opens the written story, not the Activity overview movie");
   const { conversationId, ...request } = posts[0] as { conversationId: string };
   assert.ok(conversationId);
   assert.deepEqual(request, { source: "conversation", scope: "conversation", paths: ["app.ts", "app.test.ts"], includeCommits: true, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
@@ -723,17 +724,43 @@ test("Story saves as one HTML file with the walkthrough and the review notes", {
   assert.deepEqual(errors, []);
 });
 
-test("Activity overview plays the saved story as a video from the activity panel, and the phone menu offers Story and Overview", { timeout: 120_000 }, async (t) => {
+test("Activity overview plays the saved story as the stick-figure movie from the activity panel, and the phone menu offers Story and Overview", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await openSavedStory(page, environment, node.url, { kokoro: false, via: "overview" });
-  const video = page.getByTestId("git-story-video");
-  await video.waitFor();
-  assert.match(await video.innerText(), /Greeting with an empty-name error/);
+  const podcastPosts: Array<Record<string, unknown>> = [];
+  await openSavedStory(page, environment, node.url, { kokoro: false, script: null, podcastPosts, via: "overview" });
+  const movie = page.getByTestId("git-story-podcast");
+  await movie.waitFor();
+  assert.equal(podcastPosts.length, 1, "the movie is written from the saved story");
+  assert.match(await page.locator(".gsp-scene-chip").innerText(), /1 \/ 3 · Server room/);
+  assert.equal(await page.getByTestId("git-story-video").count(), 0, "the older video walk-through does not open");
   assert.equal(await page.locator("#gitReviewTitle").innerText(), "Story");
-  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Close Activity overview" }).click();
+  await movie.waitFor({ state: "detached" });
   await page.getByTestId("git-review-close-button").click();
   await page.setViewportSize({ width: 390, height: 800 });
   assert.equal(await page.getByTestId("nav-story-button").isVisible(), true);
   assert.equal(await page.getByTestId("nav-overview-button").isVisible(), true);
   assert.equal(await page.getByTestId("nav-overview-button").getAttribute("aria-label"), "Activity overview");
+});
+
+test("the activity panel header keeps its tabs, Story and Overview on one row, each with an icon", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card").first().click();
+  if (await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded") !== "true") await page.getByTestId("chat-activity-toggle").click();
+  await page.getByTestId("activity-modes").waitFor();
+  const controls = ["activity-activity-tab", "activity-chat-tab", "activity-story-button", "activity-overview-button", "activity-panel-close"];
+  const layout = await page.evaluate((ids) => {
+    const header = document.querySelector<HTMLElement>(".activity-panel-header")!;
+    return { middles: ids.map((id) => { const box = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect(); return Math.round(box.top + box.height / 2); }), fits: header.scrollWidth <= header.clientWidth };
+  }, controls);
+  assert.ok(Math.max(...layout.middles) - Math.min(...layout.middles) <= 2, `every control sits on one row, got ${JSON.stringify(layout.middles)}`);
+  assert.equal(layout.fits, true, "the header fits the panel width without wrapping or overflow");
+  for (const id of ["activity-activity-tab", "activity-chat-tab", "activity-story-button", "activity-overview-button"]) {
+    assert.equal(await page.getByTestId(id).locator("svg").isVisible(), true, `${id} has an icon`);
+  }
 });

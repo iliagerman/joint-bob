@@ -35,7 +35,7 @@ const providerHints = {
   stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
   cloudflare: "Cloudflare Stream credentials. Add whichever values you use; all fields are optional.",
   openai: "OPENAI_API_KEY for OpenAI tools and SDKs.",
-  elevenlabs: "ELEVENLABS_API_KEY for ElevenLabs. Story mode uses it to narrate podcasts on projects that do not run local voice.",
+  elevenlabs: "ELEVENLABS_API_KEY for ElevenLabs. Activity overview uses it to narrate its movies on projects that do not run local voice.",
   zai: "ZAI_API_KEY for Z.AI tools and SDKs.",
   grafana: "GRAFANA_API_KEY for Grafana APIs. Use a scoped service account token where possible.",
   datadog: "DD_API_KEY for Datadog tools and SDKs. Add DD_APP_KEY separately if your integration needs one.",

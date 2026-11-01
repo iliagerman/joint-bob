@@ -59,9 +59,9 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   const podcastTab = h("button", { type: "button", class: "ghost compact gs-boxed", "aria-pressed": "true", onclick: () => showView("podcast") }, "Podcast");
   const writeupTab = h("button", { type: "button", class: "ghost compact gs-boxed", "aria-pressed": "false", "data-testid": "git-story-podcast-writeup-tab", onclick: () => showView("writeup") }, "Implementation and reasoning");
   const rewriteButton = h("button", { type: "button", class: "ghost compact gs-boxed", hidden: !rewrite, "data-testid": "git-story-podcast-rewrite", onclick: () => void again() }, "Rewrite");
-  const overlay = h("div", { class: "git-story gsp", role: "dialog", "aria-modal": "true", "aria-label": "Story podcast", "data-testid": "git-story-podcast", tabindex: "-1", onkeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } } },
+  const overlay = h("div", { class: "git-story gsp", role: "dialog", "aria-modal": "true", "aria-label": "Activity overview", "data-testid": "git-story-podcast", tabindex: "-1", onkeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } } },
     h("header", {}, h("span", { class: "gsp-tabs" }, podcastTab, writeupTab), h("span", { class: "gsp-controls" }, rewriteButton,
-      h("button", { type: "button", class: "ghost compact gs-boxed", "aria-label": "Close podcast", onclick: () => close() }, "×"))),
+      h("button", { type: "button", class: "ghost compact gs-boxed", "aria-label": "Close Activity overview", onclick: () => close() }, "×"))),
     body, writeup);
   link();
   host.append(overlay);

@@ -1,4 +1,4 @@
-// Settings → Story mode: how stories are written, shown and spoken on this node.
+// Settings → Activity overview: how stories are written, shown and spoken on this node.
 import { api, apiBlob } from "./api.js";
 import { toast } from "./shell.js";
 

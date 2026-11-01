@@ -40,8 +40,8 @@ const story = {
   voice: null,
   // The podcast being written: { stage } while the writer works, { error, details } when it failed.
   podcast: null,
-  // What to start once the story is ready: "podcast" or "video", set by the Story and Activity overview buttons.
-  intent: null,
+  // True when Activity overview asked for the movie before the story was written; it plays once the story is ready.
+  wantsOverview: false,
 };
 
 // Where the reader was in a story, so closing the Git view and opening it again lands on the same page.
@@ -104,7 +104,7 @@ export function resetStory(ctx) {
   story.pullDraft = "";
   story.voice = null;
   story.podcast = null;
-  story.intent = null;
+  story.wantsOverview = false;
 }
 
 export function selectStoryPull(number, url = null) {
@@ -223,7 +223,7 @@ export async function generateStory(payload) {
         story.draft = null;
       } else return;
       changed();
-      if (finished && story.intent) void playStory(story.intent);
+      if (finished && story.wantsOverview) void playOverview();
     });
     if (request === story.request && !finished) throw new Error("The connection closed before the story finished. If the reviewer completed it, it is saved; reopen the Story tab to check.");
   } catch (error) {
@@ -568,19 +568,11 @@ function podcastStatus() {
     h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-podcast-copy-error", onclick: copyPodcastError }, "Copy error details"));
 }
 
-function playVideo(voice) {
-  const { saved } = shown();
-  const narrate = story.voice?.narrates ? (text) => speakLine(text, "host") : null;
-  playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
-}
-
-/** Starts the podcast or the Activity overview video of the saved story, or does so as soon as it is written. */
-export async function playStory(kind) {
-  if (!story.latest) { story.intent = kind; return; }
-  story.intent = null;
-  if (kind === "podcast") { await listenAsPodcast(); return; }
-  story.voice ??= await loadNarrator();
-  playVideo(true);
+/** Activity overview: plays the saved story as the stick-figure movie, or does so as soon as the story is written. */
+export async function playOverview() {
+  if (!story.latest) { story.wantsOverview = true; return; }
+  story.wantsOverview = false;
+  await listenAsPodcast();
 }
 
 function videoSuggestion() {
@@ -589,14 +581,15 @@ function videoSuggestion() {
     void loadNarrator().then((voice) => { story.voice = voice; renderStory(); });
   }
   const { saved } = shown();
-  const play = (voice) => playVideo(voice);
+  const narrate = story.voice.narrates ? (text) => speakLine(text, "host") : null;
+  const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
   const save = async () => { try { await exportStoryHtml(saved.story, saved.facts); } catch (error) { toast(`Could not save the HTML file: ${error.message}`); } };
   return h("div", { class: "gsv-suggest", "data-testid": "git-story-video-suggestion" },
-    h("p", {}, h("b", {}, "Watch the activity overview or listen to this story as a podcast. "), "The activity overview covers the animated flow, worked examples, files, design decisions and the review checklist. The podcast has two hosts who explain what changed, how it works and why, and you can ask them questions."),
+    h("p", {}, h("b", {}, "Walk through this story as a video, or watch the Activity overview. "), "The video covers the animated flow, worked examples, files, design decisions and the review checklist. The Activity overview is a movie where two stick-figure hosts explain what changed, how it works and why, and you can ask them questions."),
     h("div", { class: "gsv-suggest-row" },
-      h("button", { class: "primary compact", type: "button", disabled: Boolean(story.podcast && !story.podcast.error), "data-testid": "git-story-podcast-play", onclick: () => void listenAsPodcast() }, "🎙 Listen as a podcast"),
-      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Activity overview with voice"),
-      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-silent", onclick: () => play(false) }, "Activity overview without voice"),
+      h("button", { class: "primary compact", type: "button", disabled: Boolean(story.podcast && !story.podcast.error), "data-testid": "git-story-podcast-play", onclick: () => void listenAsPodcast() }, "▶ Activity overview"),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Play with voice"),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-silent", onclick: () => play(false) }, "Play without voice"),
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-export", onclick: save }, "Save as HTML file"),
       h("span", { class: "gs-muted gs-small" }, story.voice.narrates ? `Narrated by ${story.voice.provider === "elevenlabs" ? "ElevenLabs" : "Kokoro"}, falling back to this computer's voice.` : "Narration uses this computer's voice.")),
     story.voice.narrates ? null : voiceSetup(),
@@ -605,7 +598,7 @@ function videoSuggestion() {
 
 // Narration needs one of two things: local voice on a computer big enough for it, or the project's own ElevenLabs key.
 const VOICE_SETUP = [
-  "On a computer with at least 8 GB of memory and 4 cores, open Settings → Story mode and press Install local voice. Kokoro then runs on this computer and needs no key.",
+  "On a computer with at least 8 GB of memory and 4 cores, open Settings → Activity overview and press Install local voice. Kokoro then runs on this computer and needs no key.",
   "Or use your own ElevenLabs key: open Settings → Secrets, press + to add an account of type ElevenLabs, paste your key, and attach that account to this project.",
 ];
 

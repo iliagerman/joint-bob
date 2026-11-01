@@ -1867,11 +1867,14 @@ select.chat-toolbar-control {
 .activity-panel-resize { position: absolute; z-index: 5; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
 .activity-panel-resize:hover, .activity-panel-resize:focus-visible { background: var(--accent); outline: none; }
 body.activity-resizing, body.activity-resizing * { cursor: col-resize !important; user-select: none !important; }
-.activity-panel-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 6px 14px; }
+.activity-panel-header { display: flex; flex: none; align-items: center; gap: 4px; min-width: 0; padding: 10px 8px 6px 10px; }
 .activity-panel-header h2 { margin: 0; color: var(--text); font-size: 13px; font-weight: 650; letter-spacing: 0.01em; }
-.activity-tabs { display: flex; gap: 6px; }
-.activity-tabs button { border: 0; background: transparent; color: var(--muted); padding: 6px 10px; }
+.activity-tabs { display: flex; flex: none; gap: 2px; }
+.activity-tabs button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--muted); padding: 6px 8px; white-space: nowrap; }
+.activity-tabs svg, .activity-mode svg { width: 14px; height: 14px; flex: none; }
 .activity-tabs button[aria-selected="true"] { background: transparent; color: var(--text); border-bottom: 2px solid var(--accent); }
+.activity-modes { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 4px; min-width: 0; }
+.activity-mode { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; white-space: nowrap; }
 .activity-body[hidden], .conversation-chat[hidden], .conversation-chat-selectors[hidden] { display: none; }
 .conversation-chat { display: flex; flex: 1 1 0; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 8px 12px; }
 .conversation-chat > p { margin: 0; }
@@ -5300,7 +5303,6 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .session-auto-badge { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--accent, #2563eb); color: var(--accent, #2563eb); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .session-auto-badge.stopped { border-color: #b9770e; color: #b9770e; }
 
-.activity-modes { display: flex; flex: none; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px 14px; }
 /* The card's grid rows are fixed, so the tab strip keeps its row but has no height in the story view. */
 .git-review-card.is-story-view .git-review-tabs { height: 0; min-height: 0; padding: 0; border: 0; overflow: hidden; visibility: hidden; }
 
