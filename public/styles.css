@@ -1875,6 +1875,14 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .activity-tabs button[aria-selected="true"] { background: transparent; color: var(--text); border-bottom: 2px solid var(--accent); }
 .activity-modes { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 4px; min-width: 0; }
 .activity-mode { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; white-space: nowrap; }
+/* Activity overview: shown while a movie is written, above the phone menu on small screens. */
+.overview-progress { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; align-items: center; gap: 10px; max-width: min(420px, calc(100vw - 32px)); padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); box-shadow: var(--shadow-soft); }
+.overview-progress-copy { display: grid; gap: 2px; min-width: 0; }
+.overview-progress-copy strong { font-size: 13px; }
+.overview-progress-stage { color: var(--muted); font-size: 12px; }
+.overview-progress-time { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.activity-mode[aria-busy="true"] svg, .mobile-nav button[aria-busy="true"] .nav-icon { animation: task-state-pulse 1.2s ease-in-out infinite; }
+@media (max-width: 1023px) { .overview-progress { left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); max-width: none; } }
 .activity-body[hidden], .conversation-chat[hidden], .conversation-chat-selectors[hidden] { display: none; }
 .conversation-chat { display: flex; flex: 1 1 0; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 8px 12px; }
 .conversation-chat > p { margin: 0; }

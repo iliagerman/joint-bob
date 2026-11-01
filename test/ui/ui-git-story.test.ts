@@ -559,13 +559,15 @@ const answered = {
 };
 
 // A stand-in for audio playback: this Chrome cannot decode a clip, so each one "plays" briefly and then ends.
-const FAKE_AUDIO = `window.Audio = class { constructor(src = "") { this.src = src; } pause() {} play() { setTimeout(() => this.onended?.(), 60); return Promise.resolve(); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`;
+const FAKE_AUDIO = `window.Audio = class extends EventTarget { constructor(src = "") { super(); this.src = src; } pause() {} play() { if (!this.src) return Promise.reject(new Error("no source")); setTimeout(() => this.dispatchEvent(new Event("playing")), 5); setTimeout(() => this.onended?.(), 60); return Promise.resolve(); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`;
 
-interface StoryFixture { via?: "story" | "overview"; answerVoice?: string; settingsPuts?: Array<Record<string, unknown>>; installs?: number[]; overviewPosts?: Array<Record<string, unknown>>; storyCalls?: string[]; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
+interface StoryFixture { audioNeverStarts?: boolean; holdOverview?: Promise<void>; via?: "story" | "overview"; answerVoice?: string; settingsPuts?: Array<Record<string, unknown>>; installs?: number[]; overviewPosts?: Array<Record<string, unknown>>; storyCalls?: string[]; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
 
 async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, fixture: StoryFixture) {
   await page.addInitScript(FAKE_SPEECH);
   await page.addInitScript(FAKE_AUDIO);
+  // A clip that loads but never starts, as a browser does with audio it cannot play.
+  if (fixture.audioNeverStarts) await page.addInitScript(`window.Audio = class extends EventTarget { constructor() { super(); this.src = ""; } pause() {} play() { return this.src ? Promise.resolve() : Promise.reject(new Error("no source")); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`);
   const settings = { ...storySettings, ...fixture.settings };
   await page.route("**/api/story-settings", (route) => {
     if (route.request().method() === "PUT") { fixture.settingsPuts?.push(route.request().postDataJSON()); Object.assign(settings, route.request().postDataJSON()); }
@@ -587,6 +589,7 @@ async function openSavedStory(page: Page, environment: { username: string; passw
     if (path.endsWith("/story-latest")) return route.fulfill({ json: { latest: { thread, saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } }, commits: [] } });
     if (path.endsWith("/overview")) {
       fixture.overviewPosts?.push(route.request().postDataJSON());
+      await fixture.holdOverview;
       const lines = [{ type: "progress", stage: "Writing the movie" }, { type: "done", thread: { ...thread, id: "overview-1" }, script: fixture.script ?? script }];
       return route.fulfill({ contentType: "application/x-ndjson", body: lines.map((line) => JSON.stringify(line)).join("\n") });
     }
@@ -763,9 +766,19 @@ test("Activity overview plays the stick-figure movie from the activity panel wit
   const { page, environment, node } = await nativeUiFixture(t);
   const overviewPosts: Array<Record<string, unknown>> = [];
   const storyCalls: string[] = [];
-  await openSavedStory(page, environment, node.url, { kokoro: false, script: null, overviewPosts, storyCalls, via: "overview" });
+  let release!: () => void;
+  const holdOverview = new Promise<void>((resolve) => { release = resolve; });
+  await openSavedStory(page, environment, node.url, { kokoro: false, script: null, overviewPosts, storyCalls, holdOverview, via: "overview" });
+  // While the writer works, a card says so, with the time so far, and the button shows it is busy.
+  const progress = page.getByTestId("activity-overview-progress");
+  await progress.waitFor();
+  assert.match(await progress.innerText(), /Activity overview[\s\S]*\d:\d\d/);
+  assert.equal(await page.getByTestId("activity-overview-button").getAttribute("aria-busy"), "true");
+  release();
   const movie = page.getByTestId("git-story-podcast");
   await movie.waitFor();
+  await progress.waitFor({ state: "detached" });
+  assert.equal(await page.getByTestId("activity-overview-button").isDisabled(), false);
   assert.equal(overviewPosts.length, 1, "the movie is written from the conversation itself");
   assert.deepEqual(storyCalls, [], "no written story is requested or made");
   assert.match(await page.locator(".gsp-scene-chip").innerText(), /1 \/ 3 · Server room/);
@@ -814,6 +827,17 @@ test("Activity overview asks once which voice narrates, saves it, and installs t
   assert.equal((overviewPosts[0].settings as { voiceProvider: string }).voiceProvider, "kokoro", "the movie uses the voice just chosen");
   await page.getByRole("button", { name: "Close Activity overview" }).click();
   await page.getByTestId("activity-overview-button").click();
-  await page.locator(".toast-message", { hasText: "Preparing the Activity overview" }).last().waitFor();
+  await page.getByTestId("git-story-podcast").waitFor();
   assert.equal(await page.getByTestId("choice-dialog").isVisible(), false, "the voice is asked once");
+  assert.equal(settingsPuts.length, 1);
+});
+
+test("Activity overview says when the browser does not start the narration, and keeps the movie moving silently", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await openSavedStory(page, environment, node.url, { kokoro: true, script, audioNeverStarts: true, overviewPosts: [], via: "overview" });
+  await page.getByTestId("git-story-podcast").waitFor();
+  const first = await page.locator(".gsp-caption").innerText();
+  await page.locator(".gsp-play").click();
+  await page.locator(".toast-message", { hasText: "did not start the narration clip" }).waitFor({ timeout: 15_000 });
+  await page.waitForFunction((text) => document.querySelector(".gsp-caption")?.textContent !== text, first, { timeout: 20_000 });
 });

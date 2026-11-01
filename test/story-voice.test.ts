@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { GitReviewError } from "../src/git-review.js";
 import { resolveDataDirectory } from "../src/data-directory.js";
-import { KOKORO_MIN_CORES, KOKORO_MIN_MEMORY_BYTES, localVoiceAllowed, speakWithElevenLabs, testStoryVoice } from "../src/server/story-voice.js";
+import { KOKORO_MIN_CORES, KOKORO_MIN_MEMORY_BYTES, localVoiceAllowed, pcm16Wav, speakWithElevenLabs, testStoryVoice } from "../src/server/story-voice.js";
 
 const GB = 2 ** 30;
 
@@ -35,4 +35,16 @@ test("ElevenLabs narration sends the key and the voice, and says why when it ref
   assert.equal(calls[0].body.text, "Hello there");
   const refuse = (async () => new Response(JSON.stringify({ detail: { message: "Invalid API key" } }), { status: 401 })) as unknown as typeof fetch;
   await assert.rejects(speakWithElevenLabs("bad", "EXAVITQu4vr4xnSDxMaL", "Refused", file, refuse), (error: GitReviewError) => error.status === 502 && /401.*Invalid API key/.test(error.message));
+});
+
+test("local voice lines are 16-bit PCM WAV, which every browser plays, with samples clamped to the 16-bit range", () => {
+  const wav = pcm16Wav(new Float32Array([0, 0.5, -1, 2]), 24_000);
+  assert.equal(wav.toString("ascii", 0, 4), "RIFF");
+  assert.equal(wav.toString("ascii", 8, 12), "WAVE");
+  assert.equal(wav.readUInt16LE(20), 1, "PCM, not 32-bit float");
+  assert.equal(wav.readUInt16LE(22), 1, "mono");
+  assert.equal(wav.readUInt32LE(24), 24_000);
+  assert.equal(wav.readUInt16LE(34), 16);
+  assert.equal(wav.readUInt32LE(40), 8);
+  assert.deepEqual([0, 1, 2, 3].map((index) => wav.readInt16LE(44 + index * 2)), [0, 16384, -32767, 32767]);
 });

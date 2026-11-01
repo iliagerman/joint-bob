@@ -86,7 +86,26 @@ export async function startLocalVoiceInstall(): Promise<void> {
 let engine: Promise<{ KokoroTTS: { from_pretrained(id: string, options: object): Promise<KokoroEngine> }; env: { cacheDir: string } }> | undefined;
 
 interface KokoroEngine {
-  generate(text: string, options: { voice: string; speed: number }): Promise<{ save(file: string): Promise<void> }>;
+  generate(text: string, options: { voice: string; speed: number }): Promise<{ audio: Float32Array; sampling_rate: number }>;
+}
+
+/** Kokoro's own WAV is 32-bit float, which Safari does not play; 16-bit PCM plays in every browser and is half the size. */
+export function pcm16Wav(samples: Float32Array, rate: number): Buffer {
+  const wav = Buffer.alloc(44 + samples.length * 2);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(36 + samples.length * 2, 4);
+  wav.write("WAVEfmt ", 8, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24);
+  wav.writeUInt32LE(rate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(samples.length * 2, 40);
+  samples.forEach((sample, index) => wav.writeInt16LE(Math.round(Math.max(-1, Math.min(1, sample)) * 32767), 44 + index * 2));
+  return wav;
 }
 
 function loadKokoro(): Promise<KokoroEngine> {
@@ -122,7 +141,8 @@ export function narrationProvider(projectId: string, settings: StorySettings = g
 }
 
 function voiceFile(provider: VoiceProvider, voice: string, speed: number, text: string): string {
-  const key = createHash("sha256").update(`${provider}\n${voice}\n${speed}\n${text}`).digest("hex");
+  // "pcm16" keeps lines saved in the old 32-bit float format from being served again.
+  const key = createHash("sha256").update(`${provider}\n${voice}\n${speed}\n${text}${provider === "kokoro" ? "\npcm16" : ""}`).digest("hex");
   return path.join(storyVoiceDirectory(), `${key}.${provider === "kokoro" ? "wav" : "mp3"}`);
 }
 
@@ -161,7 +181,7 @@ async function speakWithKokoro(voice: string, speed: number, text: string, file:
   const spoken = queue.then(async () => {
     const audio = await (await loadKokoro()).generate(text, { voice, speed });
     await mkdir(path.dirname(file), { recursive: true });
-    await audio.save(file);
+    await writeFile(file, pcm16Wav(audio.audio, audio.sampling_rate));
   });
   queue = spoken.catch(() => undefined);
   await spoken;

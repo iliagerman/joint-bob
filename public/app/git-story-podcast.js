@@ -13,20 +13,21 @@ import { diffClass, renderSlide, revealSlide } from "./git-story-slides.js";
 const SECONDS_PER_WORD = 0.4;
 const MIN_LINE_SECONDS = 3;
 const PREFETCH = 2;
+const CLIP_START_MS = 6000;
 const NAMES = { host: "Maya", cohost: "Jonah" };
 const OTHER = { host: "cohost", cohost: "host" };
 const STUDIO = "podcast";
 
 const wordCount = (text) => text.split(/\s+/).length;
 
-export function playStoryPodcast({ script: first, host, settings, narrate = null, ask = null, rewrite = null, notify = () => {} }) {
+// `audio` should be an element first played inside the viewer's click: Safari only lets such an element make sound later.
+export function playStoryPodcast({ script: first, host, settings, narrate = null, ask = null, rewrite = null, notify = () => {}, audio = new Audio() }) {
   const player = {
     script: first, chapters: [], lines: [], index: -1, chapter: -1, playing: false, finished: false, speed: 1, muted: false,
     voice: Boolean(narrate), clips: new Map(), urls: [], busy: false, token: 0, frame: 0, lastFrame: 0, silentLeft: 0,
     view: { scene: STUDIO, mood: "calm", progress: 0, storyP: 0, sunP: 0, scroll: 0, playing: false, who: null, handsAt: -1e9 },
     sceneAt: 0, place: PLACES[STUDIO], actors: null, slide: null,
   };
-  const audio = new Audio();
 
   const canvas = h("canvas", { class: "gsp-backdrop", width: W, height: H });
   const g = canvas.getContext("2d");
@@ -194,14 +195,29 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
       audio.src = url;
       audio.playbackRate = player.speed;
       audio.muted = player.muted;
-      if (player.playing) await audio.play();
+      if (player.playing) await startClip();
       for (let ahead = 1; ahead <= PREFETCH && index + ahead < player.lines.length; ahead += 1) clip(index + ahead).catch(() => {});
     } catch (error) {
-      if (token !== player.token) return;
-      voiceNote.hidden = true;
-      player.voice = false;
-      notify(`The narration failed: ${error.message} The podcast plays silently.`);
+      if (token === player.token) dropVoice(error);
     }
+  }
+
+  function dropVoice(error) {
+    voiceNote.hidden = true;
+    player.voice = false;
+    audio.pause();
+    notify(`The narration failed: ${error.message} The podcast plays silently.`);
+  }
+
+  // A clip that loads but never starts would hold the movie on one line, so it gets a few seconds before narration stops.
+  function startClip() {
+    const started = new Promise((resolve, reject) => {
+      // A pause before the clip starts is the viewer's choice, not a failure.
+      const timer = setTimeout(() => (player.playing ? reject(new Error("This browser did not start the narration clip.")) : resolve()), CLIP_START_MS);
+      audio.addEventListener("playing", () => { clearTimeout(timer); resolve(); }, { once: true });
+      audio.addEventListener("error", () => { clearTimeout(timer); reject(new Error(`This browser could not play the narration${audio.error?.message ? ` (${audio.error.message})` : ""}.`)); }, { once: true });
+    });
+    return audio.play().then(() => started);
   }
 
   audio.onended = () => go(player.index + 1);
@@ -210,7 +226,9 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     player.playing = on;
     player.view.playing = on;
     playButton.textContent = on ? "⏸ Pause" : player.finished ? "↺ Replay" : "▶ Play";
-    if (on && audio.hasAttribute("src")) void audio.play(); else audio.pause();
+    if (!on || !audio.hasAttribute("src")) { audio.pause(); return; }
+    const token = player.token;
+    startClip().catch((error) => { if (token === player.token && player.voice) dropVoice(error); });
   }
 
   function toggle() {

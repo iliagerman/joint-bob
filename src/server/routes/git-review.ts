@@ -736,7 +736,7 @@ async function performOverview(projectId: string, cwd: string, input: z.infer<ty
   const existing = listGitReviewThreads(projectId, input.conversationId).find((thread) => thread.question === ACTIVITY_OVERVIEW_MARKER && sameRepository(thread.selection, repository));
   let thread = existing ? getGitReviewThread(existing.id)! : undefined;
   if (!thread) {
-    onProgress?.({ type: "progress", stage: "Reading conversation and changes" });
+    onProgress?.({ type: "progress", stage: "Reading the conversation and finding the files it changed" });
     const { paths, lastHarness } = await discoverConversationFiles(project, cwd, input.conversationId);
     const sources: StorySources = { scope: "conversation", pendingPaths: paths, includeCommits: true };
     const collected = await collectStorySources(project, cwd, input.conversationId, sources);
@@ -747,7 +747,7 @@ async function performOverview(projectId: string, cwd: string, input: z.infer<ty
   const previous = loadStoryScript(projectId, thread.id);
   let script = previous;
   if (!script || input.regenerate) {
-    onProgress?.({ type: "progress", stage: "Writing the movie" });
+    onProgress?.({ type: "progress", stage: `Writing the movie with ${getHarness(thread.harnessId).label} (${thread.modelId})` });
     script = await generateStoryScript(thread, cwd, JSON.parse(thread.messages[1].text) as OverviewSource, settings);
   }
   if (!existing || script !== previous) await publishStory(thread, script, (await getClusterNode()).id);
