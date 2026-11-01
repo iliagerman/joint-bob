@@ -163,7 +163,7 @@ test("a replayed pull request is written on the current base and only its own fi
   assert.deepEqual([result.files, result.deleted], [1, 1]);
   const tree = github.calls.find((call) => call.route === "/git/trees" && call.method === "POST")!.body;
   assert.equal(tree.base_tree, "tree-c");
-  assert.deepEqual(tree.tree.map((entry: any) => entry.path), ["fix.txt", "gone.txt"]);
+  assert.deepEqual(tree.tree.map((entry: any) => entry.path), ["gone.txt", "fix.txt"]);
   assert.deepEqual(github.calls.find((call) => call.route === "/git/commits" && call.method === "POST")!.body.parents, [MAIN]);
 });
 

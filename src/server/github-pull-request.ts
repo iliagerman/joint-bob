@@ -1,4 +1,6 @@
+import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { GitReviewError } from "../git-review.js";
 import { nodeSettings } from "../settings.js";
@@ -39,19 +41,46 @@ function assertBranch(branch: string, label: string): void {
 
 const refRoute = (branch: string) => branch.split("/").map(encodeURIComponent).join("/");
 const unknownCommit = (error: unknown) => error instanceof GitReviewError && (error.status === 404 || /HTTP 422/.test(error.message));
-const BLOB_CONCURRENCY = 8;
+// Leave room for commit/ref/PR writes below GitHub's 500 content requests/hour.
+const UPLOAD_INTERVAL_MS = 7_500;
+const TREE_BATCH_BYTES = 4 * 1024 * 1024;
+type UploadEntry = { path: string; mode: string; type: "blob" } & ({ content: string } | { sha: string | null });
 
-/** Runs work over items with a bounded number of requests in flight, keeping input order in the results. */
-async function inParallel<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await work(items[index]);
+/** Inline UTF-8 content in bounded tree requests; binary/oversized files use base64 blobs. */
+async function uploadTree(call: GithubCall, baseTree: string, writes: WorktreeChanges["writes"], deletes: string[]): Promise<string> {
+  let nextUpload = 0;
+  const upload = async (route: string, body: object): Promise<string> => {
+    const wait = nextUpload - performance.now();
+    if (wait > 0) await sleep(wait);
+    nextUpload = performance.now() + UPLOAD_INTERVAL_MS;
+    return (await call(route, "POST", body) as { sha: string }).sha;
+  };
+  // Delete old paths before later batches can replace a file with a directory or vice versa.
+  const entries: UploadEntry[] = deletes.map((file) => ({ path: file, mode: "100644", type: "blob", sha: null }));
+  for (const file of writes) {
+    const entry = { path: file.path, mode: file.executable ? "100755" : "100644", type: "blob" as const };
+    const text = isUtf8(file.content) ? { ...entry, content: file.content.toString("utf8") } : null;
+    if (text && Buffer.byteLength(JSON.stringify(text)) + 1024 <= TREE_BATCH_BYTES) {
+      entries.push(text);
+    } else {
+      const sha = await upload("/git/blobs", { content: file.content.toString("base64"), encoding: "base64" });
+      entries.push({ ...entry, sha });
     }
-  }));
-  return results;
+  }
+  if (!entries.length) throw new GitReviewError(409, "The worktree has no changes to put in a pull request");
+  let batch: UploadEntry[] = [];
+  let bytes = 1024; // Envelope, base_tree SHA and separators.
+  for (const entry of entries) {
+    const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
+    if (batch.length && bytes + size > TREE_BATCH_BYTES) {
+      baseTree = await upload("/git/trees", { base_tree: baseTree, tree: batch });
+      batch = [];
+      bytes = 1024;
+    }
+    batch.push(entry);
+    bytes += size;
+  }
+  return upload("/git/trees", { base_tree: baseTree, tree: batch });
 }
 
 /** The branch's head commit, or null when no such branch exists yet. */
@@ -180,14 +209,7 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
     deletes = deletes.filter((file) => tracked.has(file));
   }
 
-  const blobs = await inParallel(writes, BLOB_CONCURRENCY, async (file) => {
-    const blob = await call("/git/blobs", "POST", { content: file.content.toString("base64"), encoding: "base64" }) as { sha: string };
-    return { path: file.path, mode: file.executable ? "100755" : "100644", type: "blob" as const, sha: blob.sha };
-  });
-  const entries: Array<{ path: string; mode: string; type: "blob"; sha: string | null }> = [...blobs];
-  for (const file of deletes) entries.push({ path: file, mode: "100644", type: "blob", sha: null });
-  if (!entries.length) throw new GitReviewError(409, "The worktree has no changes to put in a pull request");
-  const tree = await call("/git/trees", "POST", { base_tree: baseTree, tree: entries }) as { sha: string };
+  const tree = await uploadTree(call, baseTree, writes, deletes);
   // A branch that already exists was left by an earlier attempt that did not finish. Its tree is replaced
   // by this one, so the new commit goes on top of it and the update is a fast-forward.
   const existingHead = await branchHead(call, branch);
@@ -198,7 +220,7 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
     const comparison = await call(`/compare/${baseCommit}...${existingHead}`) as { status?: string };
     if (comparison.status !== "ahead" && comparison.status !== "identical") parents.push(baseCommit);
   }
-  const commit = await call("/git/commits", "POST", { message: input.body ? `${input.title}\n\n${input.body}` : input.title, tree: tree.sha, parents }) as { sha: string };
+  const commit = await call("/git/commits", "POST", { message: input.body ? `${input.title}\n\n${input.body}` : input.title, tree, parents }) as { sha: string };
 
   if (previous) {
     await call(`/git/refs/heads/${refRoute(branch)}`, "PATCH", { sha: commit.sha, force: false });

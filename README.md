@@ -353,6 +353,8 @@ Existing Git-backed tickets keep their worktree and merge behavior. New tickets 
 
 ### Project Git and issues
 
+The worktree pull-request tool uploads UTF-8 files together in tree requests, using a 4 MiB JSON payload budget rather than one request per file. Larger sets use chained batches and still produce one commit. Binary files and text files too large for a batch use base64 blob uploads. Upload requests are spaced 7.5 seconds apart to reduce GitHub content-rate-limit errors; other activity on the same account can still exhaust its quota. File modes, deletions and the pull request's base are preserved. Binary-heavy pull requests can still take a long time and remain subject to the configured Git PR timeout.
+
 Open a project's row menu and choose **Git repositories**, without opening a conversation. Pick a machine and repository to inspect changes, diffs, history, saved reviews, pull requests, and pipelines. Joint Bob discovers repositories at the project root and in nested folders, including Git files used by submodules. Dependency and build folders are skipped, symlink directories are not scanned, and incomplete scans show a warning. Git data stays on the selected machine.
 
 Choose **GitHub issues** in the project menu for that project's repositories. The issues button beside project search opens a combined view. Select one or more projects and **Apply selection**, then filter by repository, open/closed state, or search the loaded results. Each issue shows its project and repository; duplicate issues from the same GitHub repository appear once. **Load more** fetches older issues. Unavailable repositories show errors without hiding the others. **Refresh** retries them.

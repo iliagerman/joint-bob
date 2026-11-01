@@ -67,7 +67,7 @@ test("a worktree pull request commits on the recorded base and opens against the
     assert.ok(github.calls.every((call) => call.authorization === "Bearer gh-token"));
     const tree = github.calls.find((call) => call.route === "/git/trees" && call.method === "POST")!.body;
     assert.equal(tree.base_tree, "tree-a");
-    assert.deepEqual(tree.tree.map((entry: any) => [entry.path, entry.mode, entry.sha === null]), [["src/fix.ts", "100644", false], ["bin/run", "100755", false], ["src/tracked.ts", "100644", true]]);
+    assert.deepEqual(tree.tree.map((entry: any) => [entry.path, entry.mode, entry.sha === null]), [["src/tracked.ts", "100644", true], ["src/fix.ts", "100644", false], ["bin/run", "100755", false]]);
     assert.deepEqual(github.calls.find((call) => call.route === "/git/commits" && call.method === "POST")!.body.parents, [BASE]);
     assert.deepEqual(github.calls.find((call) => call.route === "/git/refs")!.body, { ref: "refs/heads/joint-bob/fix-12345678", sha: "new-commit" });
     assert.deepEqual(github.calls.find((call) => call.route === "/pulls" && call.method === "POST")!.body, { title: "Fix the crash", head: "joint-bob/fix-12345678", base: "main", body: "Found in the error log." });
@@ -127,8 +127,92 @@ test("worktree pull requests allow up to 1,000 changed files", async () => {
     });
     const result = await openWorktreePullRequest({ projectPath, branchName: "joint-bob/large-pr", title: "Large PR", body: "", changes: changesFor(1_000), previous: null }, credentials, github.request);
     assert.equal(result.files, 1_000);
+    assert.equal(github.calls.filter((call) => call.route === "/git/blobs").length, 0, "text files upload in bulk, not one blob request per file");
+    const trees = github.calls.filter((call) => call.route === "/git/trees" && call.method === "POST");
+    assert.equal(trees.length, 1);
+    assert.equal(trees[0].body.tree.length, 1_000);
+    assert.ok(trees[0].body.tree.every((entry: any) => entry.content === "x" && !("sha" in entry)));
     await assert.rejects(openWorktreePullRequest({ projectPath, branchName: "joint-bob/too-large", title: "Too large", body: "", changes: changesFor(1_001), previous: null }, credentials, github.request), /at most 1000 files/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("bulk tree uploads preserve UTF-8, empty files and executable modes", async (t) => {
+  const { root, projectPath } = await repository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const github = fakeGitHub({ knownCommits: [BASE] });
+  const writes = [
+    { path: "unicode.txt", content: Buffer.from("\uFEFFשלום 🌍\n"), executable: false },
+    { path: "empty", content: Buffer.alloc(0), executable: true },
+  ];
+  await openWorktreePullRequest({ projectPath, branchName: "joint-bob/text", title: "Text", body: "", changes: { gitBase: BASE, writes, deletes: [] }, previous: null }, credentials, github.request);
+  const tree = github.calls.find((call) => call.route === "/git/trees" && call.method === "POST")!.body;
+  assert.deepEqual(tree.tree, writes.map((file) => ({ path: file.path, mode: file.executable ? "100755" : "100644", type: "blob", content: file.content.toString("utf8") })));
+});
+
+test("binary and oversized text uploads preserve bytes and pace content requests", async (t) => {
+  const { root, projectPath } = await repository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const github = fakeGitHub({ knownCommits: [BASE] });
+  const times: number[] = [];
+  const request = (async (url: string, init: RequestInit = {}) => {
+    if (init.method === "POST" && /\/git\/(blobs|trees)$/.test(url)) times.push(performance.now());
+    return github.request(url, init);
+  }) as typeof fetch;
+  const writes = [
+    { path: "binary", content: Buffer.from([0, 0xff, 0x80, 0xc0]), executable: true },
+    { path: "large.txt", content: Buffer.alloc(4 * 1024 * 1024, "x"), executable: false },
+  ];
+  await openWorktreePullRequest({ projectPath, branchName: "joint-bob/binary", title: "Binary", body: "", changes: { gitBase: BASE, writes, deletes: [] }, previous: null }, credentials, request);
+  const blobs = github.calls.filter((call) => call.route === "/git/blobs");
+  assert.deepEqual(blobs.map((call) => call.body), writes.map((file) => ({ content: file.content.toString("base64"), encoding: "base64" })));
+  const tree = github.calls.find((call) => call.route === "/git/trees" && call.method === "POST")!.body;
+  assert.deepEqual(tree.tree, writes.map((file, index) => ({ path: file.path, mode: file.executable ? "100755" : "100644", type: "blob", sha: `blob-${github.calls.indexOf(blobs[index]) + 1}` })));
+  assert.equal(times.length, 3);
+  for (let index = 1; index < times.length; index++) assert.ok(times[index] - times[index - 1] >= 7_450, "uploads must stay below GitHub's hourly content limit");
+});
+
+test("large escaped contents split into bounded trees chained before committing", async (t) => {
+  const { root, projectPath } = await repository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const github = fakeGitHub({ knownCommits: [BASE] });
+  let trees = 0;
+  const request = (async (url: string, init: RequestInit = {}) => {
+    const response = await github.request(url, init);
+    return init.method === "POST" && url.endsWith("/git/trees")
+      ? new Response(JSON.stringify({ sha: `tree-batch-${++trees}` }), { status: 201 }) : response;
+  }) as typeof fetch;
+  const writes = Array.from({ length: 3 }, (_, index) => ({ path: `escaped-${index}.txt`, content: Buffer.from('"'.repeat(800_000)), executable: false }));
+  await openWorktreePullRequest({ projectPath, branchName: "joint-bob/batches", title: "Batches", body: "", changes: { gitBase: BASE, writes, deletes: ["src/tracked.ts"] }, previous: null }, credentials, request);
+  const batches = github.calls.filter((call) => call.route === "/git/trees" && call.method === "POST");
+  assert.equal(github.calls.filter((call) => call.route === "/git/blobs").length, 0);
+  assert.equal(batches.length, 2);
+  assert.deepEqual(batches.map((call) => call.body.base_tree), ["tree-a", "tree-batch-1"]);
+  for (const batch of batches) assert.ok(Buffer.byteLength(JSON.stringify(batch.body)) <= 4 * 1024 * 1024);
+  assert.deepEqual(batches.flatMap((call) => call.body.tree.map((entry: any) => entry.path)), ["src/tracked.ts", ...writes.map((file) => file.path)]);
+  assert.equal(github.calls.find((call) => call.route === "/git/commits" && call.method === "POST")!.body.tree, "tree-batch-2");
+});
+
+test("a text file at the batch boundary does not create an empty tree first", async (t) => {
+  const { root, projectPath } = await repository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const github = fakeGitHub({ knownCommits: [BASE] });
+  const entry = { path: "boundary.txt", mode: "100644", type: "blob", content: "" };
+  const content = Buffer.alloc(4 * 1024 * 1024 - 1024 - Buffer.byteLength(JSON.stringify(entry)), "x");
+  await openWorktreePullRequest({ projectPath, branchName: "joint-bob/boundary", title: "Boundary", body: "", changes: { gitBase: BASE, writes: [{ path: entry.path, content, executable: false }], deletes: [] }, previous: null }, credentials, github.request);
+  assert.equal(github.calls.filter((call) => call.route === "/git/blobs").length, 0);
+  const trees = github.calls.filter((call) => call.route === "/git/trees" && call.method === "POST");
+  assert.equal(trees.length, 1);
+  assert.ok(Buffer.byteLength(JSON.stringify(trees[0].body)) <= 4 * 1024 * 1024);
+});
+
+test("an upload failure leaves the branch and pull request untouched", async (t) => {
+  const { root, projectPath } = await repository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const github = fakeGitHub({ knownCommits: [BASE] });
+  const request = (async (url: string, init: RequestInit = {}) => init.method === "POST" && url.endsWith("/git/trees")
+    ? new Response("", { status: 429 }) : github.request(url, init)) as typeof fetch;
+  await assert.rejects(openWorktreePullRequest({ projectPath, branchName: "joint-bob/failure", title: "Fail", body: "", changes: changes(BASE), previous: null }, credentials, request), /HTTP 429/);
+  assert.equal(github.calls.some((call) => call.method === "PATCH" || ["/git/commits", "/git/refs", "/pulls"].includes(call.route) && call.method === "POST"), false);
 });
 
 test("worktree pull requests enforce the configured file limit", async () => {

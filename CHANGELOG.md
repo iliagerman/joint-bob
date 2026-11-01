@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.190.3 — 2026-11-01
+
+- Changed worktree pull requests to upload text files together in size-bounded batches instead of one request per file, reducing GitHub rate-limit failures on large changes. Binary and oversized files use paced uploads while preserving their contents and executable permissions.
+
 ## 2.190.2 — 2026-11-01
 
 - Fixed story and Activity overview narration being refused by the browser before it played, so narration clips now play in Safari and Chrome.
