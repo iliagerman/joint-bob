@@ -34,8 +34,15 @@ async function memberSession(node: SeededNode, username: string, oneTimePassword
   return session;
 }
 
-/** Routes that end the member's own session, which would hide every later answer. */
-const SKIPPED = new Set(["POST /api/auth/logout", "DELETE /api/auth/sessions/:sessionId"]);
+/**
+ * Routes that end the caller's own session, which would hide every later answer, and the admin's
+ * installers, which run npm against the public registry in the background and outlive the node.
+ * The installers hold nobody's data; admin-gate.test.ts proves a member can't reach them.
+ */
+const SKIPPED = new Set([
+  "POST /api/auth/logout", "DELETE /api/auth/sessions/:sessionId",
+  "POST /api/update/harnesses", "POST /api/story-settings/local-voice/install",
+]);
 
 interface SweepIds { projectId: string; sessionId: string; sessionPath: string; noteId: string; accountId: string; routingId: string; ntfyId: string }
 
