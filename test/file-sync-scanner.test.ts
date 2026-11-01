@@ -602,6 +602,42 @@ test("tombstones are pruned only when every peer has them and they are old", asy
   assert.equal(s.db.share(s.key)!.prunedBelow, tombstone.seq);
 });
 
+test("a worktrees share prunes its tombstones after days, not a month, and each peer's tombstone for the path goes too", async (t) => {
+  const s = setup(t, { kind: "worktrees" });
+  s.write("wt1/gone.txt");
+  s.write("wt1/kept.txt");
+  await s.scanner.scan("full");
+  rmSync(path.join(s.root, "wt1", "gone.txt"));
+  await s.scanner.scan({ paths: ["wt1/gone.txt"] });
+  const tombstone = s.row("wt1/gone.txt")!;
+  const indexId = s.db.share(s.key)!.indexId;
+  const remote = (relative: string, deleted: boolean, seq: number) => ({ path: relative, type: 0, size: 1, mtimeMs: 1, mode: 0o644, sha256: "a".repeat(64), target: null, deleted, version: { "peer-a": seq }, modifiedBy: "peer-a", seq });
+  s.db.writeTx(() => {
+    s.db.setAck(s.key, "peer-a", indexId, tombstone.seq, s.clock.now());
+    s.db.putRemote(s.key, "peer-a", remote("wt1/gone.txt", true, 1));
+    s.db.putRemote(s.key, "peer-a", remote("wt1/kept.txt", false, 2));
+  });
+  s.clock.advance(2 * 86_400_000);
+  assert.equal(s.scanner.pruneTombstones(["peer-a"]), 0, "two days is too young");
+  s.clock.advance(2 * 86_400_000);
+  assert.equal(s.scanner.pruneTombstones(["peer-a"]), 1);
+  assert.equal(s.row("wt1/gone.txt"), undefined);
+  assert.equal(s.db.remote(s.key, "peer-a", "wt1/gone.txt"), undefined, "the peer's tombstone went with ours");
+  assert.equal(s.db.remote(s.key, "peer-a", "wt1/kept.txt")?.deleted, false, "a live peer row stays");
+});
+
+test("a project share still keeps its tombstones for a month", async (t) => {
+  const s = setup(t);
+  s.write("gone.txt");
+  await s.scanner.scan("full");
+  unlinkSync(path.join(s.root, "gone.txt"));
+  await s.scanner.scan({ paths: ["gone.txt"] });
+  const tombstone = s.row("gone.txt")!;
+  s.db.writeTx(() => s.db.setAck(s.key, "peer-a", s.db.share(s.key)!.indexId, tombstone.seq, s.clock.now()));
+  s.clock.advance(4 * 86_400_000);
+  assert.equal(s.scanner.pruneTombstones(["peer-a"]), 0);
+});
+
 test("written rows reach the in-transaction hook with their before and after", async (t) => {
   const seen: Array<{ path: string; before: boolean; after: string; inTransaction: boolean }> = [];
   let s: Setup | undefined;

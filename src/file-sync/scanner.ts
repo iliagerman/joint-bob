@@ -32,6 +32,9 @@ export interface ScannerOptions {
   replacedMinimum: number;
   replacedRatio: number;
   tombstoneRetentionMs: number;
+  /** The same for a worktrees share. Worktrees are made and swept many times a day, ~12k files each, so a 30-day
+      wait kept hundreds of thousands of their tombstones (and every peer's copy of them) in the index. */
+  worktreeTombstoneRetentionMs: number;
   staleTempMs: number;
   /** Keep on-disk spellings that differ from the NFC key (Linux); APFS finds a file by any normalization. */
   fsNames: boolean;
@@ -42,8 +45,11 @@ export interface ScannerOptions {
 export const SCANNER_DEFAULTS: ScannerOptions = {
   smallFileBytes: 8 * MiB, settleMs: 2000, maxSettleMs: 60_000, batchSize: 1000,
   replacedMinimum: 500, replacedRatio: 0.5,
-  tombstoneRetentionMs: 30 * DAY, staleTempMs: HOUR, fsNames: process.platform !== "darwin", hashChunkBytes: MiB, hashCheckBytes: 64 * MiB,
+  tombstoneRetentionMs: 30 * DAY, worktreeTombstoneRetentionMs: 3 * DAY, staleTempMs: HOUR, fsNames: process.platform !== "darwin", hashChunkBytes: MiB, hashCheckBytes: 64 * MiB,
 };
+
+/** Tombstones removed per transaction by pruneTombstones. */
+const PRUNE_BATCH = 5_000;
 
 export const REPLACED_MESSAGE = "This folder looks replaced; confirm in Settings → File sync";
 const ENGINE_TEMP = /^\.joint-bob-sync\..+\.tmp$/;
@@ -1033,7 +1039,12 @@ export class ShareScanner {
     });
   }
 
-  /** Tombstones every eligible peer acknowledged and older than the retention go; pruned_below records it (§5.2.8). */
+  /**
+   * Tombstones every eligible peer acknowledged and older than the retention go; pruned_below records it (§5.2.8).
+   * Each peer's own tombstone for a pruned path goes with it: those rows were never removed before, and only a
+   * peer reset dropped them. Every peer acknowledged the delete, so its tombstone tells this node nothing more,
+   * and tombstones are not in any digest. Rows go in batches, so one prune never holds the database for long.
+   */
   pruneTombstones(peers: readonly string[] = this.ctx.peers): number {
     if (!peers.length) return 0;
     const { db } = this.deps;
@@ -1042,13 +1053,22 @@ export class ShareScanner {
     const acks = new Map(db.acks(this.ctx.key).filter((ack) => ack.indexId === share.indexId).map((ack) => [ack.peer, ack.seq]));
     if (peers.some((peer) => !acks.has(peer))) return 0;
     const acknowledged = peers.reduce((min, peer) => Math.min(min, acks.get(peer)!), Number.MAX_SAFE_INTEGER);
-    const rows = db.prunableTombstones(this.ctx.key, acknowledged, this.now() - this.options.tombstoneRetentionMs);
+    const retention = this.ctx.kind === "worktrees" ? this.options.worktreeTombstoneRetentionMs : this.options.tombstoneRetentionMs;
+    const rows = db.prunableTombstones(this.ctx.key, acknowledged, this.now() - retention);
     if (!rows.length) return 0;
-    const highest = rows.reduce((max, row) => Math.max(max, row.seq), share.prunedBelow);
-    db.writeTx(() => {
-      for (const row of rows) db.deleteEntry(this.ctx.key, row.path);
-      db.updateShare(this.ctx.key, { prunedBelow: highest });
-    });
+    const holders = [...new Set([...peers, ...db.cursors(this.ctx.key).map((cursor) => cursor.peer)])];
+    let highest = share.prunedBelow;
+    for (let start = 0; start < rows.length; start += PRUNE_BATCH) {
+      const batch = rows.slice(start, start + PRUNE_BATCH);
+      highest = batch.reduce((max, row) => Math.max(max, row.seq), highest);
+      db.writeTx(() => {
+        for (const row of batch) {
+          db.deleteEntry(this.ctx.key, row.path);
+          for (const peer of holders) db.deleteRemoteTombstone(this.ctx.key, peer, row.path);
+        }
+        db.updateShare(this.ctx.key, { prunedBelow: highest });
+      });
+    }
     return rows.length;
   }
 

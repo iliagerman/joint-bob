@@ -124,6 +124,18 @@ const SCAN_BUDGET_MS = 40;
 // delivery row" read the whole outbox in a single query for a peer that already has them all.
 const SCAN_WINDOW = 2_000;
 
+/** The account an event belongs to, as the account index is built on it; queries must repeat it exactly. */
+const OUTBOX_ACCOUNT = "json_extract(o.payload,'$.username')";
+const OUTBOX_ACCOUNT_INDEX = "replication_outbox_account";
+const indexedDatabases = new WeakSet<DatabaseSync>();
+/** Built the first time a visitor's events are searched, not at startup: on a node with a long
+    history it reads every payload once (a few seconds), which a restart cannot afford. */
+export function ensureOutboxAccountIndex(db: DatabaseSync): void {
+  if (indexedDatabases.has(db)) return;
+  db.exec(`CREATE INDEX IF NOT EXISTS ${OUTBOX_ACCOUNT_INDEX} ON replication_outbox(json_extract(payload,'$.username'))`);
+  indexedDatabases.add(db);
+}
+
 /** One transaction per pass: each delivery row committed on its own costs a disk sync, and a pass has a time budget. */
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean, accounts?: string[]): ReplicationEvent[] {
   db.exec("BEGIN IMMEDIATE");
@@ -159,11 +171,20 @@ function allocateEventsForPeer(db: DatabaseSync, peerId: string, at: string, fil
     }
   }
   // A peer that takes only some accounts' events has the rest skipped by the query itself: judged
-  // here, every other event came back a hundred at a time and was refused, on every pass.
-  const page = db.prepare(`SELECT o.rowid cursor, o.* FROM replication_outbox o
-    WHERE o.rowid>? AND o.rowid<=?${accounts ? " AND json_extract(o.payload,'$.username') IN (SELECT value FROM json_each(?))" : ""}
-    AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
-    ORDER BY o.rowid LIMIT 100`);
+  // here, every other event came back a hundred at a time and was refused, on every pass. The
+  // query reads the account index, so a pass costs what the visitor's own events cost: matched
+  // on the payload instead, every row of the window was parsed, and a visitor with no events
+  // still had the whole outbox read for it every five minutes (about a second each on the Mac).
+  if (accounts) ensureOutboxAccountIndex(db);
+  const page = db.prepare(accounts
+    ? `SELECT o.rowid cursor, o.* FROM replication_outbox o INDEXED BY ${OUTBOX_ACCOUNT_INDEX}
+      WHERE ${OUTBOX_ACCOUNT} IN (SELECT value FROM json_each(?)) AND o.rowid>? AND o.rowid<=?
+      AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
+      ORDER BY o.rowid LIMIT 100`
+    : `SELECT o.rowid cursor, o.* FROM replication_outbox o
+      WHERE o.rowid>? AND o.rowid<=?
+      AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
+      ORDER BY o.rowid LIMIT 100`);
   const accountsJson = accounts ? [JSON.stringify(accounts)] : [];
   const allocate = db.prepare(`INSERT OR IGNORE INTO replication_deliveries
     (event_id,peer_id,attempts,next_attempt_at,delivered_at,last_error) VALUES (?,?,0,?,NULL,NULL)`);
@@ -179,8 +200,9 @@ function allocateEventsForPeer(db: DatabaseSync, peerId: string, at: string, fil
   const search = (from: number, to: number): number => {
     let cursor = from;
     while (cursor < to && selected.length < 100 && Date.now() - started < SCAN_BUDGET_MS) {
-      const upTo = Math.min(to, cursor + SCAN_WINDOW);
-      const rows = page.all(cursor, upTo, ...accountsJson, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
+      // The account index finds the visitor's events anywhere in the range, so it needs no window.
+      const upTo = accounts ? to : Math.min(to, cursor + SCAN_WINDOW);
+      const rows = page.all(...accountsJson, cursor, upTo, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
       for (const row of rows) {
         if (Date.now() - started >= SCAN_BUDGET_MS) return cursor;
         cursor = row.cursor;

@@ -65,3 +65,36 @@ test("a peer limited to some accounts is searched only for their events", async 
     db.close();
   }
 });
+
+// A visitor with no events of their own had the whole outbox read for them every five minutes:
+// the payload of every event parsed to find their account (2026-11-01, about a second each on
+// the Mac with 334k events). The account index makes that pass cost only the visitor's events.
+test("a visitor's search reads the account index, whatever the outbox holds", async () => {
+  const db = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+  ensureReplicationSchema(db);
+  const peer = "scan-index-peer", visitor = "abcdefabcdefabcdefabcdefabcdefab";
+  const at = new Date("2026-05-01T00:00:00.000Z");
+  db.exec("BEGIN");
+  for (let i = 0; i < 50_000; i++) enqueueReplicationEvent(db, { originNodeId: "local", entityType: "model.usage", entityKey: `scan-index-${i}`, operation: "upsert", payload: { username: "fedcba9876543210fedcba9876543210", projectId: "scan", tokens: i } });
+  db.exec("COMMIT");
+  try {
+    let judged = 0;
+    const accept = () => { judged++; return true; };
+    const started = performance.now();
+    assert.deepEqual(await eventsForPeer(peer, at, accept, [visitor]), [], "nothing of the visitor's");
+    const elapsed = performance.now() - started;
+    assert.equal(judged, 0);
+    assert.ok(elapsed < 200, `one pass covers the whole history without reading it (${elapsed.toFixed(0)} ms, index built included)`);
+    const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT o.rowid FROM replication_outbox o INDEXED BY ${"replication_outbox_account"}
+      WHERE json_extract(o.payload,'$.username') IN (SELECT value FROM json_each(?)) AND o.rowid>? AND o.rowid<=? ORDER BY o.rowid LIMIT 100`)
+      .all(JSON.stringify([visitor]), 0, 1e12) as Array<{ detail: string }>;
+    assert.ok(plan.some((row) => /USING (COVERING )?INDEX replication_outbox_account/.test(row.detail)), JSON.stringify(plan));
+    const own = enqueueReplicationEvent(db, { originNodeId: "local", entityType: "user.recent", entityKey: "scan-index-own", operation: "upsert", payload: { username: visitor, projectId: "scan" } });
+    assert.deepEqual((await eventsForPeer(peer, new Date(at.getTime() + 1000), accept, [visitor])).map((event) => event.id), [own.id], "a new event of theirs is found");
+    assert.equal(judged, 1);
+  } finally {
+    db.prepare("DELETE FROM replication_deliveries WHERE peer_id=?").run(peer);
+    db.prepare("DELETE FROM replication_outbox WHERE entity_key LIKE 'scan-index-%'").run();
+    db.close();
+  }
+});

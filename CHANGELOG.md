@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Fixed webhook conversations failing to refresh their memory access while the database was busy with another save.
 - Fixed shared project name and color updates from other nodes being rejected when the database was busy with another write.
 - Added Guardian (Settings → Guardian): yes/no rules checked by Jev or Laya before agents run commands, change files or send content to the AI, with ask, block or fix actions, reviews in the conversation, relay-enforced rules, and one-click local Laya install in Settings → Classifiers.
+- Fixed file sync keeping deleted worktrees in its index for a month: their records now go after 3 days, and visitors' sync no longer re-reads the whole history every five minutes.
 
 ## 2.185.0 — 2026-11-01
 

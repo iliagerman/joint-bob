@@ -490,6 +490,12 @@ export class FileSyncDb {
     this.statement("DELETE FROM entries WHERE share = ? AND path = ?").run(share, relative);
   }
 
+  /** A peer's tombstone for one path; its live row stays. */
+  deleteRemoteTombstone(share: string, peer: string, relative: string): void {
+    this.requireTx();
+    this.statement("DELETE FROM remote WHERE share = ? AND peer = ? AND path = ? AND deleted = 1").run(share, peer, relative);
+  }
+
   liveCount(share: string): number {
     return (this.statement("SELECT COUNT(*) AS n FROM entries WHERE share = ? AND deleted = 0").get(share) as Row).n as number;
   }
