@@ -128,19 +128,31 @@ export function claudeProjectSettingsReplica(cwd: string): Record<string, unknow
   return Object.fromEntries(REPLICATED_PROJECT_SETTINGS.filter((key) => Object.keys(object(replica[key])).length).map((key) => [key, replica[key]]));
 }
 
-function isolatedSettings(cwd: string, memoryDirectory: string | undefined): string {
-  // The built-in agents-md plugin would read the project's AGENTS.md itself; the app passes it instead.
-  // Memory lives in the app's folder for the project, never in ~/.claude; runs without one keep none.
-  const memory = memoryDirectory ? { autoMemoryDirectory: memoryDirectory } : { autoMemoryEnabled: false };
-  const content = JSON.stringify({ ...claudeProjectSettingsReplica(cwd), ...memory, enabledPlugins: { "agents-md@builtin": false, "cc-plugin-agents-md@builtin": false } });
+/** A settings file named by its content. One whose content changed on disk is written again. */
+function settingsFile(content: string): string {
   const directory = path.join(resolveDataDirectory(), "runtime", "claude-settings");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const file = path.join(directory, `${createHash("sha256").update(content).digest("hex")}.json`);
-  if (fs.existsSync(file)) return file;
+  try { if (fs.readFileSync(file, "utf8") === content) return file; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const temporary = `${file}.${randomUUID()}.tmp`;
   fs.writeFileSync(temporary, content, { mode: 0o600, flag: "wx" });
   fs.renameSync(temporary, file);
   return file;
+}
+
+/** The project's hooks with the app's own (Guardian) after them. */
+function withHooks(settings: Record<string, unknown>, hooks: Record<string, unknown[]>): Record<string, unknown> {
+  if (!Object.keys(hooks).length) return settings;
+  const merged: Record<string, unknown[]> = { ...object(settings.hooks) as Record<string, unknown[]> };
+  for (const [event, matchers] of Object.entries(hooks)) merged[event] = [...(merged[event] ?? []), ...matchers];
+  return { ...settings, hooks: merged };
+}
+
+function isolatedSettings(cwd: string, memoryDirectory: string | undefined, hooks: Record<string, unknown[]>): string {
+  // The built-in agents-md plugin would read the project's AGENTS.md itself; the app passes it instead.
+  // Memory lives in the app's folder for the project, never in ~/.claude; runs without one keep none.
+  const memory = memoryDirectory ? { autoMemoryDirectory: memoryDirectory } : { autoMemoryEnabled: false };
+  return settingsFile(JSON.stringify({ ...withHooks(claudeProjectSettingsReplica(cwd), hooks), ...memory, enabledPlugins: { "agents-md@builtin": false, "cc-plugin-agents-md@builtin": false } }));
 }
 
 /** Org memory comes from the claude.ai account, not from the app. */
@@ -148,14 +160,15 @@ export function claudeIsolationEnvironment(): NodeJS.ProcessEnv {
   return getSettings().strictResourceIsolation ? { CLAUDE_CODE_DISABLE_ORG_MEMORY: "1" } : {};
 }
 
-export function claudeResourceIsolationArgs(cwd: string, resources: string[], memoryDirectory?: string): string[] {
+/** `hooks` are the app's own Claude hooks for this run, added to whatever the project defines. */
+export function claudeResourceIsolationArgs(cwd: string, resources: string[], memoryDirectory?: string, hooks: Record<string, unknown[]> = {}): string[] {
   if (!getSettings().strictResourceIsolation) {
     assertNoBlockedNativeResources("claude", "mcp");
-    return resources;
+    return Object.keys(hooks).length ? [...resources, "--settings", settingsFile(JSON.stringify({ hooks }))] : resources;
   }
   // No setting source at all: the CLI then discovers no CLAUDE.md, rules, skills, agents, commands or
   // hooks in the project or its parents, and the app passes what the agent should have.
-  const args = ["--setting-sources", "", "--settings", isolatedSettings(cwd, memoryDirectory)];
+  const args = ["--setting-sources", "", "--settings", isolatedSettings(cwd, memoryDirectory, hooks)];
   // The pinned CLI gives this file exclusive MCP control. Never send dynamic servers or the conflicting strict flag.
   const enterprise = fs.existsSync(claudeEnterpriseMcpPath());
   if (enterprise) {

@@ -12,6 +12,7 @@ import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-g
 import { multiUserEnabled } from "./account-runtime.js";
 import { revokeWebhookTitleAgentTokens, webhookTitleAgentEnvironment, webhookTitleInstructions } from "./webhook-title.js";
 import { webhookMemoryAgentEnvironmentForConversation, webhookMemoryAgentInstructions } from "./webhook-agent.js";
+import { revokeGuardianAgentTokens } from "./guardian/agent-token.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -177,6 +178,7 @@ export function revokeAgentCapabilities(projectId: string, conversationId?: stri
   revokeBrowserAgentTokens(projectId, conversationId);
   revokeNtfyAgentTokens(projectId, conversationId);
   revokeWebhookTitleAgentTokens(projectId, conversationId);
+  revokeGuardianAgentTokens(projectId, conversationId);
 }
 
 export function agentCapabilityInstructionFiles(): Array<{ path: string; content: string }> {

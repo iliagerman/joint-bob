@@ -63,6 +63,8 @@ export interface ClaudeRunOptions {
   env?: NodeJS.ProcessEnv;
   /** Added to the system instruction file, never prepended to user input or slash commands. */
   systemInstructions?: string;
+  /** The app's own Claude hooks for this run (Guardian's tool check). */
+  hooks?: Record<string, unknown[]>;
   onEvent: (payload: UnknownRecord) => void;
   // Fires as soon as Claude reports its session id, so callers can mark the
   // conversation running before the turn finishes.
@@ -599,12 +601,16 @@ export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { 
   await prepareProjectMemory(options.projectId, sessionId);
   const defaults = getSettings().conversationDefaults.claude;
   const conversationId = record?.conversationId ?? sessionId;
+  const { prepareClaudeGuardian } = await import("./guardian/claude.js");
+  const guardian = await prepareClaudeGuardian(options.projectId, conversationId, options.cwd, options.prompt);
   return runClaudePrompt({
     ...options,
+    prompt: guardian.prompt,
+    hooks: guardian.hooks,
     conversationId,
     model: options.model === undefined && !options.resumeSessionId ? defaults.modelId : options.model,
     effort: options.effort === undefined && !options.resumeSessionId ? defaults.thinkingLevel : options.effort,
-    env: { ...options.env, ...agentCapabilityEnvironment(options.projectId, "claude", conversationId, { engine: "claude", sessionId }) },
+    env: { ...options.env, ...agentCapabilityEnvironment(options.projectId, "claude", conversationId, { engine: "claude", sessionId }), ...guardian.env },
     systemInstructions: [options.systemInstructions, ...agentCapabilityInstructionFiles().map((file) => file.content)].filter(Boolean).join("\n\n"),
   });
 }
@@ -660,7 +666,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.tools) args.push("--tools", options.tools.join(","));
   args.push(...claudeResourceIsolationArgs(options.cwd,
     claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId, "claude"), options.systemInstructions, options.cwd),
-    conversationMemoryDirectory(options.projectId, options.resumeSessionId ?? options.sessionId)));
+    conversationMemoryDirectory(options.projectId, options.resumeSessionId ?? options.sessionId), options.hooks));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();

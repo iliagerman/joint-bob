@@ -5,7 +5,7 @@ import type { HarnessId } from "../types.js";
 import { isGuardianExempt, runGuardianFix } from "./fix.js";
 import { localLayaUrl } from "./laya.js";
 import { askGuardianModel, jevTarget, layaTarget, type GuardianModelTarget } from "./model.js";
-import { requestGuardianReview } from "./reviews.js";
+import { announceGuardianBlock, requestGuardianReview } from "./reviews.js";
 import { ruleApplies, ruleOutcome, worstOutcome, type GuardianRequest, type GuardianRule, type RuleOutcome } from "./rules.js";
 import { guardianGroups, type GuardianGroup } from "./settings.js";
 
@@ -128,14 +128,14 @@ export async function checkGuardian(identity: GuardianIdentity, original: Guardi
     const { findings, failure } = await evaluate(identity, groups, request);
     if (failure) {
       audit(identity, request, "failed", findings);
-      return { action: "block", reason: `Guardian could not check this ${what(request)}, so it was blocked. ${failure}` };
+      return announced(identity, `Guardian could not check this ${what(request)}, so it was blocked. ${failure}`);
     }
     const outcome = worstOutcome(findings.map((finding) => finding.outcome));
     const acting = findings.filter((finding) => finding.outcome === outcome);
     if (outcome === "continue") return request === original ? { action: "continue" } : replaced(request);
     if (outcome === "block") {
       audit(identity, request, "blocked", acting);
-      return { action: "block", reason: `Guardian blocked this ${what(request)}. Rule ${acting.map(describe).join("; ")}.` };
+      return announced(identity, `Guardian blocked this ${what(request)}. Rule ${acting.map(describe).join("; ")}.`);
     }
     if (outcome === "fix" && attempt < MAX_FIX_ATTEMPTS) {
       const fixed = await applyFixes(identity, request, acting);
@@ -151,6 +151,11 @@ export async function checkGuardian(identity: GuardianIdentity, original: Guardi
     if (decision === "block") return { action: "block", reason: `The user blocked this ${what(request)} after Guardian flagged it. Rule ${reviewed.map(describe).join("; ")}.` };
     return request === original ? { action: "continue" } : replaced(request);
   }
+}
+
+function announced(identity: GuardianIdentity, reason: string): GuardianVerdict {
+  announceGuardianBlock(identity.projectId, identity.conversationId, reason);
+  return { action: "block", reason };
 }
 
 function replaced(request: GuardianRequest): GuardianVerdict {

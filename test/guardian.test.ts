@@ -7,7 +7,7 @@ import test from "node:test";
 import { checkGuardian, type GuardianIdentity } from "../src/guardian/check.js";
 import { askGuardianModel, clearGuardianModelCache, GuardianModelError, layaTarget } from "../src/guardian/model.js";
 import { removeSecrets, REMOVED } from "../src/guardian/redact.js";
-import { decideGuardianReview, onGuardianReviewsChanged, pendingGuardianReviews, requestGuardianReview } from "../src/guardian/reviews.js";
+import { cancelGuardianReviews, decideGuardianReview, onGuardianEvent, pendingGuardianReviews, requestGuardianReview } from "../src/guardian/reviews.js";
 import { DEFAULT_GUARDIAN_SETTINGS, guardianSettingsSchema, ruleApplies, ruleOutcome, toolCategory, worstOutcome, type GuardianRule } from "../src/guardian/rules.js";
 import { getGuardianSettings, updateGuardianSettings } from "../src/guardian/settings.js";
 import { addProject } from "../src/store.js";
@@ -87,7 +87,7 @@ test("the model client asks every question in one request and every piece of lon
 
 test("a review waits for the person, and an unanswered one blocks", async () => {
   const seen: string[] = [];
-  const stop = onGuardianReviewsChanged((_project, conversation) => seen.push(conversation));
+  const stop = onGuardianEvent((event) => seen.push(event.conversationId));
   const decision = requestGuardianReview({ projectId: "p", conversationId: "c", title: "t", subject: "s", detail: "d" });
   const [open] = pendingGuardianReviews("p", "c");
   assert.equal(decideGuardianReview("p", "other", open.id, "allow"), false, "another conversation cannot answer it");
@@ -98,6 +98,9 @@ test("a review waits for the person, and an unanswered one blocks", async () => 
   const stopped = requestGuardianReview({ projectId: "p", conversationId: "c", title: "t", subject: "s", detail: "d" }, controller.signal);
   controller.abort();
   assert.equal(await stopped, "block", "stopping the run answers the review");
+  const cancelled = requestGuardianReview({ projectId: "p", conversationId: "c", title: "t", subject: "s", detail: "d" });
+  cancelGuardianReviews("p", "c");
+  assert.equal(await cancelled, "block", "stopping the turn from the page answers it too");
   stop();
   assert.ok(seen.length >= 2);
 });

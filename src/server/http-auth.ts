@@ -5,6 +5,7 @@ import { getClusterNode } from "../cluster.js";
 import { browserAgentIdentity } from "../browser-agent.js";
 import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
 import { ntfyAgentIdentity } from "../ntfy-agent.js";
+import { guardianAgentIdentity } from "../guardian/agent-token.js";
 import { worktreeAgentIdentity } from "../worktree-agent.js";
 import { webhookTitleAgentIdentity } from "../webhook-title.js";
 import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../cluster-identity.js";
@@ -174,6 +175,10 @@ export async function requireHttpAuth(request: Request, response: Response, next
     const identity = ntfyAgentIdentity(token);
     if (identity) { response.locals.ntfyAgent = identity; next(); return; }
   }
+  if (request.path === "/guardian/agent" && request.method === "POST" && token) {
+    const identity = guardianAgentIdentity(token);
+    if (identity) { response.locals.guardianAgent = identity; next(); return; }
+  }
   if (request.path === "/worktrees/agent" && request.method === "POST" && token) {
     const identity = worktreeAgentIdentity(token);
     if (identity) { response.locals.worktreeAgent = identity; next(); return; }
@@ -198,7 +203,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent || response.locals.webhookTitleAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent || response.locals.webhookTitleAgent || response.locals.guardianAgent) {
     next();
     return;
   }

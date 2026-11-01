@@ -680,6 +680,11 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
         blockedSkillNames: blocked,
       };
     },
+    guardian: async (conversationId, request) => {
+      const { checkGuardian } = await import("./guardian/check.js");
+      const { guardianRequestSchema } = await import("./guardian/rules.js");
+      return checkGuardian({ projectId: options.projectId, conversationId, harness: "pi", cwd: options.cwd, canReplaceTool: true }, guardianRequestSchema.parse(request));
+    },
   };
 }
 

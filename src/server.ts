@@ -92,6 +92,7 @@ import "./server/routes/usage.js";
 import "./server/routes/dashboards.js";
 import { refreshSharedDashboards } from "./server/dashboard-sharing.js";
 import "./server/routes/relay.js";
+import "./server/routes/guardian.js";
 import "./file-sync/admin-routes.js";
 import "./file-sync/routes.js";
 import "./server/routes/webhooks.js";

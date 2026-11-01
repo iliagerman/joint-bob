@@ -307,6 +307,7 @@ function pinnedHooks(hooks: PiCoreHooks, expectedSessionId: string | undefined):
       return hooks.modelCredential!(provider);
     },
     modelCredentialList: () => hooks.modelCredentialList!(),
+    guardian: async (logical, request) => { conversation(logical); return hooks.guardian!(logical, request); },
   };
 }
 

@@ -5,6 +5,9 @@ import type { AgentSession, Skill } from "@earendil-works/pi-coding-agent";
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, createBashTool, loadSkills } from "./pi-sdk.js";
 
 import { createPiResourceLoader } from "./harnesses/pi/resource-loader.js";
+import type { GuardianVerdict } from "./guardian/check.js";
+import { guardianPiExtension } from "./guardian/pi-extension.js";
+import type { GuardianRequest } from "./guardian/rules.js";
 
 /**
  * A Pi session from what it needs and nothing else: no database, no settings store, no
@@ -60,6 +63,8 @@ export interface PiCoreHooks {
   resources(conversationId: string): Promise<PiResources>;
   modelCredential?(provider: string): Promise<NonNullable<ReturnType<typeof import("@earendil-works/pi-coding-agent").readStoredCredential>> | undefined>;
   modelCredentialList?(): Promise<Array<{ providerId: string; type: "oauth" | "api_key" }>>;
+  /** Guardian's decision on a tool call, a tool's output or a person's message, made by the server. */
+  guardian?(conversationId: string, request: GuardianRequest): Promise<GuardianVerdict>;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -166,6 +171,7 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     additionalPromptTemplatePaths: promptPaths,
     additionalThemePaths: resources.themes,
     agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, ...resources.agentsFiles] }),
+    extensionFactories: hooks.guardian ? [guardianPiExtension((request) => hooks.guardian!(conversationId, request))] : [],
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
   }, resources.strictResourceIsolation, resources.packagesFile);
   await resourceLoader.reload();

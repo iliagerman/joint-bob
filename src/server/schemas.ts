@@ -604,4 +604,7 @@ export const socketMessageSchema = z.object({
   safeguardsEnabled: z.boolean().optional(),
   toolNames: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
   autoRespond: z.object({ enabled: z.boolean(), config: autoRespondConfigSchema.optional() }).strict().optional(),
+  /** guardianDecision: the person's answer to a paused action. */
+  reviewId: z.string().uuid().optional(),
+  decision: z.enum(["allow", "block"]).optional(),
 });

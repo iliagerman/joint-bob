@@ -53,6 +53,7 @@ import { claimConversationLocally, describeConversationOwner, type ForeignConver
 import { flags } from "./state.js";
 import { measureOperation } from "./performance-diagnostics.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
+import { cancelGuardianReviews, decideGuardianReview, onGuardianEvent, pendingGuardianReviews } from "../guardian/reviews.js";
 import { conversationLiveModel, requestDigestQuietly, summaryPolicyNow, summaryPolicyView } from "./conversation-digest-runner.js";
 import { storedDigest } from "../conversation-digest.js";
 import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, historyBeforeLiveTurn, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
@@ -138,6 +139,17 @@ async function ensureCurrentSession(connection: HarnessChatConnection): Promise<
 function publish(connection: HarnessChatConnection, event: Record<string, unknown>): void {
   for (const candidate of harnessChatConnections) if (queueKey(candidate) === queueKey(connection)) send(candidate.socket, event);
 }
+
+// Guardian pauses and blocks reach every window open on the conversation; other windows of the
+// project hear that a conversation is waiting, so the person can find it.
+onGuardianEvent((event) => {
+  const reviews = pendingGuardianReviews(event.projectId, event.conversationId);
+  const payload = event.type === "reviews" ? { type: "guardianReviews", reviews } : { type: "guardianBlocked", message: event.message };
+  for (const connection of harnessChatConnections) {
+    if (connection.project.id === event.projectId && connection.conversationId === event.conversationId) send(connection.socket, payload);
+  }
+  if (event.type === "reviews") broadcastToProject(event.projectId, { type: "guardianReviewsChanged", conversationId: event.conversationId, titles: reviews.map(({ title }) => title) });
+});
 
 function publishGoal(connection: HarnessChatConnection, goal: ConversationGoal | undefined, announce = true): void {
   publish(connection, { type: "bobGoal", goal: goal ?? null, message: goalStatusMessage(goal), announce });
@@ -861,7 +873,14 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   await writable(connection);
   if (message.type === "restart") { await restartHarnessSession(connection); return true; }
   if (message.type === "setEngine") { if (!message.engine) throw new Error("Engine is required"); await switchHarness(connection, message.engine); return true; }
+  if (message.type === "guardianDecision") {
+    if (!message.reviewId || !message.decision) throw new Error("A review and a decision are required");
+    if (!decideGuardianReview(connection.project.id, connection.conversationId, message.reviewId, message.decision)) throw new Error("This review is no longer open");
+    return true;
+  }
   if (message.type === "abort" || message.type === "stop") {
+    // Whatever the turn waits on is answered first: a stopped turn runs nothing it was asking about.
+    cancelGuardianReviews(connection.project.id, connection.conversationId);
     // Stop must also end auto respond, or the responder would restart the agent a moment later.
     const deciding = autoDecisions.get(queueKey(connection));
     await stopAutoRespondFor(connection, "user-stopped", "You stopped the turn");
@@ -1111,7 +1130,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     if (options.socket.readyState !== WebSocket.OPEN) return;
     if (inputs !== inputState() || liveTurn !== shared.liveEvents) continue;
     if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
-    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDecision: autoDecisionView(connection), autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDecision: autoDecisionView(connection), autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), guardianReviews: pendingGuardianReviews(options.project.id, conversationId), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
     for (const event of shared.liveEvents) send(options.socket, event);
     refreshHarnessPromptQueue(connection);
     // A summary that fell behind while nobody had this open catches up now; one is first written after the next answer.

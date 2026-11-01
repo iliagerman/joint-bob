@@ -97,6 +97,7 @@ async function open(key: string, inputs: PiCoreInputs) {
     persistAccounts: async (sessionId) => { await hook(key, "persistAccounts", [sessionId]); },
     credentials: async (sessionId, logical) => await hook(key, "credentials", [sessionId, logical]) as PiCredentials,
     resources: async (logical) => await hook(key, "resources", [logical]) as Awaited<ReturnType<PiCoreHooks["resources"]>>,
+    guardian: async (logical, request) => await hook(key, "guardian", [logical, request]) as Awaited<ReturnType<NonNullable<PiCoreHooks["guardian"]>>>,
   };
   const models = await createSessionModelRuntime(
     async (provider) => await hook(key, "modelCredential", [provider]) as Credential | undefined,

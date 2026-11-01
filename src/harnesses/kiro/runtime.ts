@@ -21,6 +21,8 @@ import type {
 } from "../runtime.js";
 import { configuredRuntime } from "../runtime-configuration.js";
 import { expandKiroPrompt, kiroAgentProfile, kiroToolCategories } from "./resources.js";
+import type { GuardianIdentity } from "../../guardian/check.js";
+import { guardKiroPrompt, kiroChecksTools, kiroPermission } from "../../guardian/kiro.js";
 import { appendKiroRecord, initializeKiroSession, readKiroSession } from "./storage.js";
 import { createKiroConnection } from "./transport.js";
 import { kiroThinkingLevels as levels } from "./models.js";
@@ -69,6 +71,8 @@ class KiroSession implements HarnessSession {
   private connection: Connection | undefined;
   private readonly toolCalls = new Map<string, { title: string; toolName: string; rawInput: unknown; startedAt: number }>();
   private trustedTools: string[] | undefined;
+  /** Guardian checks this run's tool calls: Kiro asks before each one and Guardian answers. */
+  private guarded = false;
   private pendingNotifications: JsonObject[] = [];
   private cancelRequested = false;
   private writes: Promise<void> = Promise.resolve();
@@ -191,7 +195,7 @@ class KiroSession implements HarnessSession {
       this.throwIfCancelled();
       await this.initializeNativeSession();
       this.throwIfCancelled();
-      const expandedInput = { ...input, text: await expandKiroPrompt(input.text, this.options.cwd, this.options.projectId) };
+      const expandedInput = { ...input, text: await guardKiroPrompt(this.guardianIdentity(), await expandKiroPrompt(input.text, this.options.cwd, this.options.projectId)) };
       await input.beforeStart?.();
       this.throwIfCancelled();
       const response = object(await this.connection!.request("session/prompt", this.promptParams(expandedInput)), "prompt response");
@@ -233,8 +237,10 @@ class KiroSession implements HarnessSession {
     const profile = await kiroAgentProfile({ ...this.options, accountIds: undefined }, credentialContext, this.trustedTools);
     this.throwIfCancelled();
     const args = ["acp", "--agent-engine", "v2", "--agent", profile, "--effort", this.model.reasoning];
-    if (this.trustedTools === undefined) args.push("--trust-all-tools");
-    else args.push(`--trust-tools=${this.trustedTools.join(",")}`);
+    // With Guardian on, Kiro trusts no tool and asks before each call; serverRequest answers with
+    // Guardian's decision. The profile already leaves out disabled tools.
+    this.guarded = await kiroChecksTools();
+    if (!this.guarded) args.push(this.trustedTools === undefined ? "--trust-all-tools" : `--trust-tools=${this.trustedTools.join(",")}`);
     if (this.model.modelId !== "default") args.push("--model", this.model.modelId);
     this.child = spawnInRuntime(currentRuntime(), settings.executable || "kiro-cli", args, {
       cwd: this.options.cwd,
@@ -501,8 +507,17 @@ class KiroSession implements HarnessSession {
     if (this.writeFailure) throw this.writeFailure;
   }
 
+  private guardianIdentity(): GuardianIdentity {
+    return { projectId: this.options.projectId, conversationId: this.options.conversationId ?? this.id, harness: "kiro", cwd: this.options.cwd, canReplaceTool: false };
+  }
+
   private async serverRequest(method: string, params: unknown): Promise<unknown> {
     if (method !== "session/request_permission") throw new Error(`Unsupported Kiro ACP request: ${method}`);
+    if (this.guarded) {
+      const request = object(params, "permission request");
+      const toolCall = request.toolCall === undefined ? undefined : object(request.toolCall, "permission tool call");
+      return kiroPermission(this.guardianIdentity(), request, typeof toolCall?.toolCallId === "string" ? this.toolCalls.get(toolCall.toolCallId) : undefined);
+    }
     if (this.trustedTools !== undefined) return { outcome: { outcome: "cancelled" } };
     const request = object(params, "permission request");
     if (!Array.isArray(request.options)) return { outcome: { outcome: "cancelled" } };

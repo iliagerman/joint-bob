@@ -20,17 +20,30 @@ export interface GuardianReview {
 
 export type ReviewDecision = "allow" | "block";
 
-const pending = new Map<string, { review: GuardianReview; settle: (decision: ReviewDecision) => void }>();
-const listeners = new Set<(projectId: string, conversationId: string, review: GuardianReview) => void>();
+/** What the chat server pushes to a conversation's viewers: its open reviews changed, or Guardian blocked something on its own. */
+export type GuardianEvent =
+  | { type: "reviews"; projectId: string; conversationId: string; review: GuardianReview }
+  | { type: "blocked"; projectId: string; conversationId: string; message: string };
 
-/** Called whenever a conversation's open reviews change; the chat server pushes them to its viewers. */
-export function onGuardianReviewsChanged(listener: (projectId: string, conversationId: string, review: GuardianReview) => void): () => void {
+const pending = new Map<string, { review: GuardianReview; settle: (decision: ReviewDecision) => void }>();
+const listeners = new Set<(event: GuardianEvent) => void>();
+
+export function onGuardianEvent(listener: (event: GuardianEvent) => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
+function emit(event: GuardianEvent): void {
+  for (const listener of listeners) listener(event);
+}
+
 function changed(review: GuardianReview): void {
-  for (const listener of listeners) listener(review.projectId, review.conversationId, review);
+  emit({ type: "reviews", projectId: review.projectId, conversationId: review.conversationId, review });
+}
+
+/** A block nobody was asked about still shows in the conversation, so the person knows why the agent stopped. */
+export function announceGuardianBlock(projectId: string, conversationId: string, message: string): void {
+  emit({ type: "blocked", projectId, conversationId, message });
 }
 
 /** Waits for the person's decision on one action. Resolves "block" after the timeout or when the run is stopped. */
@@ -63,6 +76,11 @@ export function decideGuardianReview(projectId: string, conversationId: string, 
   if (!entry || entry.review.projectId !== projectId || entry.review.conversationId !== conversationId) return false;
   entry.settle(decision);
   return true;
+}
+
+/** Stopping a turn blocks whatever it was waiting on. */
+export function cancelGuardianReviews(projectId: string, conversationId: string): void {
+  for (const { review, settle } of [...pending.values()]) if (review.projectId === projectId && review.conversationId === conversationId) settle("block");
 }
 
 export function pendingGuardianReviews(projectId: string, conversationId: string): GuardianReview[] {
