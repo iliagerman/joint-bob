@@ -858,3 +858,30 @@ test("Activity overview waits while the open-source voice updates itself, then p
   assert.ok(spoken.length > 0, "the first line is narrated once the voice is ready");
   assert.equal(await page.locator(".toast-message", { hasText: "plays without sound" }).count(), 0);
 });
+
+// The other narration tests replace Audio with a stand-in, so this one uses the browser's own audio element under the
+// app's real security policy: a clip held in a blob: URL must load, as every narration line does.
+test("the app's security policy lets a narration clip play from a blob: URL", { timeout: 60_000 }, async (t) => {
+  const { page, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  // A string, not a function: the test compiler would add helpers the page does not have.
+  const result = await page.evaluate(`(async () => {
+    const violations = [];
+    document.addEventListener("securitypolicyviolation", (event) => violations.push(event.effectiveDirective));
+    // 0.1 s of silence as 16-bit PCM WAV, built here so the test needs no file.
+    const samples = 2400;
+    const view = new DataView(new ArrayBuffer(44 + samples * 2));
+    const text = (offset, value) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+    text(0, "RIFF"); view.setUint32(4, 36 + samples * 2, true); text(8, "WAVEfmt "); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint32(28, 48000, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, "data"); view.setUint32(40, samples * 2, true);
+    const audio = new Audio(URL.createObjectURL(new Blob([view.buffer], { type: "audio/wav" })));
+    const loaded = await new Promise((resolve) => {
+      audio.addEventListener("loadedmetadata", () => resolve("loaded"), { once: true });
+      audio.addEventListener("error", () => resolve("error " + (audio.error && audio.error.code)), { once: true });
+      setTimeout(() => resolve("timeout"), 5000);
+    });
+    return { loaded, violations };
+  })()`);
+  assert.deepEqual(result, { loaded: "loaded", violations: [] });
+});

@@ -217,7 +217,8 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
       audio.addEventListener("playing", () => { clearTimeout(timer); resolve(); }, { once: true });
       audio.addEventListener("error", () => { clearTimeout(timer); reject(new Error(`This browser could not play the narration${audio.error?.message ? ` (${audio.error.message})` : ""}.`)); }, { once: true });
     });
-    return audio.play().then(() => started);
+    // Both settle together, so a refused play() never leaves the start timer to reject unhandled.
+    return Promise.all([audio.play(), started]);
   }
 
   audio.onended = () => go(player.index + 1);

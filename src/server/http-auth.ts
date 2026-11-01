@@ -78,7 +78,9 @@ export function securityHeaders(request: Request, response: Response, next: Next
   // Scripts stay locked to 'self', and default-src/img-src keep CSS from reaching
   // any off-origin URL, so this does not open a data-exfiltration path.
   const inlineStyle = "'self' 'unsafe-inline'";
-  response.setHeader("Content-Security-Policy", `default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src-elem ${inlineStyle}; style-src-attr ${inlineStyle}; script-src 'self'`);
+  // Narration clips are fetched, then played from blob: URLs the page itself creates; without blob: here,
+  // Safari and Chrome refuse every clip ("The operation is not supported").
+  response.setHeader("Content-Security-Policy", `default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob:; style-src-elem ${inlineStyle}; style-src-attr ${inlineStyle}; script-src 'self'`);
   response.setHeader("X-Content-Type-Options", "nosniff");
   // The canvas, the file dialog and dashboards embed same-origin views. All other documents
   // stay unframeable (including the separate sandboxed HTML browser mode). A dashboard frame

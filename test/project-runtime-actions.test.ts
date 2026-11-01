@@ -23,3 +23,9 @@ test("the security policy leaves room for the styles xterm writes at runtime", a
   assert.match(policy, /script-src 'self'/);
   assert.doesNotMatch(policy, /script-src[^;]*unsafe-inline/);
 });
+
+test("the security policy lets the page play narration clips from the blob: URLs it creates", async () => {
+  const server = await serverSource();
+  const policy = server.match(/"Content-Security-Policy", `([^`]+)`/)?.[1] ?? "";
+  assert.match(policy, /media-src 'self' blob:;/);
+});
