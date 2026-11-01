@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 import type { Locator, Page } from "playwright-core";
 import { nativeUiFixture } from "./native-ui-fixture.js";
@@ -30,6 +32,19 @@ test("subscription pools are searchable, selectable, editable, and cluster-scope
   };
   await addProfile("claude", "Claude work");
   await addProfile("openai-codex", "ChatGPT work");
+
+  // A signed-in Claude profile offers Pi's Claude models (provider "anthropic") as fallbacks.
+  const { profiles } = await page.evaluate(async () => (await fetch("/api/provider-profiles")).json()) as { profiles: Array<{ id: string; label: string }> };
+  const claudeAuth = path.join(node.dataDir, "provider-profile-auth", profiles.find((item) => item.label === "Claude work")!.id, "auth.json");
+  await mkdir(path.dirname(claudeAuth), { recursive: true, mode: 0o700 });
+  await writeFile(claudeAuth, JSON.stringify({ anthropic: { type: "oauth", access: "fixture-access", refresh: "fixture-refresh", expires: Date.now() + 3_600_000 } }), { mode: 0o600 });
+  await page.reload();
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("subscription-pool-fallback-claude").click();
+  await page.getByTestId("subscription-pool-fallback-claude-search").fill("claude-");
+  await page.getByTestId("subscription-pool-fallback-claude-option").filter({ hasText: /claude-/ }).first().waitFor();
+  await page.keyboard.press("Escape");
 
   assert.equal(await page.getByTestId("subscription-pool-save").count(), 1, "pool controls should be in Settings → Harnesses");
   await page.getByTestId("subscription-pool-name").fill("Team pool");

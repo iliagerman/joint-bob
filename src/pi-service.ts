@@ -286,11 +286,16 @@ async function availableModelsWithProfiles() {
   const { actingAccount } = await import("./account-context.js");
   const { adminAccountId } = await import("./ownership.js");
   const owner = actingAccount()?.accountId ?? adminAccountId();
-  if (!owner || available.some((model) => model.provider === "openai-codex")) return available;
+  if (!owner) return available;
   const { listProviderProfiles } = await import("./provider-profiles/store.js");
   const { openAIAuthPath } = await import("./provider-profiles/service.js");
-  if (listProviderProfiles(owner).some((profile) => profile.provider === "openai-codex" && readStoredCredential("openai-codex", openAIAuthPath(profile))?.type === "oauth")) {
-    available.push(...modelRuntime.getModels("openai-codex"));
+  const profiles = listProviderProfiles(owner);
+  // A signed-in subscription profile backs Pi models of its provider even when the node itself has no login.
+  for (const [profileProvider, piProvider] of [["openai-codex", "openai-codex"], ["claude", "anthropic"]] as const) {
+    if (available.some((model) => model.provider === piProvider)) continue;
+    if (profiles.some((profile) => profile.provider === profileProvider && readStoredCredential(piProvider, openAIAuthPath(profile))?.type === "oauth")) {
+      available.push(...modelRuntime.getModels(piProvider));
+    }
   }
   return available;
 }

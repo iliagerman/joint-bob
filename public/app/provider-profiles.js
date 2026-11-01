@@ -173,7 +173,9 @@ function poolMemberRow(index) {
 function fallbackModelControl(provider) {
   const id = `subscription-pool-fallback-${provider}`;
   const current = poolEditor.fallbackModels[provider] ?? "";
-  const models = modelCatalog.filter((model) => model.provider === provider).map((model) => ({ value: model.id, label: model.label || model.id, detail: model.id }));
+  // Pi names the Claude provider "anthropic".
+  const piProvider = provider === "claude" ? "anthropic" : provider;
+  const models = modelCatalog.filter((model) => model.provider === piProvider).map((model) => ({ value: model.id, label: model.label || model.id, detail: model.id }));
   if (current && !models.some((model) => model.value === current)) poolEditor.customModels.add(provider);
   const custom = poolEditor.customModels.has(provider);
   const picker = createSearchableSelect({ id: `poolFallback${provider}`, testid: id, label: `${providerOf(provider).name} fallback model`, prompt: "No fallback model", placeholder: "Search models", emptyText: "No models found" });
