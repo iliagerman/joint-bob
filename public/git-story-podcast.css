@@ -90,3 +90,26 @@
 .gsp-wsteps { margin-top: 10px !important; }
 .gsp-wsteps code { font: 12px var(--mono); }
 @media (prefers-reduced-motion: reduce) { .gsp-vis [data-step], .gsp-vis [data-step].is-new { transition: none; animation: none; } }
+
+.gsp[hidden] { display: none; }
+.gsp-ask-status { margin: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.gsp-ask-status[hidden] { display: none; }
+.gsp-chap.is-pending { border-style: dotted; color: var(--muted); cursor: default; }
+.gsp-spin { flex: none; width: 10px; height: 10px; border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: 50%; animation: gsp-spin .8s linear infinite; }
+@keyframes gsp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gsp-spin { animation-duration: 2.4s; } }
+
+/* While the movie is hidden it waits here, paused; the dock is the way back to it. */
+.gsp-dock { position: fixed; right: 16px; bottom: 16px; z-index: 55; display: flex; align-items: stretch; max-width: min(420px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); box-shadow: var(--shadow-soft); overflow: hidden; }
+.gsp-dock[hidden] { display: none; }
+.gsp-dock button { border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.gsp-dock-open { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 14px; text-align: left; }
+.gsp-dock-icon { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--bg); font-size: 11px; }
+.gsp-dock-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gsp-dock-end { padding: 0 12px; border-left: 1px solid var(--line); color: var(--muted); }
+.gsp-dock-end:hover { color: var(--text); }
+.gsp-dock.is-ready { border-color: var(--accent); }
+.gsp-dock.is-ready .gsp-dock-icon { animation: task-state-pulse 1.2s ease-in-out infinite; }
+.gsp-dock.is-working .gsp-dock-icon { background: var(--muted); }
+@media (max-width: 1023px) { .gsp-dock { left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); max-width: none; } }
+

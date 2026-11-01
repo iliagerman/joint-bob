@@ -65,12 +65,18 @@ function showProgress() {
   };
 }
 
+// One movie at a time. Pressing Overview again for the same conversation brings the one that is already there back,
+// where it left off, instead of starting it over; another conversation's movie is ended first.
+let live = null;
+
 async function openActivityOverview(conversationId, audio) {
   const target = { projectId: state.activeProjectId, nodeId: state.activeNodeId, taskId: state.activeTaskId };
   if (!target.projectId) { toast("Select a project first"); return; }
   const url = (route, params) => projectGitUrl(target, route, params);
+  if (live?.conversationId === conversationId) { live.movie.show(); return; }
   const settings = await voiceForThisNode();
   if (!settings) return;
+  live?.movie.end();
   const progress = showProgress();
   let thread;
   let script;
@@ -89,12 +95,14 @@ async function openActivityOverview(conversationId, audio) {
   // The movie is written for sound, so a silent one says why instead of playing as if nothing was wrong.
   if (settings.narrate && !voice.available) toast(`The Activity overview plays without sound. ${voice.reason}`, 14000);
   const write = (extra, onProgress) => requestMovie(url("story-podcast"), { threadId: thread.id, settings, ...extra }, onProgress).then((line) => line.script);
-  playStoryPodcast({
+  const movie = playStoryPodcast({
     script, settings, host: document.body, notify: toast, audio,
+    onEnd: () => { if (live?.movie === movie) live = null; },
     narrate: narrates ? (text, who) => apiBlob(url("story-voice"), { method: "POST", body: JSON.stringify({ text, who, settings }) }) : null,
     ask: settings.ask ? (question, onProgress) => write({ question }, onProgress) : null,
     rewrite: (onProgress) => write({ regenerate: true }, onProgress),
   });
+  live = { conversationId, movie };
 }
 
 for (const button of buttons) {

@@ -1,13 +1,30 @@
 import type { z } from "zod";
 import { GitReviewError } from "../git-review.js";
-import type { GitReviewThread } from "../git-review-threads.js";
-import { saveStoryScript } from "../story-scripts.js";
+import { getGitReviewThread, listGitReviewThreads, type GitReviewThread, type GitReviewThreadSummary } from "../git-review-threads.js";
+import type { ProjectRecord } from "../types.js";
+import { loadStoryScript, saveStoryScript } from "../story-scripts.js";
 import { writtenAnswerSchema, writtenScriptSchema, type PodcastChapter, type StoryScript } from "../story-script-schema.js";
 import { STORY_LOCATIONS, STORY_MOODS, storyInstructions, type StorySettings } from "../story-settings.js";
-import type { ChangeStory, StoryFacts, StoryPatch } from "./git-change-story.js";
+import { CHANGE_STORY_MARKER, storyFreshness, type ChangeStory, type SavedChangeStory, type StoryFacts, type StoryPatch } from "./git-change-story.js";
 
 /** Marks a saved thread as an Activity overview (the movie), which is kept apart from change stories and reviews. */
 export const ACTIVITY_OVERVIEW_MARKER = "Generated activity overview";
+
+/**
+ * A movie this conversation already has, written from one of its change stories, while that story is still fresh:
+ * its commits, files and turns are what they were. Newest story first; null when there is none to reuse.
+ */
+export async function readyStoryMovie(project: ProjectRecord, cwd: string, conversationId: string, matches: (thread: GitReviewThreadSummary) => boolean): Promise<{ thread: GitReviewThread; script: StoryScript } | null> {
+  for (const summary of listGitReviewThreads(project.id, conversationId)) {
+    if (summary.question !== CHANGE_STORY_MARKER || !matches(summary)) continue;
+    const script = loadStoryScript(project.id, summary.id);
+    if (!script) continue;
+    const thread = getGitReviewThread(summary.id)!;
+    const saved = JSON.parse(thread.messages[1].text) as SavedChangeStory;
+    if ((await storyFreshness(project, cwd, conversationId, saved)).fresh) return { thread, script };
+  }
+  return null;
+}
 
 /** What the movie is written from: the conversation's facts and diffs. A written story adds context when there is one. */
 export interface OverviewSource { facts: StoryFacts; patches: StoryPatch[]; story?: ChangeStory }

@@ -25,7 +25,7 @@ import {
   type GitReviewSelection,
   type GitReviewThread,
 } from "../../git-review-threads.js";
-import { ACTIVITY_OVERVIEW_MARKER, askStoryScript, generateStoryScript, type OverviewSource } from "../story-podcast.js";
+import { ACTIVITY_OVERVIEW_MARKER, askStoryScript, generateStoryScript, readyStoryMovie, type OverviewSource } from "../story-podcast.js";
 import { publishStory } from "../../story-replication.js";
 import { loadStoryScript, pruneStoryFiles } from "../../story-scripts.js";
 import { localVoiceStatus, narrateStoryText, narrationProvider, NARRATION_LIMIT, startLocalVoiceInstall, updateLocalVoice } from "../story-voice.js";
@@ -736,6 +736,11 @@ async function performOverview(projectId: string, cwd: string, input: z.infer<ty
   const existing = listGitReviewThreads(projectId, input.conversationId).find((thread) => thread.question === ACTIVITY_OVERVIEW_MARKER && sameRepository(thread.selection, repository));
   let thread = existing ? getGitReviewThread(existing.id)! : undefined;
   if (!thread) {
+    // A movie written before Activity overview kept its own record hangs off the conversation's change story. While
+    // nothing in the conversation has changed since that story, it is the ready movie, so it opens at once.
+    onProgress?.({ type: "progress", stage: "Looking for a movie that is already written" });
+    const ready = await readyStoryMovie(project, cwd, input.conversationId, (candidate) => sameRepository(candidate.selection, repository));
+    if (ready && !input.regenerate) return { thread: storyThreadInfo(ready.thread), script: ready.script };
     onProgress?.({ type: "progress", stage: "Reading the conversation and finding the files it changed" });
     const { paths, lastHarness } = await discoverConversationFiles(project, cwd, input.conversationId);
     const sources: StorySources = { scope: "conversation", pendingPaths: paths, includeCommits: true };

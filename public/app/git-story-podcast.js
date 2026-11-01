@@ -7,6 +7,7 @@ import { diffClass, renderSlide, revealSlide } from "./git-story-slides.js";
 // Like the video it needs nothing from the rest of the app. The app supplies:
 //   narrate(text, who) -> Promise<Blob>   a clip of one line, absent when no voice is available
 //   ask(question, onProgress) -> Promise<script>   appends the answer to the story as new chapters, absent when asking is off
+//   onEnd()           the viewer ended the movie for good; closing the window only hides it behind a dock
 //   rewrite(onProgress) -> Promise<script>   writes the story again
 //   notify(message)   says why the voice was dropped
 
@@ -17,16 +18,20 @@ const CLIP_START_MS = 6000;
 const NAMES = { host: "Maya", cohost: "Jonah" };
 const OTHER = { host: "cohost", cohost: "host" };
 const STUDIO = "podcast";
+const END = -1;
 
 const wordCount = (text) => text.split(/\s+/).length;
 
 // `audio` should be an element first played inside the viewer's click: Safari only lets such an element make sound later.
-export function playStoryPodcast({ script: first, host, settings, narrate = null, ask = null, rewrite = null, notify = () => {}, audio = new Audio() }) {
+export function playStoryPodcast({ script: first, host, settings, narrate = null, ask = null, rewrite = null, notify = () => {}, onEnd = () => {}, audio = new Audio() }) {
   const player = {
     script: first, chapters: [], lines: [], index: -1, chapter: -1, playing: false, finished: false, speed: 1, muted: false,
     voice: Boolean(narrate), clips: new Map(), urls: [], busy: false, token: 0, frame: 0, lastFrame: 0, silentLeft: 0,
     view: { scene: STUDIO, mood: "calm", progress: 0, storyP: 0, sunP: 0, scroll: 0, playing: false, who: null, handsAt: -1e9 },
     sceneAt: 0, place: PLACES[STUDIO], actors: null, slide: null,
+    // Questions asked and not yet answered (the first is with the writer), answers to play, and where the story resumes
+    // once an answer has played: a line index, END, or null when nothing is waiting to be resumed.
+    waiting: [], step: "", answering: false, answers: [], resume: null, mainEnd: 0, seen: new Set(), hidden: false, gone: false,
   };
 
   const canvas = h("canvas", { class: "gsp-backdrop", width: W, height: H });
@@ -48,29 +53,36 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   const speedSelect = h("select", { "aria-label": "Speed", onchange: () => { player.speed = Number(speedSelect.value); audio.playbackRate = player.speed; } },
     [["1", "1×"], ["1.25", "1.25×"], ["0.8", "0.8×"]].map(([value, label]) => h("option", { value }, label)));
   const askInput = h("input", { type: "text", placeholder: "Ask a question about this change…", "aria-label": "Ask a question", autocomplete: "off", maxlength: 200, "data-testid": "git-story-podcast-question" });
-  const askForm = h("form", { class: "gsp-ask", hidden: !(ask && settings.ask), onsubmit: (event) => { event.preventDefault(); void follow(askInput.value.trim()); } },
+  const askStatus = h("p", { class: "gsp-ask-status", role: "status", hidden: true, "data-testid": "git-story-podcast-ask-status" });
+  const askForm = h("form", { class: "gsp-ask", hidden: !(ask && settings.ask), onsubmit: (event) => { event.preventDefault(); follow(askInput.value.trim()); } },
     askInput, h("button", { type: "submit", class: "primary compact", "data-testid": "git-story-podcast-ask" }, "Ask"));
   const writeup = h("div", { class: "gsp-writeup", hidden: true, "data-testid": "git-story-podcast-writeup" });
   const body = h("div", { class: "gsp-player" }, wrap, chapterStrip, caption,
     h("div", { class: "gsp-controls" },
       h("button", { type: "button", class: "ghost compact gs-boxed", "aria-label": "Previous line", onclick: () => go(player.index - 1) }, "⏮"), playButton,
-      h("button", { type: "button", class: "ghost compact gs-boxed", "aria-label": "Next line", onclick: () => go(player.index + 1) }, "⏭"),
+      h("button", { type: "button", class: "ghost compact gs-boxed", "aria-label": "Next line", onclick: () => advance() }, "⏭"),
       voiceNote, h("span", { class: "gsp-grow" }), h("label", { class: "gsp-speed" }, "Speed ", speedSelect), muteButton),
-    askForm);
+    askStatus, askForm);
   const podcastTab = h("button", { type: "button", class: "ghost compact gs-boxed", "aria-pressed": "true", onclick: () => showView("podcast") }, "Podcast");
   const writeupTab = h("button", { type: "button", class: "ghost compact gs-boxed", "aria-pressed": "false", "data-testid": "git-story-podcast-writeup-tab", onclick: () => showView("writeup") }, "Implementation and reasoning");
   const rewriteButton = h("button", { type: "button", class: "ghost compact gs-boxed", hidden: !rewrite, "data-testid": "git-story-podcast-rewrite", onclick: () => void again() }, "Rewrite");
-  const overlay = h("div", { class: "git-story gsp", role: "dialog", "aria-modal": "true", "aria-label": "Activity overview", "data-testid": "git-story-podcast", tabindex: "-1", onkeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } } },
+  const overlay = h("div", { class: "git-story gsp", role: "dialog", "aria-modal": "true", "aria-label": "Activity overview", "data-testid": "git-story-podcast", tabindex: "-1", onkeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); minimize(); } } },
     h("header", {}, h("span", { class: "gsp-tabs" }, podcastTab, writeupTab), h("span", { class: "gsp-controls" }, rewriteButton,
-      h("button", { type: "button", class: "ghost compact gs-boxed", "aria-label": "Close Activity overview", onclick: () => close() }, "×"))),
+      h("button", { type: "button", class: "ghost compact gs-boxed", "aria-label": "Hide Activity overview", title: "Hide it; it keeps its place and waits in the corner", "data-testid": "git-story-podcast-hide", onclick: () => minimize() }, "×"))),
     body, writeup);
+  // While the movie is hidden it is paused, and this dock is the way back to it.
+  const dockText = h("span", { class: "gsp-dock-text" });
+  const dock = h("div", { class: "gsp-dock", hidden: true, "data-testid": "git-story-podcast-dock" },
+    h("button", { type: "button", class: "gsp-dock-open", "aria-label": "Open Activity overview", "data-testid": "git-story-podcast-dock-open", onclick: () => restore() }, h("span", { class: "gsp-dock-icon", "aria-hidden": "true" }, "▶"), dockText),
+    h("button", { type: "button", class: "gsp-dock-end", "aria-label": "End Activity overview", title: "End it", "data-testid": "git-story-podcast-dock-end", onclick: () => destroy() }, "×"));
   link();
-  host.append(overlay);
+  host.append(overlay, dock);
   overlay.focus();
   const resize = new ResizeObserver(() => { stage.style.transform = `scale(${wrap.clientWidth / W})`; });
   resize.observe(wrap);
   load(first, 0);
   showMute();
+  showAsk();
   player.frame = requestAnimationFrame(tick);
 
   function link() {
@@ -82,10 +94,22 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   function moodOf(chapter) { return settings.moods ? chapter.mood : "calm"; }
 
   // Chapters and lines are rebuilt whenever the script changes. Code chapters drop out when code slides are off.
+  // Chapters with a slide the settings turn off drop out; each line knows its chapter's place in what is shown.
+  function build(script) {
+    const chapters = [];
+    const lines = [];
+    for (const chapter of script.chapters) {
+      if (!settings.codeSlides && chapter.visual.kind === "code") continue;
+      const seg = chapters.push(chapter) - 1;
+      for (const line of chapter.lines) lines.push({ ...line, seg });
+    }
+    return { chapters, lines };
+  }
+
   function load(script, startChapter) {
     player.script = script;
-    player.chapters = script.chapters.filter((chapter) => settings.codeSlides || chapter.visual.kind !== "code");
-    player.lines = player.chapters.flatMap((chapter, seg) => chapter.lines.map((line) => ({ ...line, seg })));
+    Object.assign(player, build(script), { answers: [], resume: null, seen: new Set() });
+    player.mainEnd = player.lines.length;
     player.clips.clear();
     actorLayer.replaceChildren();
     player.actors = {
@@ -103,17 +127,22 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
 
   function renderChapters() {
     chapterStrip.replaceChildren(...player.chapters.map((chapter, seg) =>
-      h("button", { type: "button", class: `gsp-chap${chapter.question ? " is-question" : ""}`, title: placeOf(chapter).label, onclick: () => go(player.lines.findIndex((line) => line.seg === seg)) },
-        h("span", { "aria-hidden": "true" }, placeOf(chapter).icon), chapter.question ? "Q · " : "", chapter.title)));
+      h("button", { type: "button", class: `gsp-chap${chapter.question ? " is-question" : ""}`, title: placeOf(chapter).label, onclick: () => jump(player.lines.findIndex((line) => line.seg === seg)) },
+        h("span", { "aria-hidden": "true" }, placeOf(chapter).icon), chapter.question ? "Q · " : "", chapter.title)),
+      ...player.waiting.map((question, position) =>
+        h("span", { class: "gsp-chap is-pending", title: position === 0 ? "The writer is answering this now" : "Waiting for the answers before it", "data-testid": "git-story-podcast-pending" },
+          h("span", { class: "gsp-spin", "aria-hidden": "true" }), "Q · ", question)));
+    showMark();
   }
 
   function showMark() {
-    chapterStrip.querySelectorAll(".gsp-chap").forEach((chip, seg) => { chip.classList.toggle("is-done", seg < player.chapter); chip.classList.toggle("is-on", seg === player.chapter); });
+    chapterStrip.querySelectorAll("button.gsp-chap").forEach((chip, seg) => { chip.classList.toggle("is-done", player.seen.has(seg) && seg !== player.chapter); chip.classList.toggle("is-on", seg === player.chapter); });
   }
 
   // Entering a chapter: draw its slide, move to its place, and show the travel card.
   function enter(seg) {
     const chapter = player.chapters[seg];
+    if (player.chapter >= 0) player.seen.add(player.chapter);
     player.chapter = seg;
     player.slide = renderSlide(chapter.visual);
     visual.replaceChildren(player.slide);
@@ -152,10 +181,45 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     if (reaction === "cheer") listener.emote("!", now);
   }
 
+  function answerAt(index) { return player.answers.find((answer) => index >= answer.start && index <= answer.end); }
+
+  // The line that follows `index`. A finished line is the moment a waiting answer goes in: it plays, then the story
+  // resumes at the line it left. Inside an answer the next line is simply the next.
+  function after(index) {
+    const inside = answerAt(index);
+    if (inside && index < inside.end) return index + 1;
+    const ready = player.answers.find((answer) => !answer.played);
+    if (ready) {
+      if (!inside && player.resume === null) player.resume = index + 1 < player.mainEnd ? index + 1 : END;
+      return ready.start;
+    }
+    if (player.resume !== null) {
+      const back = player.resume;
+      player.resume = null;
+      return back;
+    }
+    const next = index + 1;
+    return next < (inside ? player.lines.length : player.mainEnd) ? next : END;
+  }
+
+  function advance() {
+    const next = after(player.index);
+    if (next === END) { player.finished = true; setPlaying(false); return; }
+    go(next);
+  }
+
+  // The viewer chose a line themselves; a story they jumped back into no longer waits to resume anywhere else.
+  function jump(index) {
+    if (!answerAt(index)) player.resume = null;
+    go(index);
+  }
+
   function go(index) {
     if (index < 0) index = 0;
     if (index >= player.lines.length) { player.finished = true; setPlaying(false); return; }
     const line = player.lines[index];
+    const answer = answerAt(index);
+    if (answer) answer.played = true;
     const moved = line.seg !== player.chapter;
     if (moved) enter(line.seg);
     const inChapter = player.lines.filter((item) => item.seg === line.seg);
@@ -169,8 +233,9 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     who.textContent = NAMES[line.who];
     who.className = `gsp-who${line.who === "cohost" ? " is-cohost" : ""}`;
     caption.lastChild.textContent = line.text;
-    sceneChip.textContent = `${line.seg + 1} / ${player.chapters.length} · ${player.place.label}`;
+    sceneChip.textContent = `${line.seg + 1} / ${player.chapters.length} · ${player.place.label}${answer ? " · Your question" : ""}`;
     showMark();
+    showAsk();
     void speak(index);
   }
 
@@ -221,7 +286,7 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     return Promise.all([audio.play(), started]);
   }
 
-  audio.onended = () => go(player.index + 1);
+  audio.onended = () => advance();
 
   function setPlaying(on) {
     player.playing = on;
@@ -233,7 +298,7 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   }
 
   function toggle() {
-    if (player.finished) { go(0); setPlaying(true); return; }
+    if (player.finished) { player.resume = null; go(0); setPlaying(true); return; }
     setPlaying(!player.playing);
   }
 
@@ -255,31 +320,89 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     for (const [key, actor] of Object.entries(player.actors)) actor.update(now, dt, player.playing && key === speaker, player.playing);
     if (player.playing && !player.voice && !player.busy) {
       player.silentLeft -= dt / 1000 * player.speed;
-      if (player.silentLeft <= 0) go(player.index + 1);
+      if (player.silentLeft <= 0) advance();
     }
     player.frame = requestAnimationFrame(tick);
   }
 
-  // A follow-up or a rewrite: the writer works while the stage waits, then the new story plays from where it grew.
+  // A rewrite replaces the whole story, so the stage waits for it and questions cannot be asked meanwhile.
   async function work(title, run) {
     if (player.busy) return;
     player.busy = true;
     setPlaying(false);
     progress.hidden = false;
     progress.textContent = title;
-    try { await run((step) => { progress.textContent = `${title} ${step}`; }); } catch (error) { notify(error.message); } finally { player.busy = false; progress.hidden = true; }
+    askInput.disabled = true;
+    try { await run((step) => { progress.textContent = `${title} ${step}`; }); } catch (error) { notify(error.message); } finally { player.busy = false; progress.hidden = true; askInput.disabled = false; }
   }
 
-  async function follow(question) {
-    if (!question) return;
-    await work(`Continuing the story with “${question}”.`, async (onProgress) => {
-      const before = player.chapters.length;
-      const script = await ask(question, onProgress);
-      askInput.value = "";
-      load(script, before);
-      showView("podcast");
-      setPlaying(true);
-    });
+  // A question never stops the story. Questions are answered one at a time, in the order asked, and each answer
+  // goes in at the next line break once it is ready.
+  function follow(question) {
+    if (!question || player.busy) return;
+    askInput.value = "";
+    player.waiting.push(question);
+    renderChapters();
+    showAsk();
+    if (!player.answering) void answerQuestions();
+  }
+
+  async function answerQuestions() {
+    player.answering = true;
+    while (player.waiting.length && !player.gone) {
+      const question = player.waiting[0];
+      try {
+        const script = await ask(question, (step) => { player.step = step; showAsk(); });
+        if (player.gone) return;
+        const first = player.lines.length;
+        player.script = script;
+        Object.assign(player, build(script));
+        player.waiting.shift();
+        player.answers.push({ question, start: first, end: player.lines.length - 1, played: false });
+        renderWriteup();
+        if (player.voice && !player.hidden) clip(first).catch(() => {});
+      } catch (error) {
+        if (player.gone) return;
+        player.waiting.shift();
+        notify(`The answer to “${question}” failed: ${error.message}`);
+      }
+      player.step = "";
+      renderChapters();
+      answerReady();
+    }
+    player.answering = false;
+    showAsk();
+  }
+
+  // An answer that arrives after the story has ended plays at once; otherwise it waits for the current line to end.
+  function answerReady() {
+    showAsk();
+    if (player.hidden || !player.finished) return;
+    const ready = player.answers.find((answer) => !answer.played);
+    if (!ready) return;
+    player.resume = END;
+    go(ready.start);
+    setPlaying(true);
+  }
+
+  function showAsk() {
+    const unplayed = player.answers.filter((answer) => !answer.played);
+    const [asked] = player.waiting;
+    const parts = [];
+    if (asked) parts.push(`Working on “${asked}”${player.waiting.length > 1 ? `, with ${player.waiting.length - 1} more after it` : ""}. The story keeps playing.${player.step ? ` ${player.step}` : ""}`);
+    if (unplayed.length) parts.push(`${unplayed.length > 1 ? `${unplayed.length} answers are` : "An answer is"} ready: “${unplayed[0].question}”. ${player.playing ? "It plays after this line" : "It plays when you press play"}, then the story goes on.`);
+    askStatus.textContent = parts.join(" ");
+    askStatus.hidden = !parts.length;
+    rewriteButton.disabled = player.waiting.length > 0;
+    rewriteButton.title = player.waiting.length ? "Rewrite after your questions are answered" : "";
+    dockText.textContent = dockLabel(unplayed.length);
+    dock.classList.toggle("is-ready", unplayed.length > 0);
+    dock.classList.toggle("is-working", player.waiting.length > 0);
+  }
+
+  function dockLabel(ready) {
+    const state = ready ? "answer ready" : player.waiting.length ? `answering ${player.waiting.length === 1 ? "your question" : `${player.waiting.length} questions`}` : player.finished ? "finished" : "paused";
+    return `Activity overview · ${state}`;
   }
 
   async function again() {
@@ -321,7 +444,33 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
       h("ol", { class: "gsp-wsteps" }, steps.map((step) => h("li", {}, h("code", {}, range(step)), ` ${step.note}`))));
   }
 
-  function close() {
+  // Hiding pauses the movie and leaves the dock; nothing plays in the background, and the dock opens it again.
+  function minimize() {
+    if (player.hidden || player.gone) return;
+    player.hidden = true;
+    setPlaying(false);
+    cancelAnimationFrame(player.frame);
+    overlay.hidden = true;
+    dock.hidden = false;
+    showAsk();
+  }
+
+  function restore() {
+    if (!player.hidden || player.gone) return;
+    player.hidden = false;
+    overlay.hidden = false;
+    dock.hidden = true;
+    player.lastFrame = 0;
+    player.frame = requestAnimationFrame(tick);
+    overlay.focus();
+    answerReady();
+    showAsk();
+  }
+
+  function destroy() {
+    if (player.gone) return;
+    player.gone = true;
+    player.playing = false;
     cancelAnimationFrame(player.frame);
     resize.disconnect();
     player.token += 1;
@@ -329,7 +478,9 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     audio.removeAttribute("src");
     player.urls.forEach((url) => URL.revokeObjectURL(url));
     overlay.remove();
+    dock.remove();
+    onEnd();
   }
 
-  return { close };
+  return { show: restore, hide: minimize, end: destroy, isHidden: () => player.hidden };
 }

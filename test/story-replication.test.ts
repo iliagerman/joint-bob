@@ -8,6 +8,8 @@ import { GIT_REVIEW_THREAD_TTL_MS, GIT_STORY_TTL_MS, createGitReviewThread, ensu
 import { ensureReplicationSchema, type ReplicationEvent } from "../src/replication.js";
 import { applyStoryEvent, publishStory } from "../src/story-replication.js";
 import type { StoryScript } from "../src/story-script-schema.js";
+import { readyStoryMovie } from "../src/server/story-podcast.js";
+import type { ProjectRecord } from "../src/types.js";
 import { loadStoryScript, pruneStoryFiles, resetStoryPruneClock, saveStoryScript, storyVoiceDirectory } from "../src/story-scripts.js";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -117,3 +119,23 @@ test("expired scripts and old spoken lines are deleted, and fresh ones stay", ()
   assert.equal(existsSync(old), false);
   assert.equal(existsSync(fresh), true);
 });
+
+test("a ready movie is reused only from this conversation's change story that has one, and never from anything else", async () => {
+  const project = { id: "ready-project" } as ProjectRecord;
+  const nowIso = () => new Date().toISOString();
+  const withoutScript = story(project.id);
+  assert.equal(await readyStoryMovie(project, "/nowhere", "c-1", () => true), null, "a story with no movie has nothing to reuse");
+
+  // A review comment thread or an Activity overview record is not a change story, even with a script beside it.
+  const review = createGitReviewThread({ projectId: project.id, conversationId: "c-1", harnessId: "claude", provider: "claude", modelId: "opus", thinkingLevel: "medium", selection: { scope: "worktree" }, snapshot: "", question: "Generated review comments", answer: "{}", ttlMs: GIT_STORY_TTL_MS });
+  saveStoryScript(project.id, review.id, script(review, nowIso()));
+  assert.equal(await readyStoryMovie(project, "/nowhere", "c-1", () => true), null);
+
+  // Another conversation's story and a story in another repository are left alone.
+  const other = createGitReviewThread({ projectId: project.id, conversationId: "c-2", harnessId: "claude", provider: "claude", modelId: "opus", thinkingLevel: "medium", selection: { scope: "worktree" }, snapshot: "", question: "Generated change story", answer: "{}", ttlMs: GIT_STORY_TTL_MS });
+  saveStoryScript(project.id, other.id, script(other, nowIso()));
+  assert.equal(await readyStoryMovie(project, "/nowhere", "c-1", () => true), null);
+  saveStoryScript(project.id, withoutScript.id, script(withoutScript, nowIso()));
+  assert.equal(await readyStoryMovie(project, "/nowhere", "c-1", () => false), null);
+});
+
