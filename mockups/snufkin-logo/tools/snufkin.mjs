@@ -150,7 +150,7 @@ export function optionD() {
 // where thin outlines collapse into a bare triangle. `lite` trims path detail for the inline splash.
 const MARK = { teal: TEAL, tealShade: "#23a086", tealDeep: "#0f6b58", skin: "#f7f3e8", skinShade: "#d8d2c4", hair: "#8d8878", coat: "#2b3236" };
 
-export function markParts({ lite = false } = {}) {
+export function portraitMarkParts({ lite = false } = {}) {
   const view = (d) => { Object.assign(d, { s: 1.05, tx: 11.5, ty: -15.5, lite }); return d; };
   const body = view(new Drawing(101));
   const hat = view(new Drawing(102));
@@ -196,6 +196,40 @@ export function markParts({ lite = false } = {}) {
   hat.hatch(H([[80,262],[128,272],[190,258],[250,254],[250,244],[190,246],[128,252]]), { color: c.tealDeep, angle: 70, gap: 7, w: 2.4, opacity: 0.8, inset: 1.5 });
   hat.ink(brim, { w: 11, color: c.teal, closed: true, pressure: 0.3 });
   return { body: body.paths(), smoke: smoke.paths(), wisp: wisp.paths(), hat: hat.paths() };
+}
+
+// Hat-only mark: a soft floppy hat whose tip droops over, wide brim with thickness, dark band with a
+// buckle. The drooping tip and the brim are what stop it reading as a sail at 16-32px.
+const ellipse = (cx, cy, rx, ry, rot = 0, n = 16) => Array.from({ length: n }, (_, i) => {
+  const a = (i * 2 * Math.PI) / n, x = rx * Math.cos(a), y = ry * Math.sin(a), r = (rot * Math.PI) / 180;
+  return [cx + x * Math.cos(r) - y * Math.sin(r), cy + x * Math.sin(r) + y * Math.cos(r)];
+});
+
+export function markParts({ lite = false } = {}) {
+  const c = MARK, hat = new Drawing(111), smoke = new Drawing(112), wisp = new Drawing(113);
+  for (const d of [hat, smoke, wisp]) d.lite = lite;
+  // brim: a thick lip underneath, then the top surface
+  hat.fill(ellipse(256, 380, 172, 38, -4), c.tealDeep);
+  hat.ink(ellipse(256, 380, 172, 38, -4), { w: 8, color: c.tealDeep, closed: true });
+  hat.fill(ellipse(256, 364, 172, 38, -4), c.teal);
+  hat.ink(ellipse(256, 364, 172, 38, -4), { w: 10, color: c.teal, closed: true, pressure: 0.3 });
+  hat.hatch(ellipse(256, 372, 154, 26, -4), { color: c.tealDeep, angle: 80, gap: 8, w: 2.4, opacity: 0.55, inset: 4 });
+  // crown with a soft drooping tip
+  const crown = [[158,356],[164,300],[182,238],[212,176],[246,128],[284,102],[322,104],[352,126],[372,160],[376,190],[358,196],[342,172],[322,156],[306,158],[316,214],[336,282],[354,352],[256,382]];
+  hat.fill(crown, c.teal);
+  hat.fill([[306,158],[316,214],[336,282],[354,352],[300,372],[292,262],[288,190]], c.tealShade);
+  hat.fill([[372,160],[376,190],[358,196],[342,172],[322,156],[306,158],[330,138],[352,142]], c.tealDeep);
+  hat.hatch([[306,158],[316,214],[336,282],[354,352],[300,372],[292,262],[288,190]], { color: c.tealDeep, angle: 62, gap: 8, w: 2.4, opacity: 0.6 });
+  hat.ink(crown, { w: 10, color: c.teal, closed: true, pressure: 0.3 });
+  hat.ink([[262,134],[240,176],[236,214]], { w: 6, color: c.tealDeep, taper: [0.1, 0.5] });
+  // band
+  const band = [[168,338],[212,350],[256,358],[300,350],[348,338],[356,356],[306,372],[256,380],[206,372],[158,356]];
+  hat.fill(band, c.tealDeep);
+  hat.ink(band, { w: 5, color: c.tealDeep, closed: true });
+  // smoke curling off the drooping tip
+  smoke.ink([[380,184],[404,160],[392,136],[416,110],[404,84],[430,62]], { w: 13, color: c.teal, taper: [0.08, 0.6], wob: 1.4 });
+  wisp.ink([[392,176],[414,160],[416,138]], { w: 7, color: c.teal, opacity: 0.65, taper: [0.1, 0.6] });
+  return { body: "", smoke: smoke.paths(), wisp: wisp.paths(), hat: hat.paths() };
 }
 
 export function iconSvg() {
