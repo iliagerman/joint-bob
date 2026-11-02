@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { classifyWithTypesafe, DIFFICULTY_RUBRIC, levelFromAnswer } from "../src/classifiers/typesafe.js";
 import { getDifficultyClassifier, listDifficultyClassifiers } from "../src/classifiers/registry.js";
@@ -39,13 +40,19 @@ test("classifyWithTypesafe sends one score question with the ten-level rubric an
   const classification = await classifyWithTypesafe("Refactor the scheduler for concurrency", "key-1", "", fetchImpl);
   assert.ok(classification);
   assert.equal(classification.level, 7);
-  assert.equal(captured.url, "https://api.typesafe.ai/v1/systemone");
+  assert.equal(captured.url, process.env.JOINT_BOB_TYPESAFE_ENDPOINT);
+  assert.match(captured.url, /^http:\/\/127\.0\.0\.1:\d+\/v1\/systemone$/);
   assert.equal((captured.init.headers as Record<string, string>).Authorization, "Bearer key-1");
   const body = JSON.parse(String(captured.init.body));
   assert.equal(body.model, "jev-latest");
   assert.equal(body.questions.complexity.type, "score");
   assert.equal(body.questions.complexity.criteria.length, DIFFICULTY_RUBRIC.length);
   assert.equal(body.questions.complexity.criteria.length, 10);
+});
+
+test("the production Typesafe endpoint remains the fallback outside test fixtures", () => {
+  const source = readFileSync(new URL("../src/classifiers/typesafe.ts", import.meta.url), "utf8");
+  assert.match(source, /process\.env\.JOINT_BOB_TYPESAFE_ENDPOINT \|\| "https:\/\/api\.typesafe\.ai\/v1\/systemone"/);
 });
 
 test("classifyWithTypesafe preserves the newest text when state exceeds its budget", async () => {

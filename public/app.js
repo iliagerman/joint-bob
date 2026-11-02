@@ -75,6 +75,15 @@ import "./app/usage-dashboard.js";
 import "./app/appearance.js";
 import "./app/conversation-sharing.js";
 
+const assistantAutomationParameters = new URLSearchParams(location.search);
+const assistantAutomationMode = assistantAutomationParameters.get("assistantAutomation") === "1"
+  && (assistantAutomationParameters.get("assistantAction") === "cron" || assistantAutomationParameters.get("assistantAction") === "webhook");
+const returnToAssistantChat = () => {
+  if (assistantAutomationMode && window.parent !== window) window.parent.postMessage("assistant-automation-close", location.origin);
+};
+document.querySelector("#cronDialog").addEventListener("close", returnToAssistantChat);
+document.querySelector("#settingsDialog").addEventListener("close", returnToAssistantChat);
+
 initializeFocusUi({
   openSettings, startConversation: startGlobalConversation,
   createNote: () => openQuickNote(null, { chooseProject: true }),
@@ -275,15 +284,13 @@ initializeApplication()
     const assistantId = parameters.get("assistantId");
     const session = state.sessions.find(item => item.id === sessionId);
     if (!projectId || !sessionId || !session || session.id !== sessionId) throw new Error("Open this assistant conversation before creating an automation");
-    parameters.delete("assistantAction"); parameters.delete("assistantId");
-    history.replaceState({}, "", `${location.pathname}?${parameters}${location.hash}`);
-    if (action === "cron") { await openScheduledTasks(projectId, session); return; }
+    const { assistants } = await api("/api/personal-assistants");
+    const assistant = assistants.find(entry => entry.id === assistantId && entry.projectId === projectId && entry.sessionId === sessionId);
+    if (!assistant) throw new Error("Assistant not found");
+    if (action === "cron") { await openScheduledTasks(projectId, session, assistant); return; }
     if (action === "webhook") {
-      const { assistants } = await api("/api/personal-assistants");
-      const assistant = assistants.find(entry => entry.id === assistantId && entry.projectId === projectId && entry.sessionId === sessionId);
-      if (!assistant) throw new Error("Assistant not found");
-      await openSettings("webhooks");
       await openAssistantWebhook(assistant);
+      await openSettings("webhooks");
       return;
     }
     throw new Error("Unknown assistant automation");

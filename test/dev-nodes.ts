@@ -29,6 +29,12 @@ export interface SignedIn {
   csrfToken: string;
 }
 
+function fixtureEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = { ...process.env, ...overrides };
+  delete environment.TYPESAFE_AI_API_KEY;
+  return environment;
+}
+
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = createServer();
@@ -46,7 +52,7 @@ export async function seedDevEnvironment(root: string, nodeCount: 1 | 2, options
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--import", "tsx", "scripts/dev-seed.ts", "--root", root, "--nodes", String(nodeCount), "--json"], {
       cwd: process.cwd(),
-      env: { ...process.env, JOINT_BOB_DEV_PORT_A: String(portA), JOINT_BOB_DEV_PORT_B: String(portB), ...(options.username ? { JOINT_BOB_DEV_USERNAME: options.username } : {}) },
+      env: fixtureEnvironment({ JOINT_BOB_DEV_PORT_A: String(portA), JOINT_BOB_DEV_PORT_B: String(portB), ...(options.username ? { JOINT_BOB_DEV_USERNAME: options.username } : {}) }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -60,8 +66,7 @@ export async function seedDevEnvironment(root: string, nodeCount: 1 | 2, options
 export function startDevNode(environment: DevEnvironment, node: SeededNode, extraEnv: Record<string, string> = {}): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const installStub = Boolean(extraEnv.JOINT_BOB_TEST_ENGINE_LOG || process.env.JOINT_BOB_TEST_ENGINE_LOG);
-    const env = {
-      ...process.env,
+    const env = fixtureEnvironment({
       PORT: String(node.port),
       NODE_ENV: "test",
       HOME: environment.home,
@@ -73,7 +78,7 @@ export function startDevNode(environment: DevEnvironment, node: SeededNode, extr
       // A developer shell may export a real release commit; tests always run as a checkout unless they say otherwise.
       JOINT_BOB_RELEASE: "development",
       ...extraEnv,
-    };
+    });
     const child = spawn(process.execPath, serverArgs(env, installStub ? ["./test/stub-harness-bootstrap.ts"] : []), { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
     waitForDevNode(child, node.key, node.url).then(resolve, reject);
   });

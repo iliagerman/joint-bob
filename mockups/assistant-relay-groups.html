@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Discoverable assistants and groups · Joint Bob design preview</title>
+<style>
+/* Tokens copied from the dark theme in public/styles.css. */
+:root{color-scheme:dark;--bg:#08090b;--panel:#101215;--header:#171a1e;--surface:#191c20;--field:#212529;--line:rgba(255,255,255,.075);--line-strong:rgba(255,255,255,.17);--text:#ebeced;--muted:#94999e;--btn-bg:#24272b;--btn-border:rgba(255,255,255,.13);--btn-hover:#2c3035;--accent:#37cfab;--live:#3cb474;--amber:#d0a63c;--danger:#e0564e;--heading:#f1f4f3;--heading-soft:#7fdcc6;--ctl:10px;--card:12px;--sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Inter",sans-serif;--serif:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;font-family:var(--sans)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+h1,h2,h3,p,ol,ul,dl,dd,blockquote{margin:0;padding:0}
+ol,ul{list-style:none}
+[hidden]{display:none!important}
+svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+small,.muted{color:var(--muted)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:7px 13px;font-size:13px;background:var(--btn-bg);border:1px solid var(--btn-border);border-radius:var(--ctl)}
+button:hover:not(:disabled){background:var(--btn-hover)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:#07241c;font-weight:600}
+button.primary:hover:not(:disabled){background:#4ad9b7}
+button.ghost{background:transparent;border-color:transparent}
+button.ghost:hover:not(:disabled){background:var(--surface)}
+button.danger{color:#ffb3ad;border-color:color-mix(in srgb,var(--danger) 45%,transparent);background:transparent}
+button.icon{width:38px;padding:0;flex-shrink:0}
+button.link{min-height:0;padding:0;background:none;border:0;color:var(--heading-soft);font-size:inherit}
+button.link:hover:not(:disabled){background:none;text-decoration:underline}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input,select,textarea{width:100%;min-height:40px;padding:9px 11px;background:var(--field);border:1px solid var(--line-strong);border-radius:var(--ctl);font-size:14px}
+textarea{resize:vertical;line-height:1.5}
+label.field{display:grid;gap:6px;font-size:12.5px;color:#c9cdd1;margin-bottom:16px}
+label.field small{font-size:12px;line-height:1.5}
+
+/* Review page around the device. */
+.page{max-width:1400px;margin:auto;padding:26px 32px 28px}
+.eyebrow{font:11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--heading-soft)}
+.intro{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-top:8px}
+.intro h1{font:400 32px/1.15 var(--serif);letter-spacing:-.02em;color:var(--heading)}
+.intro p{color:var(--muted);font-size:13px;margin-top:6px;max-width:680px}
+.seg{display:inline-flex;padding:3px;gap:2px;background:var(--panel);border:1px solid var(--line-strong);border-radius:11px;flex-shrink:0}
+.seg button{min-height:32px;padding:4px 13px;background:transparent;border:0;color:var(--muted);border-radius:8px}
+.seg button[aria-pressed=true]{background:var(--btn-hover);color:var(--text)}
+.review{margin:16px 0 14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.review>span{font:11px var(--mono);color:var(--muted);margin-right:6px}
+.review button{min-height:32px;padding:3px 12px;border-radius:20px;background:transparent;font-size:12.5px}
+.review button[aria-pressed=true]{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+#jump-note{min-height:20px;margin:0 0 14px;font-size:13px;color:#c9cdd1}
+.stage{display:flex;justify-content:center}
+
+/* Device frame and app shell. */
+.device{position:relative;width:100%;max-width:1320px;height:800px;display:flex;flex-direction:column;overflow:hidden;background:var(--panel);border:1px solid var(--line-strong);border-radius:16px;box-shadow:0 20px 56px rgba(0,0,0,.55)}
+.device.mobile{width:390px;height:min(844px,calc(100dvh - 24px));border-width:5px;border-radius:34px}
+#shell{flex:1;min-height:0;display:flex}
+.device.mobile #shell{flex-direction:column}
+.m-status{height:36px;padding:10px 24px 0;display:flex;justify-content:space-between;font-size:12px;font-weight:600;flex-shrink:0}
+.m-home{width:115px;height:4px;border-radius:4px;background:#8b9197;margin:8px auto;flex-shrink:0}
+.m-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.tabbar{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);background:var(--header);flex-shrink:0}
+.tabbar button{position:relative;flex-direction:column;gap:2px;min-height:54px;padding:6px 2px;font-size:11px;color:var(--muted);background:transparent;border:0;border-radius:0}
+.tabbar button[aria-current=page]{color:var(--accent)}
+.tabbar .badge{position:absolute;top:4px;left:calc(50% + 6px)}
+.rail{width:272px;flex-shrink:0;padding:14px 10px 10px;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--line);overflow:auto}
+.brand{display:flex;align-items:center;gap:8px;padding:0 6px 12px;font-weight:650;letter-spacing:-.03em}
+.brand a{margin-left:auto;font-size:12px;font-weight:400;letter-spacing:0;color:var(--heading-soft);text-decoration:none}
+.brand-mark{width:26px;height:26px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:8px;color:var(--accent);font:italic 15px var(--serif)}
+.rail-search{width:100%;justify-content:flex-start;color:var(--muted);background:var(--field);border-color:var(--line);margin-bottom:6px}
+.sec{display:flex;align-items:center;justify-content:space-between;min-height:30px;margin:12px 6px 3px;font:11px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.sec button{width:28px;min-height:28px;padding:0}
+.sec svg{width:15px;height:15px}
+.row{width:100%;min-height:50px;padding:6px 8px;justify-content:flex-start;gap:10px;text-align:left;background:transparent;border-color:transparent}
+.row[aria-current=true]{background:color-mix(in srgb,var(--accent) 10%,var(--surface));border-color:color-mix(in srgb,var(--accent) 25%,transparent)}
+.row-text{flex:1;min-width:0}
+.row-text strong{display:flex;gap:6px;align-items:center;font-size:13.5px;font-weight:550}
+.row-text strong span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.row-text small{display:block;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.rail-foot{margin-top:auto;padding-top:10px;border-top:1px solid var(--line)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.view{flex:1;min-height:0;display:flex;flex-direction:column}
+.head{display:flex;align-items:center;gap:11px;padding:12px 20px;min-height:66px;background:var(--header);border-bottom:1px solid var(--line);flex-shrink:0}
+.head-text{flex:1;min-width:0}
+.head h2{font:400 22px/1.2 var(--serif);letter-spacing:-.015em;color:var(--heading);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.head p{font-size:12px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.head-actions{display:flex;gap:6px;flex-shrink:0}
+.tabs{display:flex;gap:2px;padding:6px 16px 0;background:var(--header);border-bottom:1px solid var(--line);overflow-x:auto;flex-shrink:0}
+.tabs button{min-height:38px;padding:6px 11px;background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;color:var(--muted);white-space:nowrap}
+.tabs button[aria-selected=true]{color:var(--text);border-bottom-color:var(--accent)}
+.tabs button:hover:not(:disabled){background:transparent;color:var(--text)}
+.scroll{flex:1;min-height:0;overflow:auto}
+.narrow{max-width:800px;margin:0 auto;padding:22px 24px 30px}
+.page-title{font:400 25px/1.2 var(--serif);color:var(--heading);padding:6px 16px 10px}
+.m-head{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 4px 0}
+
+/* Identity. People are circles, assistants are rounded squares. */
+.av{width:30px;height:30px;display:grid;place-items:center;flex-shrink:0;border-radius:50%;background:#2c3035;font:600 10.5px var(--mono);color:#c9cdd1}
+.av.you{background:color-mix(in srgb,var(--accent) 22%,#20252a);color:var(--heading-soft)}
+.av.ghost{background:transparent;border:1.5px dashed var(--line-strong);color:var(--muted)}
+.bot{width:30px;height:30px;display:grid;place-items:center;flex-shrink:0;border-radius:9px;background:color-mix(in srgb,var(--accent) 16%,#1b2023);color:var(--accent)}
+.bot svg{width:17px;height:17px}
+.bot.mine-b{color:#9ec3e6;background:#1e2a35}
+.bot.mine-c{color:#d9bd7c;background:#2f2a1e}
+.bot.other{color:#c9cdd1;background:#2a2e33}
+.badge{min-width:18px;height:18px;padding:0 5px;display:inline-grid;place-items:center;border-radius:9px;background:var(--amber);color:#241b02;font:600 10.5px var(--mono);flex-shrink:0}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;font:10.5px/1.5 var(--mono);white-space:nowrap;color:var(--muted);border:1px solid var(--line-strong);border-radius:6px}
+.chip.amber{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 10%,transparent)}
+.chip.ok{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.chip.bad{color:#ff9d95;border-color:color-mix(in srgb,var(--danger) 50%,transparent);background:color-mix(in srgb,var(--danger) 10%,transparent)}
+.chips{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+
+/* Chat. */
+.msgs{max-width:780px;margin:0 auto;padding:20px 24px 12px;display:flex;flex-direction:column;gap:14px}
+.sys{text-align:center;color:var(--muted);font-size:12px;line-height:1.55}
+.m{display:flex;gap:10px;align-items:flex-start;max-width:88%}
+.m.me{align-self:flex-end;flex-direction:row-reverse}
+.who{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12px;color:var(--muted);margin-bottom:3px}
+.who b{color:var(--text);font-weight:600}
+.bubble{padding:8px 13px;border-radius:13px;background:var(--surface);border:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere}
+.m.me .bubble{background:color-mix(in srgb,var(--accent) 15%,var(--surface));border-color:color-mix(in srgb,var(--accent) 28%,transparent)}
+.m.bot-msg .bubble{border-left:2px solid var(--accent)}
+.send-state{font-size:11px;color:var(--muted);margin-top:3px;text-align:right}
+.composer-wrap{padding:8px 20px 14px;flex-shrink:0}
+.composer{max-width:780px;margin:0 auto;padding:9px 10px 8px;background:var(--surface);border:1px solid var(--line-strong);border-radius:14px}
+.composer textarea{min-height:28px;padding:2px 4px;background:transparent;border:0;resize:none;outline:0}
+.composer-foot{display:flex;align-items:center;gap:6px;margin-top:3px;color:var(--muted);font-size:12px}
+.composer-foot .spacer{flex:1;min-width:0}
+.composer-foot button:not(.primary){min-height:30px;padding:2px 9px;font-size:12px;background:transparent}
+.composer-foot button.primary{width:34px;min-height:34px}
+.strip{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;flex-shrink:0;background:color-mix(in srgb,var(--amber) 9%,var(--panel));border-bottom:1px solid color-mix(in srgb,var(--amber) 30%,transparent)}
+.strip>span{flex:1;min-width:0}
+.strip button{min-height:32px;padding:3px 12px}
+.strip.info{background:var(--surface);border-bottom-color:var(--line)}
+.strip.warn svg{color:var(--amber)}
+
+/* Decision trail. Shows where a request is, never a generated reason. */
+.trail{display:flex;flex-wrap:wrap;gap:3px 0;font-size:11.5px;color:var(--muted)}
+.trail li{display:flex;align-items:center;gap:5px}
+.trail li+li::before{content:"";width:9px;height:1px;margin:0 4px;background:var(--line-strong)}
+.trail i{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--line-strong)}
+.trail .done{color:#c9cdd1}
+.trail .done i{background:var(--accent);border-color:var(--accent)}
+.trail .now{color:var(--amber);font-weight:600}
+.trail .now i{background:var(--amber);border-color:var(--amber);animation:pulse 1.6s infinite}
+.trail .stop{color:#ff9d95;font-weight:600}
+.trail .stop i{background:var(--danger);border-color:var(--danger)}
+@keyframes pulse{50%{opacity:.35}}
+.m-trail{align-self:flex-start;margin-left:0;padding:0 2px}
+
+/* Member list: the line shows whose assistant is whose. */
+.split{flex:1;min-height:0;display:flex}
+.col{flex:1;min-width:0;display:flex;flex-direction:column}
+.members{width:316px;flex-shrink:0;overflow:auto;padding:14px 16px;border-left:1px solid var(--line);background:var(--panel)}
+.tree-person{display:flex;gap:10px;align-items:center;min-height:44px}
+.tree-bot{position:relative;display:flex;gap:10px;align-items:center;min-height:50px;margin-left:15px;padding-left:25px}
+.tree-bot::before{content:"";position:absolute;left:0;top:-7px;height:calc(50% + 7px);width:19px;border-left:2px solid var(--accent);border-bottom:2px solid var(--accent);border-bottom-left-radius:9px}
+.tree-bot.alone::before{border-left:2px dashed var(--muted);border-bottom:2px dashed var(--muted);border-radius:0}
+.tree-text{flex:1;min-width:0}
+.tree-text b{display:block;font-size:13.5px;font-weight:550}
+.tree-text small{display:block;font-size:12px;line-height:1.4}
+.watch{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--live)}
+.watch::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.watch.pending{color:var(--amber)}
+.tree-remove{min-height:28px;padding:1px 8px;font-size:12px;color:var(--muted)}
+.fine{font-size:12px;line-height:1.55;color:var(--muted)}
+.members-foot{display:grid;gap:7px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.members-foot button{width:100%}
+
+/* Cards, lists and panels. */
+.card{padding:15px 16px;margin-bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--card)}
+.card h3{font-size:15px;font-weight:600}
+.card.attention{border-color:color-mix(in srgb,var(--amber) 42%,transparent)}
+.card.done{border-color:color-mix(in srgb,var(--accent) 38%,transparent)}
+.card-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.card p+p,.card .gap{margin-top:9px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
+.actions .grow{flex:1}
+.quote{padding:7px 11px;margin-top:10px;font-size:13px;color:#c9cdd1;border-left:2px solid var(--line-strong)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin-top:10px;padding:10px 12px;font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:9px}
+.kv dt{color:var(--muted)}
+.exact{margin-top:10px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:9px}
+.label{font-size:12px;color:var(--muted);margin-bottom:4px}
+.work{display:flex;gap:11px;align-items:flex-start;padding:11px 0;border-top:1px solid var(--line)}
+.work>div{flex:1;min-width:0}
+.work strong{font-weight:550;font-size:13.5px;display:block}
+.work small{display:block;font-size:12.5px;line-height:1.5}
+.work .chip{flex-shrink:0;margin-top:1px}
+.work-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.work-actions button{min-height:30px;padding:2px 10px;font-size:12px}
+.settings-sec{margin-bottom:28px}
+.settings-sec h3{font:400 19px var(--serif);color:var(--heading);margin-bottom:4px}
+.settings-sec>p{font-size:13px;color:var(--muted);margin-bottom:12px}
+.radio{display:flex;gap:11px;align-items:center;width:100%;min-height:50px;padding:7px 12px;margin-bottom:6px;justify-content:flex-start;text-align:left;background:var(--surface);border-color:var(--line)}
+.radio[aria-checked=true]{border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
+.radio .dot{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--line-strong);flex-shrink:0}
+.radio[aria-checked=true] .dot{border:5px solid var(--accent)}
+table.matrix{width:100%;border-collapse:collapse;font-size:13.5px}
+.matrix th,.matrix td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:center;font-weight:500}
+.matrix th:first-child,.matrix td:first-child{text-align:left}
+.matrix th{font-size:12px;color:var(--muted)}
+.switch{position:relative;width:38px;min-height:22px;height:22px;padding:0;border-radius:11px;background:var(--field);border:1px solid var(--line-strong)}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--muted);transition:left .12s}
+.switch[aria-checked=true]{background:var(--accent);border-color:var(--accent)}
+.switch[aria-checked=true]::after{left:18px;background:#07241c}
+.switch:hover:not(:disabled)[aria-checked=true]{background:var(--accent)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.listing{display:flex;gap:11px;align-items:flex-start}
+.never{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.result{display:flex;gap:11px;align-items:center;width:100%;min-height:66px;padding:10px 12px;margin-bottom:7px;justify-content:flex-start;text-align:left;background:var(--surface);border-color:var(--line)}
+.result .row-text small{white-space:normal}
+.result-routes{margin-top:5px}
+.search{position:relative;margin-bottom:8px}
+.search svg{position:absolute;left:12px;top:12px;color:var(--muted)}
+.search input{padding-left:38px;min-height:44px;font-size:15px}
+.find-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:10px 0 12px}
+.notice{display:flex;align-items:flex-start;gap:9px;padding:10px 12px;margin-bottom:12px;font-size:13px;background:color-mix(in srgb,var(--amber) 9%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 32%,transparent);border-radius:10px}
+.notice svg{color:var(--amber);margin-top:1px}
+.notice>span{flex:1}
+.notice.plain{background:var(--surface);border-color:var(--line)}
+.notice.plain svg{color:var(--muted)}
+.empty{padding:26px 16px;text-align:center;color:var(--muted);font-size:13.5px}
+.catalog{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin-top:9px}
+.catalog button{display:block;height:auto;padding:9px 12px;text-align:left;background:var(--surface);border-color:var(--line)}
+.catalog strong{display:block;font-weight:550}
+.catalog small{display:block;font-size:12px;line-height:1.45;margin-top:2px}
+.actions-layout{flex:1;min-height:0;display:flex}
+.action-list{width:280px;flex-shrink:0;padding:14px 12px;overflow:auto;border-right:1px solid var(--line)}
+.action-item{display:block;width:100%;height:auto;padding:10px 11px;margin-bottom:6px;text-align:left;background:transparent;border-color:var(--line)}
+.action-item[aria-current=true]{border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.action-item strong{display:block;font-weight:550;margin-bottom:5px}
+.op{display:flex;gap:9px;align-items:flex-start;padding:6px 0;font-size:13.5px}
+.op input{width:16px;min-height:16px;height:16px;margin:2px 0 0;accent-color:var(--accent);flex-shrink:0}
+.op small{display:block;font-size:12px}
+.group-label{font-size:12.5px;color:#c9cdd1;margin:10px 0 2px}
+.editor-box{padding:13px 14px;margin-bottom:16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--card)}
+.editor-box label.field:last-child{margin-bottom:0}
+.private-tag{display:inline-flex;gap:5px;align-items:center;font-size:12px;color:var(--amber)}
+.private-tag svg{width:13px;height:13px}
+
+/* Resources: lists fit the height and page instead of scrolling. */
+.res-layout{flex:1;min-height:0;display:flex}
+.res-nav{width:280px;flex-shrink:0;padding:14px 12px;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+.res-item strong{display:flex;align-items:center;gap:8px}
+.res-item svg{width:16px;height:16px;color:var(--muted)}
+.res-item small{display:block;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res-nav-foot{margin-top:auto;padding-top:12px;display:grid;gap:8px}
+.res-detail{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:18px 24px 14px}
+.res-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px}
+.res-top>div{flex:1;min-width:0}
+.res-top h3{font:400 21px/1.2 var(--serif);color:var(--heading)}
+.res-top p{font-size:13px;color:var(--muted);margin-top:3px}
+.res-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;margin-bottom:6px;font-size:13.5px;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.res-list{flex:1;min-height:0;overflow:hidden}
+.res-row{display:flex;align-items:center;gap:11px;height:58px;padding:0 4px;border-bottom:1px solid var(--line)}
+.res-row.off .row-text,.res-row.off .site{opacity:.5}
+.res-ctl{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.res-row button:not(.switch),.work .site+div+button{min-height:32px;padding:3px 11px;font-size:12.5px}
+.site{width:30px;height:30px;display:grid;place-items:center;flex-shrink:0;border-radius:8px;background:#2a2e33;font:600 12px var(--mono);color:#c9cdd1}
+.site svg{width:16px;height:16px}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:10px;font-size:12px;color:var(--muted)}
+.pager span{display:flex;gap:6px}
+.pager button{min-height:30px;padding:2px 10px;font-size:12px}
+.viewer{margin:12px 0;overflow:hidden;border:1px solid var(--line-strong);border-radius:12px}
+.viewer-bar{display:flex;align-items:center;gap:8px;padding:7px 10px;font:11.5px var(--mono);color:var(--muted);background:var(--header)}
+.viewer-bar svg{width:13px;height:13px}
+.viewer-bar .chip{margin-left:auto}
+.viewer-body{min-height:210px;display:grid;place-items:center;align-content:center;gap:10px;padding:18px;background:#f3f4f1;color:#1b1e20}
+.qr{display:grid;grid-template-columns:repeat(21,6px);grid-auto-rows:6px;padding:8px;background:#fff}
+.qr i.on{background:#111}
+.fake-login{width:220px;display:grid;gap:8px}
+.fake-login span{height:30px;background:#fff;border:1px solid #c9ccc6;border-radius:6px}
+.fake-login b{height:30px;background:#2b5ea7;border-radius:6px}
+
+/* Overlays stay inside the device so mobile sheets look like the phone. */
+#overlay{position:absolute;inset:0;z-index:5}
+.scrim{position:absolute;inset:0;background:rgba(3,5,6,.62)}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:490px;max-width:100%;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line-strong);box-shadow:var(--shadow,0 20px 56px rgba(0,0,0,.55))}
+.sheet{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:500px;max-width:calc(100% - 24px);max-height:calc(100% - 40px);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line-strong);border-radius:16px;box-shadow:0 20px 56px rgba(0,0,0,.55)}
+.device.mobile .drawer,.device.mobile .sheet{inset:0;left:0;top:0;transform:none;width:100%;max-width:none;max-height:none;border:0;border-radius:29px;overflow:hidden}
+.ov-head{display:flex;align-items:flex-start;gap:10px;padding:16px 18px 13px;border-bottom:1px solid var(--line);flex-shrink:0}
+.ov-head>div{flex:1;min-width:0}
+.ov-head h2{font:400 22px/1.2 var(--serif);color:var(--heading)}
+.device.mobile .ov-head{padding-top:30px}
+.ov-body{flex:1;min-height:0;overflow:auto;padding:16px 18px}
+.ov-body>.sec{margin-left:0;margin-right:0}
+.ov-foot{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--line);background:var(--header);flex-shrink:0}
+.ov-foot button{flex:1;min-height:42px}
+.device.mobile .ov-foot{padding-bottom:26px}
+.bullets{display:grid;gap:7px;margin:10px 0}
+.bullets li{display:flex;gap:9px;font-size:13.5px;color:#c9cdd1}
+.bullets svg{width:15px;height:15px;margin-top:3px;color:var(--muted)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:20;max-width:90vw;padding:11px 18px;font-size:13px;text-align:center;background:#d6ece3;color:#0b2a20;border-radius:11px;box-shadow:0 8px 40px rgba(0,0,0,.6)}
+
+/* Phone proportions. */
+.device.mobile button{min-height:44px}
+.device.mobile button.icon{width:44px}
+.device.mobile .switch{min-height:26px;height:26px;width:44px}
+.device.mobile .switch::after{top:3px;left:3px;width:18px;height:18px}
+.device.mobile .switch[aria-checked=true]::after{left:21px}
+.device.mobile input,.device.mobile select,.device.mobile textarea{font-size:16px}
+.device.mobile .head{padding:6px 10px;min-height:58px}
+.device.mobile .head h2{font-size:19px}
+.device.mobile .narrow{padding:14px 14px 24px}
+.device.mobile .msgs{padding:14px 12px 8px}
+.device.mobile .m{max-width:96%}
+.device.mobile .composer-wrap{padding:6px 10px 2px}
+.device.mobile .composer-foot button:not(.primary){min-height:34px}
+.device.mobile .composer-foot button.primary{min-height:36px;width:36px}
+.device.mobile .strip{padding:7px 12px}
+.device.mobile .trail{gap:4px 12px}
+.device.mobile .trail li+li::before{display:none}
+.device.mobile .tabs{padding:2px 6px 0}
+.device.mobile .tabs button{min-height:42px}
+.device.mobile .actions-layout{display:block;overflow:auto}
+.device.mobile .action-list{width:auto;border:0}
+.device.mobile .pair{grid-template-columns:1fr}
+.device.mobile .row{min-height:60px;padding-inline:14px}
+.device.mobile .m-lists{flex:1;min-height:0;overflow:auto;padding-bottom:6px}
+.device.mobile .sec{margin-inline:14px}
+.device.mobile .matrix th,.device.mobile .matrix td{padding:9px 4px}
+.device.mobile .work-actions button,.device.mobile .tree-remove{min-height:34px}
+.device.mobile .tabs button{padding:6px;font-size:12.5px}
+.device.mobile .res-layout{flex-direction:column}
+.device.mobile .res-nav{width:auto;flex:1;padding:12px 14px;border:0}
+.device.mobile .res-detail{padding:12px 14px 10px}
+@media(max-width:760px){.page{padding:18px 10px}.intro{flex-direction:column;align-items:flex-start;gap:12px}.intro h1{font-size:27px}.device:not(.mobile){width:1080px;min-width:1080px}.stage:has(.device:not(.mobile)){justify-content:flex-start;overflow:auto}.device.mobile{max-width:100%}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+<symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="4"/><path d="M12 3v4M8.5 12.5h.01M15.5 12.5h.01M9 16h6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 21h4"/></symbol>
+<symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.500 6 6M16 5a3.500 3.500 0 0 1 0 6.500M18 14.500c2 .8 3.200 2.800 3.200 5.500"/></symbol>
+<symbol id="i-send-out" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.500 20h19zM12 10v4.500M12 17.500h.01"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+<symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.500" fill="currentColor"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.3 3.8 5.2 3.8 8.5s-1.3 6.2-3.8 8.5c-2.5-2.3-3.8-5.2-3.8-8.5s1.3-6.2 3.8-8.5"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4.5h10a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/></symbol>
+<symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M4 5h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v6h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z"/></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2 2M14 9l2 2"/></symbol>
+</defs></svg>
+
+<main class="page">
+  <p class="eyebrow">Joint Bob design preview · for approval</p>
+  <header class="intro">
+    <div><h1>Discoverable assistants and groups</h1><p>Sample data only. Nothing here searches a relay, sends a message, books a meeting or approves anything.</p></div>
+    <div class="seg" aria-label="Preview device"><button data-act="device" data-v="desktop" aria-pressed="true">Desktop</button><button data-act="device" data-v="mobile" aria-pressed="false">Mobile</button></div>
+  </header>
+  <nav class="review" aria-label="Screens to review, not part of the app"><span>Review</span>
+    <button data-act="jump" data-v="approvals">Private chat and approval</button>
+    <button data-act="jump" data-v="resources">Resources</button>
+    <button data-act="jump" data-v="you">Who can find you</button>
+    <button data-act="jump" data-v="find">Find</button>
+    <button data-act="jump" data-v="thread">Direct request</button>
+    <button data-act="jump" data-v="group">Group chat</button>
+    <button data-act="jump" data-v="invites">Invitations</button>
+    <button data-act="jump" data-v="actions">Public actions</button>
+  </nav>
+  <p id="jump-note" aria-live="polite"></p>
+  <div class="stage"><section class="device" id="device" aria-label="Joint Bob assistant design">
+    <div id="shell"></div>
+    <div id="overlay" hidden></div>
+  </section></div>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+// Throwaway design preview. No requests, credentials, real decisions or persistence.
+const q = (selector, root = document) => root.querySelector(selector);
+const esc = value => { const node = document.createElement('span'); node.textContent = value; return node.innerHTML; };
+const ic = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+const av = (initials, cls = '') => `<span class="av ${cls}" aria-hidden="true">${initials}</span>`;
+const bot = (cls = '') => `<span class="bot ${cls}" aria-hidden="true">${ic('agent')}</span>`;
+const chip = (label, cls = '') => `<span class="chip ${cls}">${label}</span>`;
+const later = (ms, fn) => setTimeout(() => { fn(); render(); }, ms);
+
+const RELAYS = ['Home', 'Team', 'Partners'];
+const MY_ASSISTANTS = {
+  work: { name: 'Work assistant', cls: '', source: 'Joint Bob project' },
+  research: { name: 'Research assistant', cls: 'mine-b', source: 'Research project' },
+  personal: { name: 'Personal assistant', cls: 'mine-c', source: 'Personal project' },
+};
+const DIRECTORY = [
+  { id: 'maya', kind: 'person', name: 'Maya Shalev', initials: 'MS', origin: 'maya-studio', relays: ['Team', 'Home'], desc: 'Product lead' },
+  { id: 'calendar', kind: 'assistant', name: 'Calendar helper', owner: 'Maya Shalev', origin: 'maya-studio', relays: ['Team', 'Home'], desc: 'Shares when Maya is free and books meetings.', thread: 'maya' },
+  { id: 'dan1', kind: 'person', name: 'Dan Cohen', initials: 'DC', origin: 'dan-laptop', relays: ['Team'], desc: 'Procurement' },
+  { id: 'dan2', kind: 'person', name: 'Dan Cohen', initials: 'DC', origin: 'cohen-studio', relays: ['Home'], desc: 'Photographer' },
+  { id: 'scout', kind: 'assistant', name: 'Research scout', owner: 'Dan Cohen', origin: 'dan-laptop', relays: ['Team'], desc: 'Summarizes market reports on request.', thread: 'scout' },
+  { id: 'lior', kind: 'person', name: 'Lior Ben-Ami', initials: 'LB', origin: 'lior-mac', relays: ['Partners'], desc: 'Partner operations', viaPartners: true },
+  { id: 'ops', kind: 'assistant', name: 'Ops desk', owner: 'Lior Ben-Ami', origin: 'lior-mac', relays: ['Partners'], desc: 'Checks delivery status for partners.', thread: 'ops', viaPartners: true },
+];
+const threadSeed = {
+  scout: { assistant: 'Research scout', owner: 'Dan Cohen', firstName: 'Dan', via: 'Team', catalog: [['Summarize a report', 'Send a report link and get a short summary.', 'Please summarize this market report: example.com/report']], messages: [] },
+  ops: { assistant: 'Ops desk', owner: 'Lior Ben-Ami', firstName: 'Lior', via: 'Partners', catalog: [['Check delivery status', 'Give an order number and get its status.', 'What is the delivery status of order 4417?']], messages: [] },
+};
+const DONE = label => ({ label, state: 'done' });
+const NOW = label => ({ label, state: 'now' });
+const TODO = label => ({ label, state: 'todo' });
+const STOP = label => ({ label, state: 'stop' });
+
+const S = {
+  device: 'desktop', screen: 'assistant', assistant: 'work', tab: 'chat', group: 'launch', thread: 'maya',
+  mTab: 'assistants', mDetail: true, overlay: null, jump: 'approvals',
+  defaultAssistant: 'work',
+  discovery: {
+    you: { Home: true, Team: true, Partners: false }, work: { Home: false, Team: true, Partners: false },
+    research: { Home: false, Team: false, Partners: false }, personal: { Home: false, Team: false, Partners: false },
+  },
+  ownerNote: false,
+  blocked: [{ name: 'Ron Katz', origin: 'ron-mac' }],
+  partnersUp: false, findFilter: 'all', findQuery: '',
+  approval: { state: 'pending', rev: 1, reply: 'Booked: Thursday 5 Nov, 15:00–15:30. The invitation is on its way to Noa.' },
+  notices: [
+    { id: 'budget', title: 'Budget deadline moved to 12 Nov', from: 'Dan Cohen in Launch crew', group: 'launch' },
+    { id: 'contract', title: 'Noa asked who reviews the vendor contract', from: 'Noa Levi in Launch crew', group: 'launch' },
+  ],
+  uncertain: true,
+  chat: [
+    { me: true, text: 'Which laptop did we pick?' },
+    { text: 'The second one: 32 GB of RAM and a two-year warranty. Want me to check the current price?' },
+  ],
+  groups: {
+    launch: {
+      name: 'Launch crew', relay: 'Team', mine: true, host: 'your machine', hostOnline: true, pending: ['Lior Ben-Ami'],
+      tree: [
+        { name: 'Ilia German', initials: 'IG', you: true, note: 'You · Created this group', bots: [{ name: 'Work assistant', cls: '', link: 'with', watching: true, note: 'Joined with you. Leaves with you.' }] },
+        { name: 'Noa Levi', initials: 'NL', bots: [] },
+        { name: 'Dan Cohen', initials: 'DC', note: 'dan-laptop', bots: [{ name: 'Research scout', cls: 'other', link: 'with', watching: false, note: 'Joined with Dan. Leaves with Dan.', pendingWhy: 'Starts watching when Dan’s machine is online' }] },
+        { name: 'Maya Shalev', initials: 'MS', absent: true, note: 'Owner · Not in this group', bots: [{ name: 'Calendar helper', cls: 'other', link: 'alone', watching: true, note: 'Invited on its own. Maya approved.' }] },
+      ],
+      messages: [
+        { sys: 'You created this group on 28 Oct. Work assistant joined with you.' },
+        { from: 'Noa Levi', initials: 'NL', text: 'The flight test moved, so the vendor review has to happen this week.' },
+        { from: 'Dan Cohen', initials: 'DC', text: 'Also, finance moved the budget deadline to 12 Nov.' },
+        { botName: 'Calendar helper', botCls: 'other', owner: 'Maya', text: 'Maya is free on Thursday from 14:00 to 17:00.' },
+        { from: 'Noa Levi', initials: 'NL', text: 'Ilia, can you do 30 minutes on Thursday at 15:00 for the vendor review?' },
+      ],
+    },
+    family: {
+      name: 'Family trip', relay: 'Home', mine: false, host: 'Noa’s machine', hostOnline: false, pending: [],
+      tree: [
+        { name: 'Noa Levi', initials: 'NL', note: 'Created this group', bots: [] },
+        { name: 'Ilia German', initials: 'IG', you: true, note: 'You', bots: [
+          { name: 'Personal assistant', cls: 'mine-c', link: 'with', watching: false, note: 'Joined with you when it was your default. Leaves with you.', pendingWhy: 'Starts watching when Noa’s machine is back' },
+          { name: 'Research assistant', cls: 'mine-b', link: 'alone', watching: false, note: 'Invited on its own. Stays if you leave.', pendingWhy: 'Starts watching when Noa’s machine is back' },
+        ] },
+      ],
+      messages: [
+        { sys: 'You joined on 19 Oct. Messages from before that aren’t available to you.' },
+        { from: 'Noa Levi', initials: 'NL', text: 'Flights are booked for 14 Dec. Who is handling the car?' },
+      ],
+    },
+  },
+  threads: {
+    maya: {
+      assistant: 'Calendar helper', owner: 'Maya Shalev', firstName: 'Maya', via: 'Team',
+      catalog: [['See availability', 'Shows when Maya is free, not what the meetings are.', 'When is Maya free on Wednesday?'], ['Arrange a meeting', 'Books 15 to 60 minutes with Maya.', 'Can Maya meet for 30 minutes on Wednesday afternoon?']],
+      messages: [
+        { me: true, text: 'Can Maya meet for 30 minutes next Tuesday morning?' },
+        { trail: [DONE('Recorded'), DONE('Decision'), DONE('Maya’s approval'), DONE('Executing'), DONE('Completed')] },
+        { reply: 'Booked: Tuesday 10 Nov, 11:00–11:30. The invitation is on its way to you.' },
+        { me: true, text: 'Can you send me Maya’s notes from last week?' },
+        { trail: [DONE('Recorded'), STOP('Declined')] },
+        { reply: 'This assistant doesn’t offer that. You can ask when Maya is free or arrange a meeting.' },
+      ],
+    },
+  },
+  invites: [
+    { id: 'design', kind: 'person', from: 'Noa Levi', group: 'Design review', relay: 'Team', state: 'pending', expires: '9 Nov' },
+    { id: 'market', kind: 'assistant', from: 'Dan Cohen', group: 'Market watch', relay: 'Team', state: 'pending', expires: '8 Nov', assistant: 'research' },
+    { id: 'partner', kind: 'person', from: 'Lior Ben-Ami', group: 'Partner sync', relay: 'Partners', state: 'pending', expires: '7 Nov', needsConnection: true },
+  ],
+  sent: [
+    { id: 's1', who: 'Lior Ben-Ami', group: 'Launch crew', state: 'Pending' },
+    { id: 's2', who: 'Research scout (Dan Cohen approves)', group: 'Family trip', state: 'Declined' },
+    { id: 's3', who: 'Tal Mizrahi', group: 'Launch crew', state: 'Expired' },
+  ],
+  actions: [
+    { id: 'availability', name: 'See my availability', desc: 'Shows when I’m free in the next two weeks. Doesn’t show what my meetings are.', instructions: 'Anyone who can reach you can see free and busy times for work hours only.', inputs: 'Date range', status: 'published', ops: ['freebusy'] },
+    { id: 'meeting', name: 'Arrange a meeting', desc: 'Books 15 to 60 minutes with me.', instructions: 'Book Dan directly when the slot is free. Ask me first for anyone else. Never share who else I’m meeting.', inputs: 'Subject, length, preferred time', status: 'published', ops: ['freebusy', 'create'] },
+    { id: 'travel', name: 'Share my travel plan', desc: 'Tells people when I’m away.', instructions: 'Share dates only, never destinations.', inputs: 'Date range', status: 'draft', ops: [] },
+  ],
+  actionSel: 'meeting', actionOpen: false, test: { caller: 'Noa Levi', result: null },
+  host: 'Homeserver', allowBrowser: true, resSection: 'browser', resOpen: false, resPage: {}, resPageSize: 6, pendingLogin: null,
+  logins: [
+    { id: 'whatsapp', name: 'WhatsApp', site: 'web.whatsapp.com', machine: 'Homeserver', state: 'signed-in', usedBy: 'Weekend plans' },
+    { id: 'linkedin', name: 'LinkedIn', site: 'linkedin.com', machine: 'Homeserver', state: 'expired', since: '1 Nov' },
+    { id: 'amazon', name: 'Amazon', site: 'amazon.com', machine: 'Ilia’s MacBook', state: 'signed-in' },
+  ],
+  savedProfiles: [
+    { id: 'gmail-web', name: 'Gmail', site: 'mail.google.com', machine: 'Homeserver', shared: 'Shared with the Joint Bob project' },
+    { id: 'booking', name: 'Booking.com', site: 'booking.com', machine: 'Ilia’s MacBook', shared: 'Shared with you' },
+  ],
+  skills: [
+    { name: 'calendar', desc: 'Read and change Google Calendar events', on: true },
+    { name: 'gmail', desc: 'Read, search and send email', on: true },
+    { name: 'whatsapp', desc: 'Read chats and send replies you approve', on: true },
+    { name: 'tavily-search', desc: 'Search the web', on: true },
+    { name: 'pdf', desc: 'Read and fill PDF files', on: true },
+    { name: 'israeli-public-transit', desc: 'Bus and train routes in Israel', on: false },
+    { name: 'docx', desc: 'Create and edit Word documents', on: false },
+    { name: 'xlsx', desc: 'Work with spreadsheets', on: false },
+    { name: 'youtube-watcher', desc: 'Summarize YouTube videos', on: false },
+    { name: 'elevenlabs', desc: 'Turn text into speech', on: false },
+    { name: 'brainstorming', desc: 'Plan new work before building it', on: true, plugin: 'superpowers' },
+    { name: 'writing-plans', desc: 'Write step-by-step plans', on: true, plugin: 'superpowers' },
+    { name: 'figma-use', desc: 'Edit Figma files', on: true, plugin: 'figma' },
+    { name: 'figma-generate-design', desc: 'Turn a page into a Figma design', on: true, plugin: 'figma' },
+  ],
+  plugins: [
+    { name: 'superpowers', desc: 'Planning and review workflows', adds: '14 skills', on: true },
+    { name: 'figma', desc: 'Figma design tools', adds: '7 skills and 1 MCP server', on: false },
+    { name: 'frontend-design', desc: 'Design guidance for web pages', adds: '1 skill', on: false },
+  ],
+  mcp: [
+    { name: 'routes-israel', desc: 'Israeli transit routes', on: true },
+    { name: 'atlassian', desc: 'Jira and Confluence', on: true, needsSignIn: true },
+    { name: 'figma', desc: 'Figma files and designs', on: true, plugin: 'figma' },
+  ],
+  secrets: [
+    { name: 'Google', vars: 'GOOGLE_APPLICATION_CREDENTIALS', on: true },
+    { name: 'Tavily', vars: 'TAVILY_API_KEY', on: true },
+    { name: 'TypeSafe', vars: 'TYPESAFE_AI_API_KEY', on: true, decision: 'TypeSafe' },
+    { name: 'ElevenLabs', vars: 'ELEVENLABS_API_KEY', on: false },
+    { name: 'AWS', vars: 'AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY', on: false },
+  ],
+  decisionModel: 'TypeSafe',
+};
+
+/* Small shared pieces. */
+function expiredLogins() { return S.logins.filter(login => login.state === 'expired' && login.machine === S.host); }
+function pendingCount() { return (S.approval.state === 'done' || S.approval.state === 'rejected' ? 0 : 1) + S.notices.length + expiredLogins().length; }
+function inviteCount() { return S.invites.filter(invite => invite.state === 'pending').length; }
+function findableOn(key) { const on = RELAYS.filter(relay => S.discovery[key][relay]); return on.length ? `Findable on ${on.join(', ')}` : 'Not findable'; }
+const trail = steps => `<ol class="trail" aria-label="Request progress">${steps.map(step => `<li class="${step.state}"><i></i>${step.label}</li>`).join('')}</ol>`;
+function head(title, sub, iconHtml = '', right = '') {
+  const back = S.device === 'mobile' ? `<button class="icon ghost" data-act="back" aria-label="Back">${ic('back')}</button>` : '';
+  return `<header class="head">${back}${iconHtml}<div class="head-text"><h2>${title}</h2><p>${sub}</p></div><div class="head-actions">${right}</div></header>`;
+}
+function composer(kind, placeholder, foot = '', hint = '') {
+  return `<div class="composer-wrap"><form class="composer" data-submit="${kind}"><textarea name="text" rows="1" required placeholder="${placeholder}" aria-label="${placeholder}"></textarea><div class="composer-foot">${foot}<span class="spacer">${hint}</span><button class="primary icon" aria-label="Send">${ic('send')}</button></div></form></div>`;
+}
+
+/* Lists used by the rail and the phone tabs. */
+function assistantRows() {
+  return Object.entries(MY_ASSISTANTS).map(([id, item]) => {
+    const current = S.device === 'desktop' && S.screen === 'assistant' && S.assistant === id;
+    const count = id === 'work' ? pendingCount() : 0;
+    return `<button class="row" data-act="open" data-screen="assistant" data-assistant="${id}" aria-current="${current}">${bot(item.cls)}<span class="row-text"><strong><span>${item.name}</span></strong><small>${S.defaultAssistant === id ? 'Default · ' : ''}${findableOn(id)}</small></span>${count ? `<span class="badge" aria-label="${count} waiting">${count}</span>` : ''}</button>`;
+  }).join('');
+}
+function groupRows() {
+  const invites = inviteCount();
+  const inviteRow = `<button class="row" data-act="open" data-screen="invites" aria-current="${S.device === 'desktop' && S.screen === 'invites'}"><span class="av ghost" aria-hidden="true">${ic('send-out')}</span><span class="row-text"><strong><span>Invitations</span></strong><small>${invites ? `${invites} waiting for you` : 'Nothing waiting'}</small></span>${invites ? `<span class="badge">${invites}</span>` : ''}</button>`;
+  return inviteRow + Object.entries(S.groups).map(([id, group]) => {
+    const current = S.device === 'desktop' && S.screen === 'group' && S.group === id;
+    return `<button class="row" data-act="open" data-screen="group" data-group="${id}" aria-current="${current}"><span class="av" aria-hidden="true">${ic('people')}</span><span class="row-text"><strong><span>${esc(group.name)}</span></strong><small>${group.relay}${group.hostOnline ? '' : ' · Host offline'}</small></span></button>`;
+  }).join('');
+}
+function threadStatus(thread) {
+  const lastTrail = [...thread.messages].reverse().find(message => message.trail);
+  if (!lastTrail) return 'No requests yet';
+  const active = lastTrail.trail.find(step => step.state === 'now' || step.state === 'stop');
+  return active ? active.label : 'Completed';
+}
+function requestRows() {
+  return Object.entries(S.threads).map(([id, thread]) => {
+    const current = S.device === 'desktop' && S.screen === 'thread' && S.thread === id;
+    return `<button class="row" data-act="open" data-screen="thread" data-thread="${id}" aria-current="${current}">${bot('other')}<span class="row-text"><strong><span>${thread.assistant}</span></strong><small>${thread.firstName}’s assistant · ${threadStatus(thread)}</small></span></button>`;
+  }).join('');
+}
+function rail() {
+  return `<aside class="rail">
+    <div class="brand"><span class="brand-mark">b</span>joint bob<a href="#" data-act="toast" data-msg="Returns to the workspace, as it does today.">Workspace</a></div>
+    <button class="rail-search" data-act="open" data-screen="find">${ic('search')} Find people and assistants</button>
+    <div class="sec">Assistants</div>${assistantRows()}
+    <div class="sec">Groups<button class="ghost" data-act="overlay" data-type="newGroup" aria-label="New group">${ic('plus')}</button></div>${groupRows()}
+    <div class="sec">Requests</div>${requestRows()}
+    <div class="rail-foot"><button class="row" data-act="open" data-screen="you" aria-current="${S.screen === 'you'}">${av('IG', 'you')}<span class="row-text"><strong><span>Ilia German</span></strong><small>Who can find you</small></span></button></div>
+  </aside>`;
+}
+
+/* Assistant workspace. */
+function assistantView() {
+  const item = MY_ASSISTANTS[S.assistant];
+  const count = S.assistant === 'work' ? pendingCount() : 0;
+  const tabs = [['chat', 'Chat'], ['resources', 'Resources'], ['actions', 'Public actions'], ['settings', 'Settings'], ['saved', 'Saved items']];
+  const right = `<button data-act="overlay" data-type="activity" aria-label="Activity${count ? `, ${count} waiting` : ''}">${ic('bell')}${S.device === 'mobile' ? '' : ' Activity'}${count ? `<span class="badge">${count}</span>` : ''}</button>`;
+  const body = { chat: chatTab, resources: resourcesTab, actions: actionsTab, settings: settingsTab, saved: savedTab }[S.tab]();
+  return `<div class="view">${head(item.name, `${S.defaultAssistant === S.assistant ? 'Your default · ' : ''}${findableOn(S.assistant)}`, bot(item.cls), right)}
+    <div class="tabs" role="tablist">${tabs.map(([id, label]) => `<button role="tab" data-act="tab" data-v="${id}" aria-selected="${S.tab === id}">${label}</button>`).join('')}</div>${body}</div>`;
+}
+function chatTab() {
+  const name = MY_ASSISTANTS[S.assistant].name;
+  const approvals = S.approval.state === 'done' || S.approval.state === 'rejected' ? 0 : 1;
+  const notices = S.notices.length;
+  const signIns = expiredLogins().length;
+  const parts = [approvals ? '1 approval' : '', notices ? `${notices} notice${notices > 1 ? 's' : ''}` : '', signIns ? `${signIns} sign-in` : ''].filter(Boolean).join(', ');
+  const strip = S.assistant === 'work' && parts ? `<div class="strip ${approvals || signIns ? '' : 'info'}"><span>Waiting for you: ${parts}</span><button data-act="overlay" data-type="activity">Review</button></div>` : '';
+  const timeline = S.assistant === 'work' ? S.chat : [{ text: `${name} is ready. Your private chat stays separate from groups and requests.` }];
+  const foot = `<button type="button" data-act="toast" data-msg="Opens today’s scheduled task form.">Scheduled task</button><button type="button" data-act="toast" data-msg="Opens today’s webhook form.">Webhook</button>`;
+  return `${strip}<div class="scroll"><div class="msgs"><div class="sys">Today · Only you see this chat</div>${timeline.map(message => message.me ? `<div class="m me"><div class="bubble">${esc(message.text)}</div></div>` : `<div class="m bot-msg">${bot(MY_ASSISTANTS[S.assistant].cls)}<div class="bubble">${esc(message.text)}</div></div>`).join('')}</div></div>${composer('privateChat', `Message ${name}…`, foot)}`;
+}
+function savedTab() {
+  return `<div class="scroll"><div class="narrow"><div class="card"><h3>Laptop comparison notes</h3><p class="muted">Personal · Saved 28 Oct</p></div><p class="fine">Saved items don’t change. They stay private and aren’t available to groups or requests.</p></div></div>`;
+}
+function relaySwitches(key) {
+  return RELAYS.map(relay => `<div class="row-text" style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)"><span>${relay}</span>${relaySwitch(key, relay)}</div>`).join('');
+}
+function relaySwitch(key, relay) {
+  const label = key === 'you' ? 'You' : MY_ASSISTANTS[key].name;
+  return `<button type="button" class="switch" role="switch" aria-checked="${S.discovery[key][relay]}" aria-label="${label} findable on ${relay}" data-act="discover" data-key="${key}" data-relay="${relay}"></button>`;
+}
+function settingsTab() {
+  const item = MY_ASSISTANTS[S.assistant];
+  return `<div class="scroll"><div class="narrow">
+    <div class="settings-sec"><h3>Instructions</h3><p>Your private instructions. Execution settings and terminal use stay as they are today. Skills, plugins, MCP servers, secrets and browser logins moved to Resources.</p>
+      <label class="field">Name<input value="${item.name}"></label>
+      <label class="field">Instructions<textarea rows="3">Keep my calendar tidy and tell me about anything urgent in my groups.</textarea></label>
+      <label class="field">Decision model<select data-bind="decisionModel"><option ${S.decisionModel === 'TypeSafe' ? 'selected' : ''}>TypeSafe</option><option ${S.decisionModel === 'Laya' ? 'selected' : ''}>Laya</option></select><small>Decides what this assistant may do for other people. The agent can’t override it.</small></label></div>
+    <div class="settings-sec"><h3>Default assistant</h3><p>Your default joins every group you join and leaves when you leave.</p>
+      ${S.defaultAssistant === S.assistant ? `<p>${chip('Default', 'ok')} This is your default assistant.</p>` : `<button data-act="setDefault" data-v="${S.assistant}">Make this my default</button>`}</div>
+    <div class="settings-sec"><h3>Who can find this assistant</h3><p>Signed-in people on these relays can find it and see its public actions. Its listing names you as its owner.</p>${relaySwitches(S.assistant)}</div>
+  </div></div>`;
+}
+
+/* Resources: everything this assistant can use in your private chat and its topics. */
+const RES_SECTIONS = [['browser', 'Browser logins', 'globe'], ['skills', 'Skills', 'book'], ['plugins', 'Plugins', 'puzzle'], ['mcp', 'MCP servers', 'plug'], ['secrets', 'Secrets', 'key']];
+const RES_COPY = {
+  browser: 'Sites this assistant stays signed in to. You sign in yourself, and it never sees your password or codes. One topic uses a login at a time.',
+  skills: 'Every topic this assistant opens can use the skills you turn on.',
+  plugins: 'A plugin adds a set of skills and MCP servers. Its skills appear under Skills.',
+  mcp: 'Servers this assistant can call. Install new servers in Joint Bob Resources first.',
+  secrets: 'Accounts this assistant can use. Values stay in Settings → Secrets and are never shown here.',
+};
+const resItems = section => ({ browser: S.logins, skills: S.skills, plugins: S.plugins, mcp: S.mcp, secrets: S.secrets })[section];
+const available = item => !item.plugin || S.plugins.find(plugin => plugin.name === item.plugin).on;
+const lockedSecret = item => item.decision === S.decisionModel;
+const box = name => `<span class="site" aria-hidden="true">${ic(name)}</span>`;
+function resSummary(section) {
+  const items = resItems(section);
+  if (section === 'browser') {
+    const attention = items.filter(login => login.state === 'expired' || login.machine !== S.host).length;
+    return `${items.length} login${items.length === 1 ? '' : 's'}${attention ? ` · ${attention} need${attention === 1 ? 's' : ''} you` : ''}`;
+  }
+  const on = items.filter(item => item.on && available(item)).length;
+  const signIn = section === 'mcp' && items.some(item => item.needsSignIn && item.on && available(item)) ? ' · 1 needs sign-in' : '';
+  return `${on} of ${items.length} ${section === 'secrets' ? 'attached' : 'on'}${signIn}`;
+}
+function toggle(section, item, label, enabled = true) {
+  return `<button type="button" class="switch" role="switch" aria-checked="${item.on && enabled}" aria-label="${esc(label)}" data-act="toggleRes" data-section="${section}" data-v="${esc(item.name)}" ${enabled ? '' : 'disabled'}></button>`;
+}
+function resRow({ glyph, title, chipHtml = '', detail, control, off = false }) {
+  return `<div class="res-row${off ? ' off' : ''}">${glyph}<span class="row-text"><strong><span>${title}</span>${chipHtml}</strong><small title="${esc(detail)}">${esc(detail)}</small></span><span class="res-ctl">${control}</span></div>`;
+}
+function loginRow(login) {
+  const glyph = `<span class="site" aria-hidden="true">${esc(login.name[0])}</span>`;
+  const off = !S.allowBrowser;
+  if (login.machine !== S.host) return resRow({ glyph, title: esc(login.name), off, chipHtml: chip('Other machine', 'bad'), detail: `${login.site} · On ${login.machine}, not ${S.host}`, control: `<button data-act="signInLogin" data-v="${login.id}">${S.device === 'mobile' ? 'Sign in' : `Sign in on ${S.host}`}</button>` });
+  if (login.state === 'expired') return resRow({ glyph, title: esc(login.name), off, chipHtml: chip('Signed out', 'amber'), detail: `${login.site} · ${login.machine} · Signed out on ${login.since}`, control: `<button data-act="signInLogin" data-v="${login.id}">Sign in</button>` });
+  const detail = `${login.site} · ${login.machine}${login.usedBy ? ` · “${login.usedBy}” is using it. Other topics wait.` : ''}`;
+  return resRow({ glyph, title: esc(login.name), off, chipHtml: chip(login.usedBy ? 'In use' : 'Signed in', 'ok'), detail, control: `<button class="ghost" data-act="detachLogin" data-v="${login.id}">Detach</button>` });
+}
+function resRowFor(section, item) {
+  if (section === 'browser') return loginRow(item);
+  const ok = available(item);
+  const needsPlugin = `Turn on the ${item.plugin} plugin first`;
+  if (section === 'skills') return resRow({ glyph: box('book'), title: esc(item.name), chipHtml: item.plugin ? chip(`${item.plugin} plugin`) : '', detail: ok ? item.desc : needsPlugin, control: toggle(section, item, `Use ${item.name}`, ok), off: !(item.on && ok) });
+  if (section === 'plugins') return resRow({ glyph: box('puzzle'), title: esc(item.name), detail: `${item.desc} · Adds ${item.adds}`, control: toggle(section, item, `Use the ${item.name} plugin`), off: !item.on });
+  if (section === 'mcp') {
+    const signIn = ok && item.on && item.needsSignIn;
+    return resRow({ glyph: box('plug'), title: esc(item.name), chipHtml: !ok ? chip(`${item.plugin} plugin`) : signIn ? chip('Needs sign-in', 'amber') : '', detail: ok ? item.desc : needsPlugin, control: `${signIn ? `<button data-act="mcpSignIn" data-v="${item.name}">Sign in</button>` : ''}${toggle(section, item, `Use ${item.name}`, ok)}`, off: !(item.on && ok) });
+  }
+  const locked = lockedSecret(item);
+  return resRow({ glyph: box('key'), title: esc(item.name), chipHtml: locked ? chip('Decision model') : '', detail: locked ? `${item.vars} · The decision model needs it` : item.vars, control: toggle(section, item, `Attach ${item.name}`, !locked), off: !item.on });
+}
+function pageOf(section, items) {
+  const size = S.resPageSize;
+  const pages = Math.max(1, Math.ceil(items.length / size));
+  const page = Math.min(S.resPage[section] || 0, pages - 1);
+  return { rows: items.slice(page * size, page * size + size), page, pages, size, total: items.length };
+}
+function pager(section, info) {
+  if (info.pages <= 1) return '';
+  return `<div class="pager">${info.page * info.size + 1}–${Math.min(info.total, (info.page + 1) * info.size)} of ${info.total}<span><button data-act="resPage" data-section="${section}" data-v="-1" ${info.page === 0 ? 'disabled' : ''}>Previous</button><button data-act="resPage" data-section="${section}" data-v="1" ${info.page >= info.pages - 1 ? 'disabled' : ''}>Next</button></span></div>`;
+}
+function resTopAction(section) {
+  if (section === 'browser') return `<button class="primary" data-act="overlay" data-type="addLogin" data-mode="new">${ic('plus')} Add login</button>`;
+  if (section === 'secrets') return `<button data-act="toast" data-msg="Opens Settings → Secrets, where you add accounts and their values.">Manage secrets</button>`;
+  return `<button data-act="toast" data-msg="Opens Joint Bob Resources, where you install new ones.">Install more</button>`;
+}
+function resDetail() {
+  const section = S.resSection;
+  const label = RES_SECTIONS.find(entry => entry[0] === section)[1];
+  const info = pageOf(section, resItems(section));
+  const back = S.device === 'mobile' ? `<button class="link" style="align-self:flex-start;margin-bottom:10px" data-act="closeRes">Back to resources</button>` : '';
+  const bar = section === 'browser' ? `<div class="res-bar"><span>${S.allowBrowser ? 'Can use a browser' : 'Browser use is off. Logins stay saved.'}</span><button type="button" class="switch" role="switch" aria-checked="${S.allowBrowser}" aria-label="Use a browser" data-act="allowBrowser"></button></div>` : '';
+  const empty = section === 'browser' ? '<div class="empty">No logins yet. Add one and sign in yourself. Every topic can use it.</div>' : '<div class="empty">Nothing installed yet.</div>';
+  return `<div class="res-detail">${back}<div class="res-top"><div><h3>${label}</h3><p>${RES_COPY[section]}</p></div>${resTopAction(section)}</div>${bar}<div class="res-list">${info.rows.map(item => resRowFor(section, item)).join('') || empty}</div>${pager(section, info)}</div>`;
+}
+function resourcesTab() {
+  const nav = `<div class="res-nav">${RES_SECTIONS.map(([id, label, icon]) => `<button class="action-item res-item" data-act="resSection" data-v="${id}" aria-current="${S.device === 'desktop' && S.resSection === id}"><strong>${ic(icon)} ${label}</strong><small>${resSummary(id)}</small></button>`).join('')}
+    <div class="res-nav-foot"><p class="fine">${MY_ASSISTANTS[S.assistant].name} runs on ${S.host}. Browser logins must be on the same machine.</p><p class="fine">Only your private chat and its topics use these. Groups and requests never do.</p></div></div>`;
+  if (S.device === 'mobile') return `<div class="res-layout">${S.resOpen ? resDetail() : nav}</div>`;
+  return `<div class="res-layout">${nav}${resDetail()}</div>`;
+}
+function fitResourcePage() {
+  const list = q('#shell .res-list');
+  if (!list) return false;
+  const size = Math.max(3, Math.floor(list.clientHeight / 58));
+  if (size === S.resPageSize) return false;
+  S.resPageSize = size;
+  return true;
+}
+function findLogin(id) { return S.logins.find(login => login.id === id) || (S.pendingLogin && S.pendingLogin.id === id ? S.pendingLogin : null); }
+function qrCode(seed) {
+  let n = [...seed].reduce((total, char) => (Math.imul(total, 31) + char.charCodeAt(0)) >>> 0, 7);
+  const finder = (r, c) => {
+    for (const [fr, fc] of [[0, 0], [0, 14], [14, 0]]) {
+      const y = r - fr, x = c - fc;
+      if (y >= 0 && y < 7 && x >= 0 && x < 7) return y === 0 || y === 6 || x === 0 || x === 6 || (y >= 2 && y <= 4 && x >= 2 && x <= 4);
+    }
+    if ((r < 8 && c < 8) || (r < 8 && c > 12) || (r > 12 && c < 8)) return false;
+    n = (Math.imul(n, 1103515245) + 12345) >>> 0;
+    return Boolean((n >>> 16) & 1);
+  };
+  let cells = '';
+  for (let r = 0; r < 21; r++) for (let c = 0; c < 21; c++) cells += `<i class="${finder(r, c) ? 'on' : ''}"></i>`;
+  return `<div class="qr" role="img" aria-label="Sample sign-in code">${cells}</div>`;
+}
+function needsYou() {
+  return expiredLogins().map(login => workRow('Needs sign-in', 'amber', `${login.name} signed out`, `Work assistant paused a ${login.name} step in “Job search”. Sign in to continue.`, `<button data-act="signInLogin" data-v="${login.id}">Sign in</button>`)).join('');
+}
+
+/* Public actions. */
+function selectedAction() { return S.actions.find(action => action.id === S.actionSel); }
+const STATUS_CHIP = { published: chip('Published', 'ok'), disabled: chip('Disabled'), draft: chip('Draft', 'amber') };
+const OPS = [['freebusy', 'Read free and busy times', 'Times only, no titles or guests'], ['details', 'Read event details', 'Titles, guests and notes'], ['create', 'Create an event', 'Adds an event and sends its invitation']];
+function actionsTab() {
+  const list = `<div class="action-list">${S.actions.map(action => `<button class="action-item" data-act="pickAction" data-v="${action.id}" aria-current="${action.id === S.actionSel && S.device === 'desktop'}"><strong>${esc(action.name)}</strong>${STATUS_CHIP[action.status]}</button>`).join('')}<button style="width:100%" data-act="newAction">${ic('plus')} New action</button><p class="fine" style="margin-top:12px">${findableOn(S.assistant)}. <button class="link" data-act="open" data-screen="you">Change</button></p></div>`;
+  if (S.device === 'mobile') return `<div class="actions-layout">${S.actionOpen ? actionEditor() : list}</div>`;
+  return `<div class="actions-layout">${list}<div class="scroll">${actionEditor()}</div></div>`;
+}
+function actionEditor() {
+  const action = selectedAction();
+  const canPublish = action.ops.length > 0;
+  const back = S.device === 'mobile' ? `<button class="link" style="margin-bottom:12px" data-act="closeAction">Back to actions</button><br>` : '';
+  let buttons;
+  if (action.status === 'published') buttons = `<button data-act="disableAction">Disable</button><button class="primary grow" data-act="toast" data-msg="Saved. Open proposals made with the old instructions are cancelled.">Save changes</button>`;
+  else buttons = `<button class="primary grow" data-act="publishAction" ${canPublish ? '' : 'disabled'}>${action.status === 'disabled' ? 'Publish again' : 'Publish'}</button>`;
+  const r = S.test.result;
+  return `<div class="narrow">${back}
+    <div class="card-top"><span>${STATUS_CHIP[action.status]}</span></div>
+    <div class="editor-box"><p class="label">What people see</p>
+      <label class="field">Name<input data-action-field="name" value="${esc(action.name)}"></label>
+      <label class="field">Description<textarea rows="2" data-action-field="desc">${esc(action.desc)}</textarea></label>
+      <label class="field">What people provide<input data-action-field="inputs" value="${esc(action.inputs)}"></label></div>
+    <div class="editor-box"><p class="private-tag">${ic('lock')} Only you and the decision model see this</p>
+      <label class="field" style="margin-top:8px">Instructions<textarea rows="3" data-action-field="instructions">${esc(action.instructions)}</textarea><small>Write who it’s for and when to ask you first. ${S.decisionModel} decides from this for every request.</small></label></div>
+    <div class="editor-box"><p class="label">What it’s allowed to do</p><p class="group-label">Calendar: Work</p>
+      ${OPS.map(([id, title, sub]) => `<label class="op"><input type="checkbox" data-op="${id}" ${action.ops.includes(id) ? 'checked' : ''}><span>${title}<small>${sub}</small></span></label>`).join('')}
+      <p class="fine" style="margin-top:8px">Terminal, full browser and whole MCP servers can’t be used for a public action.</p>
+      ${canPublish ? '' : '<div class="notice" style="margin:10px 0 0">'+ic('alert')+'<span>This stays a draft until you choose what it’s allowed to do.</span></div>'}</div>
+    <div class="editor-box"><p class="label">Test this action</p>
+      <form data-submit="testAction"><div class="pair"><label class="field">Ask as<select name="caller">${['Dan Cohen', 'Noa Levi', 'Someone new'].map(name => `<option ${S.test.caller === name ? 'selected' : ''}>${name}</option>`).join('')}</select></label>
+      <label class="field">Request<input name="request" value="30 minutes on Thursday at 15:00"></label></div>
+      <button ${canPublish ? '' : 'disabled'}>Run test</button></form>
+      ${r ? `<div class="exact"><p class="label">Decision</p><p>${chip(r.decision, r.ok ? 'ok' : 'amber')}</p><p class="gap" style="margin-top:7px">${r.detail}</p><p class="fine" style="margin-top:7px">Test only. No event was created and nothing was sent.</p></div>` : '<p class="fine" style="margin-top:8px">A test never touches your calendar or sends anything.</p>'}</div>
+    <div class="actions" style="margin-top:0">${buttons}</div></div>`;
+}
+
+/* Who can find you. */
+function youView() {
+  const items = [['you', 'You', av('IG', 'you')], ...Object.entries(MY_ASSISTANTS).map(([id, item]) => [id, item.name, bot(item.cls)])];
+  const groupsWith = Object.values(S.groups).map(group => { const me = group.tree.find(person => person.you); const companion = me && me.bots.find(item => item.link === 'with'); return `<tr><td style="text-align:left">${esc(group.name)}</td><td style="text-align:left">${companion ? companion.name : 'None'}</td></tr>`; }).join('');
+  return `<div class="view">${head('Who can find you', 'Off until you turn it on, separately for each relay')}
+  <div class="scroll"><div class="narrow">
+    <section class="settings-sec"><h3>Findable on</h3><p>Signed-in people on a relay can find what you turn on there. Nothing is on the public Internet.</p>
+      <table class="matrix"><thead><tr><th scope="col"></th>${RELAYS.map(relay => `<th scope="col">${relay}</th>`).join('')}</tr></thead><tbody>${items.map(([key, label, icon]) => `<tr><td><span style="display:inline-flex;gap:9px;align-items:center">${icon}${label}</span></td>${RELAYS.map(relay => `<td>${relaySwitch(key, relay)}</td>`).join('')}</tr>`).join('')}</tbody></table>
+      ${S.ownerNote ? `<div class="notice" style="margin-top:12px">${ic('info')}<span>An assistant’s listing names you as its owner, even on a relay where you aren’t findable yourself.</span></div>` : ''}</section>
+    <section class="settings-sec"><h3>What people see</h3><p>Your listings show only this.</p>
+      <div class="pair"><div class="card"><div class="listing">${av('IG', 'you')}<div><strong>Ilia German</strong><p class="fine">Person · Verified home: homeserver</p></div></div></div>
+      <div class="card"><div class="listing">${bot()}<div><strong>Work assistant</strong><p class="fine">Assistant · Owned by Ilia German</p><p class="fine">See my availability, Arrange a meeting</p></div></div></div></div>
+      <p class="fine">Never in a listing:</p><div class="never">${['Email', 'Private instructions', 'Credentials', 'Projects', 'Calendar contents', 'Private chats'].map(item => chip(item)).join('')}</div></section>
+    <section class="settings-sec"><h3>Default assistant</h3><p>It joins every group you join from now on and leaves when you leave. Everyone in the group can see it.</p>
+      <div role="radiogroup" aria-label="Default assistant">${Object.entries(MY_ASSISTANTS).map(([id, item]) => `<button class="radio" role="radio" aria-checked="${S.defaultAssistant === id}" data-act="setDefault" data-v="${id}"><span class="dot"></span>${bot(item.cls)}${item.name}</button>`).join('')}<button class="radio" role="radio" aria-checked="${S.defaultAssistant === null}" data-act="setDefault" data-v=""><span class="dot"></span>No default. Only I join groups.</button></div>
+      <p class="fine" style="margin:12px 0 6px">Changing this doesn’t change the groups you’re already in:</p>
+      <table class="matrix"><thead><tr><th scope="col" style="text-align:left">Group</th><th scope="col" style="text-align:left">Joined with</th></tr></thead><tbody>${groupsWith}</tbody></table></section>
+    <section class="settings-sec"><h3>Blocked people</h3><p>A block applies at once, including to requests already in progress.</p>
+      ${S.blocked.length ? S.blocked.map(person => `<div class="work" style="align-items:center">${av(person.name.split(' ').map(part => part[0]).join(''))}<div><strong>${esc(person.name)}</strong><small>Verified home: ${esc(person.origin)}</small></div><button data-act="unblock" data-v="${esc(person.name)}">Unblock</button></div>`).join('') : '<p class="fine">Nobody is blocked.</p>'}</section>
+    <section class="settings-sec"><h3>Limits</h3><p>Requests over a limit are refused before any model runs, so strangers can’t run up your usage.</p>
+      <div class="pair"><label class="field">Requests per person each day<input type="number" value="20" min="1"></label><label class="field">Decision checks per assistant each day<input type="number" value="200" min="1"></label></div></section>
+  </div></div></div>`;
+}
+
+/* One search across every active relay. */
+function findResults() {
+  const query = S.findQuery.trim().toLowerCase();
+  const results = DIRECTORY.filter(entry => (S.partnersUp || !entry.viaPartners)
+    && (S.findFilter === 'all' || entry.kind === S.findFilter)
+    && (!query || `${entry.name} ${entry.owner || ''} ${entry.desc}`.toLowerCase().includes(query)));
+  if (!results.length) return `<div class="empty">Nobody matches “${esc(S.findQuery)}”. People and assistants appear here only if they turned on discovery.</div>`;
+  return results.map(entry => `<button class="result" data-act="overlay" data-type="profile" data-id="${entry.id}">${entry.kind === 'person' ? av(entry.initials) : bot('other')}<span class="row-text"><strong><span>${entry.name}</span>${chip(entry.kind === 'person' ? 'Person' : 'Assistant')}</strong><small>${entry.kind === 'person' ? `${entry.desc} · Verified home: ${entry.origin}` : `Owned by ${entry.owner} (${entry.origin}) · ${entry.desc}`}</small><span class="chips result-routes">${entry.relays.map(relay => chip(relay)).join('')}</span></span></button>`).join('');
+}
+function findBody() {
+  const banner = S.partnersUp ? '' : `<div class="notice">${ic('alert')}<span><strong>Partners didn’t respond.</strong> Anyone only on that relay is missing from these results.</span><button style="min-height:30px;padding:2px 10px" data-act="retryPartners">Retry</button></div>`;
+  const filters = [['all', 'All'], ['person', 'People'], ['assistant', 'Assistants']];
+  return `<div class="search">${ic('search')}<input id="find-input" type="search" placeholder="Search by name or what they do" aria-label="Find people and assistants" value="${esc(S.findQuery)}"></div>
+    <div class="find-bar"><small>Searching ${S.partnersUp ? 'Home, Team and Partners' : 'Home and Team. Partners is unavailable.'}</small><div class="seg">${filters.map(([id, label]) => `<button data-act="findFilter" data-v="${id}" aria-pressed="${S.findFilter === id}">${label}</button>`).join('')}</div></div>
+    ${banner}<div id="find-results">${findResults()}</div>`;
+}
+function findView() {
+  if (S.device === 'mobile') return `<div class="view"><h2 class="page-title">Find</h2><div class="scroll"><div class="narrow" style="padding-top:0">${findBody()}</div></div></div>`;
+  return `<div class="view">${head('Find people and assistants', 'Searches all your active relays together')}<div class="scroll"><div class="narrow">${findBody()}</div></div></div>`;
+}
+
+/* Direct request thread. */
+function threadView() {
+  const thread = S.threads[S.thread];
+  const body = thread.messages.map(message => {
+    if (message.me) return `<div class="m me"><div class="bubble">${esc(message.text)}</div></div>`;
+    if (message.trail) return `<div class="m-trail">${trail(message.trail)}</div>`;
+    return `<div class="m bot-msg">${bot('other')}<div><div class="who"><b>${thread.assistant}</b>Assistant · For ${thread.firstName}</div><div class="bubble">${esc(message.reply)}</div></div></div>`;
+  }).join('');
+  const right = `<button class="ghost" data-act="block" data-v="${thread.owner}">Block</button>`;
+  return `<div class="view">${head(thread.assistant, `${thread.owner}’s assistant${S.device === 'mobile' ? '' : ` · Through ${thread.via}`}`, bot('other'), right)}
+    <div class="scroll"><div class="msgs">
+      <div class="notice plain" style="margin:0">${ic('lock')}<span>This thread is between you and this assistant. It can’t use ${thread.firstName}’s private chats, and only ${thread.firstName} can review what it does here.</span></div>
+      <div><p class="label">You can ask for</p><div class="catalog">${thread.catalog.map(([name, desc, sample]) => `<button data-act="fillComposer" data-text="${esc(sample)}"><strong>${name}</strong><small>${desc}</small></button>`).join('')}</div></div>
+      ${body}</div></div>${composer('threadSend', `Ask ${thread.assistant}…`, '', 'Only what’s listed above can be requested')}</div>`;
+}
+
+/* Group chat. */
+function memberTree(group) {
+  const person = member => `<div class="tree-person">${av(member.initials, member.you ? 'you' : member.absent ? 'ghost' : '')}<div class="tree-text"><b>${esc(member.name)}</b>${member.note ? `<small>${member.note}</small>` : ''}</div>${group.mine && !member.you && !member.absent ? `<button class="ghost tree-remove" data-act="overlay" data-type="remove" data-name="${esc(member.name)}">Remove</button>` : ''}</div>`;
+  const assistant = (item, member) => `<div class="tree-bot ${item.link === 'alone' ? 'alone' : ''}">${bot(item.cls)}<div class="tree-text"><b>${item.name}</b><small>${item.note}</small><small class="watch ${item.watching ? '' : 'pending'}">${item.watching ? 'Watching' : item.pendingWhy}</small></div>${group.mine && item.link === 'alone' ? `<button class="ghost tree-remove" data-act="overlay" data-type="remove" data-name="${item.name}" data-assistant-only="1">Remove</button>` : ''}</div>`;
+  return group.tree.map(member => person(member) + member.bots.map(item => assistant(item, member)).join('')).join('');
+}
+function membersBody(group) {
+  const pending = group.pending.length ? `<div class="sec" style="margin:14px 0 2px">Invited</div>${group.pending.map(name => `<div class="tree-person">${av(name.split(' ').map(part => part[0]).join('').slice(0, 2), 'ghost')}<div class="tree-text"><b>${esc(name)}</b><small>Waiting for an answer</small></div></div>`).join('')}` : '';
+  return `${memberTree(group)}${pending}
+    <p class="fine" style="margin-top:14px">An assistant reads new messages and can report them to its owner, who can review what it saw and decided here.</p>
+    <div class="members-foot"><button data-act="overlay" data-type="invite">${ic('plus')} Invite a person or assistant</button>
+    ${group.mine ? `<button class="danger" data-act="overlay" data-type="closeGroup">Close group</button>` : `<button class="danger" data-act="overlay" data-type="leave">Leave group</button>`}</div>`;
+}
+function groupView() {
+  const group = S.groups[S.group];
+  const count = group.tree.reduce((total, member) => total + (member.absent ? 0 : 1) + member.bots.length, 0);
+  const right = S.device === 'mobile' ? `<button data-act="overlay" data-type="members" aria-label="${count} members">${ic('people')} ${count}</button>` : '';
+  const offline = group.hostOnline ? '' : `<div class="strip warn">${ic('alert')}<span>${group.host[0].toUpperCase() + group.host.slice(1)} hosts this group and is offline. New messages wait on this device until it’s back.</span></div>`;
+  const messages = group.messages.map(message => {
+    if (message.sys) return `<div class="sys">${message.sys}</div>`;
+    if (message.me) return `<div class="m me"><div><div class="bubble">${esc(message.text)}</div><div class="send-state">${message.status}</div></div></div>`;
+    if (message.botName) return `<div class="m bot-msg">${bot(message.botCls)}<div><div class="who"><b>${message.botName}</b>Assistant · For ${message.owner}</div><div class="bubble">${esc(message.text)}</div></div></div>`;
+    return `<div class="m">${av(message.initials)}<div><div class="who"><b>${message.from}</b></div><div class="bubble">${esc(message.text)}</div></div></div>`;
+  }).join('');
+  const side = S.device === 'desktop' ? `<aside class="members" aria-label="Members"><div class="sec" style="margin:0 0 4px">Members · ${count}</div>${membersBody(group)}</aside>` : '';
+  return `<div class="view">${head(esc(group.name), `${group.relay} · Hosted on ${group.host}${group.hostOnline ? '' : ' · Offline'}`, `<span class="av" aria-hidden="true">${ic('people')}</span>`, right)}
+    <div class="split"><div class="col">${offline}<div class="scroll"><div class="msgs">${messages}</div></div>${composer('groupSend', `Message ${esc(group.name)}…`)}</div>${side}</div></div>`;
+}
+
+/* Invitations. */
+function inviteCard(invite) {
+  if (invite.state !== 'pending') return `<article class="card ${invite.state === 'accepted' ? 'done' : ''}"><div class="card-top"><strong>${esc(invite.group)}</strong>${chip(invite.state === 'accepted' ? 'Accepted' : 'Declined', invite.state === 'accepted' ? 'ok' : '')}</div><p class="muted">${invite.result}</p></article>`;
+  if (invite.kind === 'assistant') {
+    const item = MY_ASSISTANTS[invite.assistant];
+    return `<article class="card"><div class="card-top"><div class="chips">${chip(invite.relay)}${chip('For your assistant', 'amber')}</div><small>Expires ${invite.expires}</small></div>
+      <h3>${invite.from} invited ${item.name} to ${invite.group}</h3>
+      <ul class="bullets"><li>${ic('dot')}You won’t join the group, and you can’t read it directly.</li><li>${ic('dot')}${item.name} will read new messages and report to you.</li><li>${ic('dot')}Members will see you as its owner.</li></ul>
+      <div class="actions"><button data-act="declineInvite" data-v="${invite.id}">Decline</button><button class="primary grow" data-act="acceptInvite" data-v="${invite.id}">Approve for ${item.name}</button></div></article>`;
+  }
+  const companion = S.defaultAssistant && MY_ASSISTANTS[S.defaultAssistant];
+  const connect = invite.needsConnection ? `<div class="notice" style="margin:10px 0 0">${ic('alert')}<span>${companion ? companion.name : 'Your default assistant'} runs on Homeserver, which isn’t connected to ${invite.relay}. Connect it to accept.</span><button style="min-height:30px;padding:2px 10px" data-act="connectRelay" data-v="${invite.id}">Connect</button></div>` : '';
+  return `<article class="card"><div class="card-top"><div class="chips">${chip(invite.relay)}</div><small>Expires ${invite.expires}</small></div>
+    <h3>${invite.from} invited you to ${invite.group}</h3>
+    <ul class="bullets">${companion ? `<li>${ic('dot')}${companion.name} joins with you, and everyone can see it.</li>` : `<li>${ic('dot')}You join alone because you have no default assistant.</li>`}<li>${ic('dot')}You’ll see messages from when you join, not earlier ones.</li></ul>${connect}
+    <div class="actions"><button data-act="declineInvite" data-v="${invite.id}">Decline</button><button class="primary grow" data-act="acceptInvite" data-v="${invite.id}" ${invite.needsConnection ? 'disabled' : ''}>Accept</button></div></article>`;
+}
+function invitesView() {
+  const stateChip = { Pending: 'amber', Declined: '', Expired: '', Revoked: '' };
+  return `<div class="view">${head('Invitations', 'Nobody joins a group or sees its messages until they accept')}
+  <div class="scroll"><div class="narrow"><div class="sec" style="margin:0 0 8px">Received</div>${S.invites.map(inviteCard).join('')}
+    <div class="sec" style="margin:18px 0 4px">Sent</div>${S.sent.map(item => `<div class="work" style="align-items:center"><div><strong>${esc(item.who)}</strong><small>${esc(item.group)}</small></div>${chip(item.state, stateChip[item.state])}${item.state === 'Pending' ? `<button style="min-height:30px;padding:2px 10px" data-act="revokeInvite" data-v="${item.id}">Revoke</button>` : ''}</div>`).join('')}
+  </div></div></div>`;
+}
+
+/* Activity drawer: the owner's private review surface. */
+function approvalCard() {
+  const a = S.approval;
+  if (a.state === 'rejected') return `<article class="card"><div class="card-top"><strong>Arrange a meeting</strong>${chip('Rejected')}</div><p class="muted">Nothing was booked or posted.</p></article>`;
+  if (a.state === 'done') return `<article class="card done"><div class="card-top"><strong>Arrange a meeting</strong>${chip('Completed', 'ok')}</div>${trail([DONE('Recorded'), DONE('Decision'), DONE('Your approval'), DONE('Executing'), DONE('Completed')])}<dl class="kv"><dt>Calendar</dt><dd>Confirmed the event</dd><dt>Launch crew</dt><dd>Reply posted</dd></dl><div class="actions"><button data-act="open" data-screen="group" data-group="launch">Open Launch crew</button></div></article>`;
+  const executing = a.state === 'executing';
+  const checking = a.state === 'checking';
+  const steps = [DONE('Recorded'), checking ? NOW('Awaiting decision') : DONE('Decision'), executing ? DONE('Your approval') : checking ? TODO('Your approval') : NOW('Your approval'), executing ? NOW('Executing') : TODO('Executing'), TODO('Completed')];
+  const replyBlock = a.state === 'editing'
+    ? `<form data-submit="editProposal"><label class="field gap" style="margin:10px 0 0">Reply to post in Launch crew<textarea name="reply" rows="3" required>${esc(a.reply)}</textarea><small>Your edit becomes a new proposal, and the decision model checks it before you can approve it.</small></label><div class="actions"><button type="button" data-act="cancelEdit">Cancel</button><button class="primary grow">Send for a new check</button></div></form>`
+    : `<div class="exact"><p class="label">Would post in Launch crew as Work assistant, for Ilia</p><p>${esc(a.reply)}</p></div>`;
+  const buttons = a.state === 'pending' ? `<div class="actions"><button data-act="rejectProposal">Reject</button><button data-act="editProposal">Edit</button><button class="primary grow" data-act="approveProposal">Approve once</button></div><p class="fine" style="margin-top:8px">Approval covers only this event and this reply, one time.</p>` : '';
+  return `<article class="card attention"><div class="card-top">${chip(executing ? 'Executing' : checking ? 'Awaiting decision' : 'Awaiting your approval', 'amber')}<small>Proposal ${a.rev}</small></div>
+    <h3>Arrange a meeting</h3><p class="muted">Noa Levi asked in Launch crew</p><div class="gap">${trail(steps)}</div>
+    <blockquote class="quote">“Ilia, can you do 30 minutes on Thursday at 15:00 for the vendor review?”</blockquote>
+    <dl class="kv"><dt>Would do</dt><dd>Create a calendar event</dd><dt>Calendar</dt><dd>Work</dd><dt>When</dt><dd>Thu 5 Nov, 15:00–15:30 (Asia/Jerusalem)</dd><dt>Title</dt><dd>Vendor review</dd><dt>Guest</dt><dd>Noa Levi</dd></dl>
+    ${replyBlock}
+    <div class="exact"><p class="label">${S.decisionModel} decided: ask you first</p><p class="fine" style="color:#c9cdd1">From your instructions: “Book Dan directly when the slot is free. Ask me first for anyone else.”</p></div>${buttons}</article>`;
+}
+function workRow(label, cls, title, detail, buttons = '') {
+  return `<div class="work">${chip(label, cls)}<div><strong>${title}</strong><small>${detail}</small>${buttons ? `<div class="work-actions">${buttons}</div>` : ''}</div></div>`;
+}
+const overlays = {
+  activity() {
+    const name = MY_ASSISTANTS[S.assistant].name;
+    if (S.assistant !== 'work') return `<div class="scrim" data-act="closeOverlay"></div><aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="ov-title"><header class="ov-head"><div><p class="eyebrow">Only you see this</p><h2 id="ov-title">${name} activity</h2></div><button class="icon ghost" data-act="closeOverlay" aria-label="Close activity">${ic('close')}</button></header><div class="ov-body"><div class="empty">Nothing yet. When ${name} joins a group or gets a request, it shows up here.</div></div></aside>`;
+    const notices = S.notices.map(notice => `<div class="work"><div><strong>${notice.title}</strong><small>${notice.from}</small><div class="work-actions"><button data-act="open" data-screen="group" data-group="${notice.group}">Open group</button><button class="ghost" data-act="dismissNotice" data-v="${notice.id}">Mark as read</button></div></div></div>`).join('');
+    return `<div class="scrim" data-act="closeOverlay"></div><aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="ov-title">
+      <header class="ov-head"><div><p class="eyebrow">Only you see this</p><h2 id="ov-title">${name} activity</h2></div><button class="icon ghost" data-act="closeOverlay" aria-label="Close activity and return to chat">${ic('close')}</button></header>
+      <div class="ov-body">${approvalCard()}
+        ${notices || needsYou() ? `<div class="sec">Notices</div>${needsYou()}${notices}` : ''}
+        <div class="sec">Other work</div>
+        ${workRow('Executing', 'amber', 'See my availability', 'Noa Levi · Launch crew')}
+        ${workRow('Awaiting decision', 'amber', 'Arrange a meeting', 'Lior Ben-Ami · Direct request')}
+        ${workRow('Completed', 'ok', 'See my availability', 'Dan Cohen · Direct request · Shared free and busy times')}
+        ${workRow('Declined', '', 'Arrange a meeting', 'Ron Katz · Direct request · Your instructions don’t allow this', `<button data-act="block" data-v="Ron Katz">Block Ron Katz</button>`)}
+        ${workRow('Blocked', 'bad', 'Arrange a meeting', 'Dan Cohen · Family trip · The Work calendar needs reconnecting. Nothing happened.', `<button data-act="toast" data-msg="Opens calendar access for this assistant.">Fix access</button>`)}
+        ${workRow('Failed', 'bad', 'See my availability', 'Noa Levi · Launch crew · The decision model didn’t respond, so nothing happened.', `<button data-act="toast" data-msg="Runs the same check again.">Check again</button>`)}
+        ${S.uncertain ? workRow('Uncertain', 'amber', 'Arrange a meeting', 'Maya Shalev · Direct request · The calendar didn’t confirm this event. Check your calendar before trying again.', `<button data-act="resolveUncertain">It was created</button><button data-act="resolveUncertain">It wasn’t created</button>`) : ''}
+        ${workRow('Recorded', '', '14 messages in Launch crew', 'Nothing needed you, so no agent ran.')}
+      </div></aside>`;
+  },
+  members() {
+    const group = S.groups[S.group];
+    return sheet(`${esc(group.name)} members`, membersBody(group));
+  },
+  profile({ id }) {
+    const entry = DIRECTORY.find(item => item.id === id);
+    const routes = `<div class="chips gap" style="margin-top:7px"><small>Reachable through</small>${entry.relays.map(relay => chip(relay)).join('')}</div>`;
+    if (entry.kind === 'person') {
+      return sheet(entry.name, `<div class="listing">${av(entry.initials)}<div><p>${entry.desc}</p><p class="fine">Person · Verified home: ${entry.origin}</p></div></div>${routes}<p class="fine" style="margin-top:14px">You can talk with people in groups. Invite ${entry.name.split(' ')[0]} to one and they decide whether to join.</p>`,
+        `<button data-act="block" data-v="${entry.name}">Block</button><button class="primary" data-act="overlay" data-type="invite" data-who="${entry.name}">Invite to a group</button>`);
+    }
+    const thread = S.threads[entry.thread] || threadSeed[entry.thread];
+    return sheet(entry.name, `<div class="listing">${bot('other')}<div><p>${entry.desc}</p><p class="fine">Assistant · Owned by ${entry.owner} · Verified home: ${entry.origin}</p></div></div>${routes}
+      <div class="sec" style="margin:16px 0 6px">Public actions</div>${thread.catalog.map(([name, desc]) => `<div class="work"><div><strong>${name}</strong><small>${desc}</small></div></div>`).join('')}
+      <p class="fine" style="margin-top:10px">${entry.owner.split(' ')[0]}’s instructions decide what it does for you. It may need ${entry.owner.split(' ')[0]}’s approval first.</p>`,
+      `<button data-act="overlay" data-type="invite" data-who="${entry.name}" data-assistant-invite="${entry.owner}">Invite to a group</button><button class="primary" data-act="startThread" data-v="${entry.thread}">Start a request</button>`);
+  },
+  newGroup() {
+    const companion = S.defaultAssistant && MY_ASSISTANTS[S.defaultAssistant];
+    return sheet('New group', `<form id="new-group" data-submit="newGroup">
+      <label class="field">Group name<input name="name" required maxlength="60" placeholder="Vendor review" autocomplete="off"></label>
+      <label class="field">Relay<select name="relay"><option>Team</option><option>Home</option><option>Partners</option></select><small>A group lives on one relay. Your machine hosts it, so messages reach people only while it’s online.</small></label>
+      <div class="notice plain">${companion ? bot(MY_ASSISTANTS[S.defaultAssistant].cls) : ic('info')}<span>${companion ? `<strong>${companion.name} joins with you.</strong> Everyone in the group can see it.` : 'You have no default assistant, so only you join.'} <button type="button" class="link" data-act="open" data-screen="you">Change</button></span></div>
+      <p class="label">Invite now</p>${['Noa Levi', 'Dan Cohen'].map(name => `<label class="op"><input type="checkbox" name="invite" value="${name}"><span>${name}</span></label>`).join('')}</form>`,
+      `<button data-act="closeOverlay">Cancel</button><button class="primary" type="submit" form="new-group">Create group</button>`);
+  },
+  invite({ who, assistantInvite }) {
+    const groups = Object.entries(S.groups);
+    const options = who ? [[who, assistantInvite]] : [['Maya Shalev', ''], ['Calendar helper', 'Maya Shalev'], ['Research scout', 'Dan Cohen']];
+    return sheet('Invite to a group', `<form id="invite-form" data-submit="invite">
+      <label class="field">Group<select name="group">${groups.map(([id, group]) => `<option value="${id}" ${id === S.group ? 'selected' : ''}>${esc(group.name)} (${group.relay})</option>`).join('')}</select></label>
+      <p class="label">Who</p>${options.map(([name, owner], index) => `<label class="op"><input type="radio" name="who" value="${name}" ${index === 0 ? 'checked' : ''}><span>${name}<small>${owner ? `${owner.split(' ')[0]} must approve. ${owner.split(' ')[0]} doesn’t join the group.` : `Can accept or decline. If accepted, their default assistant joins too.`}</small></span></label>`).join('')}
+      <p class="fine" style="margin-top:10px">They see messages from when they join, not earlier ones.</p></form>`,
+      `<button data-act="closeOverlay">Cancel</button><button class="primary" type="submit" form="invite-form">Send invitation</button>`);
+  },
+  leave() {
+    const group = S.groups[S.group];
+    const me = group.tree.find(member => member.you);
+    return sheet(`Leave ${esc(group.name)}?`, `<ul class="bullets">
+      ${me.bots.filter(item => item.link === 'with').map(item => `<li>${ic('dot')}${item.name} leaves with you. Its pending work here stops and its open approvals are cancelled.</li>`).join('')}
+      ${me.bots.filter(item => item.link === 'alone').map(item => `<li>${ic('dot')}${item.name} stays, because it was invited on its own. You can remove it separately.</li>`).join('')}
+      <li>${ic('dot')}You stop getting new messages. Messages already delivered to your devices can’t be erased.</li></ul>`,
+      `<button data-act="closeOverlay">Cancel</button><button class="danger" data-act="leaveGroup">Leave group</button>`);
+  },
+  remove({ name, assistantOnly }) {
+    const group = S.groups[S.group];
+    const member = group.tree.find(item => item.name === name);
+    const companions = member ? member.bots.filter(item => item.link === 'with') : [];
+    return sheet(`Remove ${esc(name)}?`, `<ul class="bullets">
+      ${assistantOnly ? `<li>${ic('dot')}${esc(name)} stops watching this group, and its pending work here stops. Its owner sees that it was removed.</li>` : ''}
+      ${companions.map(item => `<li>${ic('dot')}${item.name} leaves too, and its pending work here stops.</li>`).join('')}
+      ${assistantOnly ? '' : `<li>${ic('dot')}${esc(name)} stops getting new messages. Messages already delivered can’t be erased.</li>`}</ul>`,
+      `<button data-act="closeOverlay">Cancel</button><button class="danger" data-act="removeMember" data-v="${esc(name)}">Remove</button>`);
+  },
+  addLogin({ mode = 'new' }) {
+    const name = MY_ASSISTANTS[S.assistant].name;
+    const tabs = `<div class="seg" style="margin-bottom:14px">${[['new', 'New sign-in'], ['saved', 'Saved login']].map(([id, label]) => `<button data-act="overlay" data-type="addLogin" data-mode="${id}" aria-pressed="${mode === id}">${label}</button>`).join('')}</div>`;
+    if (mode === 'saved') {
+      const rows = S.savedProfiles.map(profile => {
+        const other = profile.machine !== S.host;
+        return `<div class="work" style="align-items:center"><span class="site" aria-hidden="true">${esc(profile.name[0])}</span><div><strong>${esc(profile.name)}</strong><small>${esc(profile.site)} · ${other ? `On ${profile.machine}, can’t be used from ${S.host}` : esc(profile.shared)}</small></div><button data-act="attachSaved" data-v="${profile.id}" ${other ? 'disabled' : ''}>Attach</button></div>`;
+      }).join('') || '<div class="empty">No saved logins to attach.</div>';
+      return sheet('Add a browser login', `${tabs}<p class="fine" style="margin-bottom:6px">Logins already saved and shared with you. Attaching one doesn’t copy it.</p>${rows}`, `<button data-act="closeOverlay">Cancel</button>`);
+    }
+    return sheet('Add a browser login', `${tabs}<form id="add-login" data-submit="addLogin">
+      <label class="field">Name<input name="name" required maxlength="60" placeholder="Telegram" autocomplete="off"></label>
+      <label class="field">Website<input name="site" required maxlength="200" placeholder="web.telegram.org" autocomplete="off"></label>
+      <div class="notice plain">${ic('lock')}<span>The browser opens on <strong>${S.host}</strong>, where ${name} runs. A login stays on the machine where you sign in.</span></div></form>`,
+      `<button data-act="closeOverlay">Cancel</button><button class="primary" type="submit" form="add-login">Open browser</button>`);
+  },
+  signIn({ id }) {
+    const login = findLogin(id);
+    const whatsApp = /whatsapp/i.test(login.site);
+    const page = whatsApp ? `${qrCode(login.site)}<p style="font-size:13px">Scan with WhatsApp on your phone</p>` : `<div class="fake-login" aria-hidden="true"><strong style="font-size:15px">Sign in to ${esc(login.name)}</strong><span></span><span></span><b></b></div>`;
+    return sheet(`Sign in to ${esc(login.name)}`, `<p style="font-size:13.5px;color:#c9cdd1">Sign in yourself in this browser. Choose Done when you see your account.</p>
+      <div class="viewer"><div class="viewer-bar">${ic('lock')}<span>${esc(login.site)}</span>${chip('You have control', 'ok')}</div><div class="viewer-body">${page}</div></div>
+      <ul class="bullets">${whatsApp ? `<li>${ic('dot')}On your phone, open WhatsApp, then Settings → Linked devices → Link a device.</li>` : ''}<li>${ic('dot')}The browser runs on ${S.host}, and the login stays there.</li><li>${ic('dot')}The assistant never sees what you type. Codes and captchas stay with you.</li></ul>`,
+      `<button data-act="closeOverlay">Cancel</button><button class="primary" data-act="finishSignIn" data-v="${login.id}">Done, I’m signed in</button>`);
+  },
+  closeGroup() {
+    const group = S.groups[S.group];
+    return sheet(`Close ${esc(group.name)}?`, `<ul class="bullets"><li>${ic('dot')}Nobody can send messages, and every assistant stops watching.</li><li>${ic('dot')}Pending work and open approvals from this group are cancelled.</li><li>${ic('dot')}You created this group, so leaving it also closes it. Handing it to someone else comes later.</li></ul>`,
+      `<button data-act="closeOverlay">Cancel</button><button class="danger" data-act="closeGroupConfirm">Close group</button>`);
+  },
+};
+function sheet(title, body, foot = '') {
+  return `<div class="scrim" data-act="closeOverlay"></div><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ov-title">
+    <header class="ov-head"><div><h2 id="ov-title">${title}</h2></div><button class="icon ghost" data-act="closeOverlay" aria-label="Close">${ic('close')}</button></header>
+    <div class="ov-body">${body}</div>${foot ? `<footer class="ov-foot">${foot}</footer>` : ''}</div>`;
+}
+
+/* Rendering. */
+function detailView() {
+  return { assistant: assistantView, group: groupView, thread: threadView, find: findView, invites: invitesView, you: youView }[S.screen]();
+}
+function mobileLists() {
+  if (S.mTab === 'find') return findView();
+  if (S.mTab === 'groups') return `<div class="view"><div class="m-head"><h2 class="page-title">Groups</h2><button class="icon ghost" data-act="overlay" data-type="newGroup" aria-label="New group">${ic('plus')}</button></div><div class="m-lists">${groupRows()}</div></div>`;
+  if (S.mTab === 'requests') return `<div class="view"><h2 class="page-title">Requests</h2><div class="m-lists">${requestRows()}<p class="fine" style="padding:12px 16px">Your requests to other people’s assistants. Start one from Find.</p></div></div>`;
+  return `<div class="view"><div class="m-head"><h2 class="page-title">Assistants</h2><button class="icon ghost" data-act="open" data-screen="you" aria-label="Who can find you">${av('IG', 'you')}</button></div><div class="m-lists">${assistantRows()}</div></div>`;
+}
+function tabbar() {
+  const tabs = [['assistants', 'Assistants', 'agent', pendingCount()], ['groups', 'Groups', 'people', inviteCount()], ['requests', 'Requests', 'send-out', 0], ['find', 'Find', 'search', 0]];
+  return `<nav class="tabbar" aria-label="Main">${tabs.map(([id, label, icon, count]) => `<button data-act="mtab" data-v="${id}" aria-current="${S.mTab === id ? 'page' : 'false'}">${ic(icon)}${label}${count ? `<span class="badge">${count}</span>` : ''}</button>`).join('')}</nav>`;
+}
+const scrollMemo = {};
+let lastViewKey = null;
+function viewKey() { return S.device + (S.device === 'mobile' && !S.mDetail ? `:list:${S.mTab}` : `:${S.screen}:${S.assistant}:${S.tab}:${S.group}:${S.thread}`); }
+function render() { draw(); if (fitResourcePage()) draw(); }
+function draw() {
+  const previous = q('#shell .scroll');
+  if (previous) scrollMemo[lastViewKey] = previous.scrollTop;
+  const overlayBody = q('#overlay .ov-body');
+  const overlayScroll = overlayBody ? overlayBody.scrollTop : 0;
+  const key = viewKey();
+  const mobile = S.device === 'mobile';
+  q('#device').classList.toggle('mobile', mobile);
+  const statusBar = '<div class="m-status" aria-hidden="true"><span>9:41</span><span>5G</span></div>';
+  q('#shell').innerHTML = mobile
+    ? `${statusBar}<div class="m-body">${S.mDetail ? detailView() : mobileLists()}</div>${S.mDetail ? '' : tabbar()}<div class="m-home" aria-hidden="true"></div>`
+    : `${rail()}<section class="main">${detailView()}</section>`;
+  q('#shell').inert = Boolean(S.overlay);
+  q('#overlay').hidden = !S.overlay;
+  q('#overlay').innerHTML = S.overlay ? overlays[S.overlay.type](S.overlay) : '';
+  if (S.overlay && overlayScroll) q('#overlay .ov-body').scrollTop = overlayScroll;
+  const scroller = q('#shell .scroll');
+  if (scroller) {
+    const chatLike = q('#shell .composer') !== null;
+    scroller.scrollTop = S.stickBottom || (chatLike && scrollMemo[key] === undefined) ? scroller.scrollHeight : (scrollMemo[key] ?? 0);
+  }
+  S.stickBottom = false;
+  lastViewKey = key;
+  document.querySelectorAll('[data-act="device"]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.v === S.device)));
+  document.querySelectorAll('[data-act="jump"]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.v === S.jump)));
+  q('#jump-note').textContent = JUMPS[S.jump].note;
+}
+function focusOverlay() { const target = q('#overlay .ov-body input, #overlay .ov-body textarea, #overlay button'); if (target) target.focus(); }
+function go(screen, data = {}) {
+  S.screen = screen; S.overlay = null;
+  if (data.assistant) S.assistant = data.assistant;
+  if (data.group) S.group = data.group;
+  if (data.thread) S.thread = data.thread;
+  if (data.tab) S.tab = data.tab; else if (screen === 'assistant' && data.assistant) S.tab = 'chat';
+  S.mDetail = screen !== 'find';
+  S.mTab = { assistant: 'assistants', group: 'groups', invites: 'groups', thread: 'requests', find: 'find', you: 'assistants' }[screen];
+  render();
+}
+let toastTimer;
+function toast(message) { const node = q('#toast'); node.textContent = message; node.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { node.hidden = true; }, 3800); }
+
+const JUMPS = {
+  approvals: { note: 'Your private chat stays as it is. Approve or edit the exact event and reply, then close the panel to return to the same chat.', run() { S.assistant = 'work'; S.tab = 'chat'; go('assistant'); S.overlay = { type: 'activity' }; render(); } },
+  resources: { note: 'Everything this assistant can use, in one place, and every topic gets it. Try Sign in for LinkedIn, then Add login. Amazon shows a login saved on another machine.', run() { S.assistant = 'work'; S.resSection = 'browser'; S.resOpen = true; go('assistant', { tab: 'resources' }); } },
+  you: { note: 'Everything starts off. You turn it on per relay, for yourself and each assistant. Your default assistant is chosen here too.', run() { go('you'); } },
+  find: { note: 'One search across all active relays, with no relay picker. Partners is failing on purpose, so choose Retry. The two Dan Cohens stay separate.', run() { go('find'); } },
+  thread: { note: 'Ask someone’s assistant without sharing a group. Send a message to watch it move through the steps.', run() { go('thread', { thread: 'maya' }); } },
+  group: { note: 'The member list shows whose assistant is whose. A solid line means it joined with its owner. A dashed line means it was invited on its own.', run() { go('group', { group: 'launch' }); } },
+  invites: { note: 'Accepting brings your default assistant along. Approving an invitation for your assistant doesn’t bring you in.', run() { go('invites'); } },
+  actions: { note: 'You describe the action in plain language and pick narrow operations. Run a test as Dan, then as Noa, to see the decision change.', run() { S.assistant = 'work'; S.tab = 'actions'; S.actionSel = 'meeting'; S.actionOpen = true; go('assistant', { tab: 'actions' }); } },
+};
+const actions = {
+  device(el) { S.device = el.dataset.v; if (S.device === 'mobile') S.mDetail = S.screen !== 'find'; render(); },
+  jump(el) { S.jump = el.dataset.v; JUMPS[S.jump].run(); render(); },
+  open(el) { go(el.dataset.screen, el.dataset); },
+  tab(el) { S.tab = el.dataset.v; S.actionOpen = false; S.resOpen = false; render(); },
+  mtab(el) { S.mTab = el.dataset.v; S.mDetail = false; if (S.mTab === 'find') S.screen = 'find'; render(); },
+  back() { S.mDetail = false; render(); },
+  toast(el, event) { event.preventDefault(); toast(el.dataset.msg); },
+  overlay(el) { S.overlay = { ...el.dataset }; render(); focusOverlay(); },
+  closeOverlay() { S.overlay = null; render(); },
+  discover(el) {
+    const { key, relay } = el.dataset;
+    S.discovery[key][relay] = !S.discovery[key][relay];
+    if (key !== 'you' && S.discovery[key][relay]) S.ownerNote = true;
+    render();
+  },
+  setDefault(el) { S.defaultAssistant = el.dataset.v || null; toast(S.defaultAssistant ? `${MY_ASSISTANTS[S.defaultAssistant].name} is your default. Groups you’re already in don’t change.` : 'You have no default. Groups you’re already in don’t change.'); render(); },
+  unblock(el) { S.blocked = S.blocked.filter(person => person.name !== el.dataset.v); render(); },
+  block(el) { const name = el.dataset.v; if (!S.blocked.some(person => person.name === name)) S.blocked.push({ name, origin: 'sample' }); S.overlay = null; toast(`Blocked ${name}. Their open requests stopped.`); render(); },
+  retryPartners() { S.partnersUp = true; render(); },
+  findFilter(el) { S.findFilter = el.dataset.v; render(); },
+  startThread(el) { const id = el.dataset.v; if (!S.threads[id]) S.threads[id] = threadSeed[id]; go('thread', { thread: id }); },
+  fillComposer(el) { const box = q('#shell .composer textarea'); box.value = el.dataset.text; box.focus(); },
+  dismissNotice(el) { S.notices = S.notices.filter(notice => notice.id !== el.dataset.v); render(); },
+  resolveUncertain(el) { S.uncertain = false; toast(`Saved: ${el.textContent.toLowerCase()}.`); render(); },
+  approveProposal() {
+    S.approval.state = 'executing'; render();
+    later(1400, () => {
+      S.approval.state = 'done';
+      S.groups.launch.messages.push({ botName: 'Work assistant', botCls: '', owner: 'Ilia', text: S.approval.reply });
+      toast('Approved. The event is booked and the reply is posted.');
+    });
+  },
+  rejectProposal() { S.approval.state = 'rejected'; toast('Rejected. Nothing happened.'); render(); },
+  editProposal() { S.approval.state = 'editing'; render(); },
+  cancelEdit() { S.approval.state = 'pending'; render(); },
+  pickAction(el) { S.actionSel = el.dataset.v; S.actionOpen = true; S.test.result = null; render(); },
+  closeAction() { S.actionOpen = false; render(); },
+  newAction() { const id = `new-${S.actions.length}`; S.actions.push({ id, name: 'New action', desc: '', instructions: '', inputs: '', status: 'draft', ops: [] }); S.actionSel = id; S.actionOpen = true; S.test.result = null; render(); },
+  disableAction() { selectedAction().status = 'disabled'; toast('Disabled. New and open requests for this action stop now.'); render(); },
+  publishAction() { selectedAction().status = 'published'; toast('Published. People who can find this assistant can now request it.'); render(); },
+  acceptInvite(el) {
+    const invite = S.invites.find(item => item.id === el.dataset.v);
+    invite.state = 'accepted';
+    if (invite.kind === 'assistant') { invite.result = `${MY_ASSISTANTS[invite.assistant].name} joined ${invite.group}. You aren’t a member. Its reports appear in its activity.`; toast(invite.result); render(); return; }
+    invite.result = 'You joined this group.';
+    const companion = S.defaultAssistant && MY_ASSISTANTS[S.defaultAssistant];
+    const id = `g-${invite.id}`;
+    S.groups[id] = { name: invite.group, relay: invite.relay, mine: false, host: `${invite.from.split(' ')[0]}’s machine`, hostOnline: true, pending: [],
+      tree: [{ name: invite.from, initials: invite.from.split(' ').map(part => part[0]).join('').slice(0, 2), note: 'Created this group', bots: [] }, { name: 'Ilia German', initials: 'IG', you: true, note: 'You', bots: companion ? [{ name: companion.name, cls: companion.cls, link: 'with', watching: true, note: 'Joined with you. Leaves with you.' }] : [] }],
+      messages: [{ sys: `You ${companion ? `and ${companion.name} ` : ''}joined just now. Earlier messages aren’t available.` }] };
+    go('group', { group: id });
+  },
+  declineInvite(el) { const invite = S.invites.find(item => item.id === el.dataset.v); invite.state = 'declined'; invite.result = `${invite.from} can see that you declined.`; render(); },
+  connectRelay(el) { const invite = S.invites.find(item => item.id === el.dataset.v); invite.needsConnection = false; toast('Homeserver connected to Partners in this preview.'); render(); },
+  revokeInvite(el) { S.sent.find(item => item.id === el.dataset.v).state = 'Revoked'; render(); },
+  leaveGroup() {
+    const group = S.groups[S.group];
+    const me = group.tree.find(member => member.you);
+    const companion = me.bots.find(item => item.link === 'with');
+    delete S.groups[S.group];
+    S.group = Object.keys(S.groups)[0] || null;
+    toast(`You left ${group.name}.${companion ? ` ${companion.name} left with you.` : ''}`);
+    go('assistant', { assistant: 'work' });
+  },
+  removeMember(el) {
+    const group = S.groups[S.group];
+    const name = el.dataset.v;
+    const member = group.tree.find(item => item.name === name);
+    if (member) { group.tree = group.tree.filter(item => item !== member); group.messages.push({ sys: `${name} was removed.${member.bots.length ? ` ${member.bots.map(item => item.name).join(', ')} left too.` : ''}` }); }
+    else { group.tree = group.tree.filter(item => { item.bots = item.bots.filter(child => child.name !== name); return !(item.absent && !item.bots.length); }); group.messages.push({ sys: `${name} was removed.` }); }
+    S.overlay = null; S.stickBottom = true; render();
+  },
+  resSection(el) { S.resSection = el.dataset.v; S.resOpen = true; render(); },
+  closeRes() { S.resOpen = false; render(); },
+  resPage(el) { const section = el.dataset.section; S.resPage[section] = (S.resPage[section] || 0) + Number(el.dataset.v); render(); },
+  allowBrowser() { S.allowBrowser = !S.allowBrowser; render(); },
+  toggleRes(el) { const item = resItems(el.dataset.section).find(entry => entry.name === el.dataset.v); item.on = !item.on; render(); },
+  mcpSignIn(el) { S.mcp.find(item => item.name === el.dataset.v).needsSignIn = false; toast(`Signed in to ${el.dataset.v}. Its token stays on ${S.host}.`); render(); },
+  signInLogin(el) { S.overlay = { type: 'signIn', id: el.dataset.v }; render(); focusOverlay(); },
+  finishSignIn(el) {
+    const login = findLogin(el.dataset.v);
+    const from = login.machine;
+    Object.assign(login, { state: 'signed-in', machine: S.host, since: undefined });
+    if (!S.logins.includes(login)) S.logins.push(login);
+    S.pendingLogin = null; S.overlay = null;
+    toast(from !== S.host ? `Signed in to ${login.name} on ${S.host}. The login on ${from} stays there.` : `Signed in to ${login.name}. Every topic can use it now.`);
+    render();
+  },
+  attachSaved(el) {
+    const profile = S.savedProfiles.find(item => item.id === el.dataset.v);
+    S.savedProfiles = S.savedProfiles.filter(item => item !== profile);
+    S.logins.push({ id: profile.id, name: profile.name, site: profile.site, machine: profile.machine, state: 'signed-in' });
+    S.overlay = null; toast(`Attached ${profile.name}.`); render();
+  },
+  detachLogin(el) {
+    const login = S.logins.find(item => item.id === el.dataset.v);
+    S.logins = S.logins.filter(item => item !== login);
+    S.savedProfiles.push({ id: login.id, name: login.name, site: login.site, machine: login.machine, shared: 'Saved in Settings → Browser → Profiles' });
+    toast(`Detached ${login.name}. Its login stays saved in Settings → Browser → Profiles.`); render();
+  },
+  closeGroupConfirm() { const group = S.groups[S.group]; delete S.groups[S.group]; S.group = Object.keys(S.groups)[0] || null; toast(`Closed ${group.name}.`); go('assistant', { assistant: 'work' }); },
+};
+const submits = {
+  privateChat(data) {
+    if (S.assistant !== 'work') { toast('Preview only.'); return; }
+    S.chat.push({ me: true, text: data.get('text') }); S.stickBottom = true; render();
+    later(700, () => { S.chat.push({ text: 'Preview only. In the app this chat works exactly as it does today.' }); S.stickBottom = true; });
+  },
+  groupSend(data) {
+    const group = S.groups[S.group];
+    const message = { me: true, text: data.get('text'), status: group.hostOnline ? 'Sending…' : `Waiting for ${group.host}` };
+    group.messages.push(message); S.stickBottom = true; render();
+    if (group.hostOnline) later(800, () => { message.status = 'Delivered'; });
+  },
+  threadSend(data) {
+    const thread = S.threads[S.thread];
+    const first = thread.firstName;
+    thread.messages.push({ me: true, text: data.get('text') });
+    const step = { trail: [NOW('Recorded'), TODO('Decision'), TODO(`${first}’s approval`), TODO('Executing'), TODO('Completed')] };
+    thread.messages.push(step); S.stickBottom = true; render();
+    later(900, () => { step.trail = [DONE('Recorded'), NOW('Awaiting decision'), TODO(`${first}’s approval`), TODO('Executing'), TODO('Completed')]; S.stickBottom = true; });
+    later(2300, () => { step.trail = [DONE('Recorded'), DONE('Decision'), NOW(`Awaiting ${first}’s approval`), TODO('Executing'), TODO('Completed')]; S.stickBottom = true; });
+  },
+  editProposal(data) {
+    S.approval.reply = data.get('reply'); S.approval.state = 'checking'; S.approval.rev += 1; render();
+    later(1400, () => { S.approval.state = 'pending'; });
+  },
+  testAction(data) {
+    const action = selectedAction();
+    const caller = data.get('caller');
+    S.test.caller = caller;
+    if (action.id === 'meeting') S.test.result = caller === 'Dan Cohen'
+      ? { decision: 'Do it', ok: true, detail: `Would create “Vendor review”, Thu 5 Nov, 15:00–15:30, and reply to ${caller}.` }
+      : { decision: 'Ask you first', ok: false, detail: `Would send you this proposal and wait. ${caller} would see “Awaiting Ilia’s approval”.` };
+    else S.test.result = { decision: 'Do it', ok: true, detail: `Would share only free and busy times with ${caller}.` };
+    render();
+  },
+  addLogin(data) {
+    const id = `login-${Date.now()}`;
+    S.pendingLogin = { id, name: data.get('name'), site: data.get('site'), machine: S.host, state: 'new' };
+    S.overlay = { type: 'signIn', id }; render(); focusOverlay();
+  },
+  newGroup(data) {
+    const id = `g-${Date.now()}`;
+    const companion = S.defaultAssistant && MY_ASSISTANTS[S.defaultAssistant];
+    S.groups[id] = { name: data.get('name'), relay: data.get('relay'), mine: true, host: 'your machine', hostOnline: true, pending: data.getAll('invite'),
+      tree: [{ name: 'Ilia German', initials: 'IG', you: true, note: 'You · Created this group', bots: companion ? [{ name: companion.name, cls: companion.cls, link: 'with', watching: true, note: 'Joined with you. Leaves with you.' }] : [] }],
+      messages: [{ sys: `You created this group just now.${companion ? ` ${companion.name} joined with you.` : ''}` }] };
+    go('group', { group: id });
+  },
+  invite(data) {
+    const group = S.groups[data.get('group')];
+    group.pending.push(data.get('who'));
+    S.sent.unshift({ id: `s-${Date.now()}`, who: data.get('who'), group: group.name, state: 'Pending' });
+    S.group = data.get('group'); S.overlay = null;
+    toast(`Invitation sent to ${data.get('who')}.`);
+    go('group', { group: data.get('group') });
+  },
+};
+
+document.addEventListener('click', event => {
+  const target = event.target.closest('[data-act]');
+  if (target && !target.disabled) actions[target.dataset.act](target, event);
+});
+document.addEventListener('submit', event => {
+  const form = event.target.closest('form[data-submit]');
+  if (!form) return;
+  event.preventDefault();
+  submits[form.dataset.submit](new FormData(form));
+});
+document.addEventListener('input', event => {
+  const field = event.target;
+  if (field.id === 'find-input') { S.findQuery = field.value; q('#find-results').innerHTML = findResults(); }
+  if (field.dataset.actionField) selectedAction()[field.dataset.actionField] = field.value;
+});
+document.addEventListener('change', event => {
+  const field = event.target;
+  if (field.dataset.op) {
+    const action = selectedAction();
+    action.ops = field.checked ? [...action.ops, field.dataset.op] : action.ops.filter(op => op !== field.dataset.op);
+    render();
+  }
+  if (field.dataset.bind) S[field.dataset.bind] = field.value;
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && S.overlay) { S.overlay = null; render(); }
+  if (event.key === 'Enter' && !event.shiftKey && event.target.matches('.composer textarea')) { event.preventDefault(); event.target.form.requestSubmit(); }
+});
+render();
+</script>
+</body>
+</html>

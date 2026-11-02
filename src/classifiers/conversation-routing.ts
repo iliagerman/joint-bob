@@ -41,6 +41,13 @@ export async function routeAssistantMessage(input: {
   return null;
 }
 
+/** Where a decision for this assistant goes, and the key it carries; null when it cannot be asked. */
+export async function decisionModelTarget(classifierId: "typesafe" | "laya", apiKey: string): Promise<{ target: SystemOneTarget; apiKey: string } | null> {
+  if (classifierId === "typesafe") return apiKey ? { target: TYPESAFE, apiKey } : null;
+  const target = await layaTarget(apiKey);
+  return target ? { target, apiKey: getGuardianSettings().layaUrl ? apiKey : "" } : null;
+}
+
 async function layaTarget(apiKey: string): Promise<SystemOneTarget | null> {
   const remote = getGuardianSettings().layaUrl;
   try {

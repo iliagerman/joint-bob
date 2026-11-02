@@ -17,6 +17,7 @@ import { registeredHarnessIdSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { listProjectCronTasks } from "../cron-list.js";
 import { peerMayRunHere } from "../cluster-helpers.js";
+import { getPersonalAssistant } from "../../personal-assistants.js";
 
 const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("profiles"), projectId: z.string().min(1), accountId: z.string().nullable().optional() }).strict(),
@@ -90,6 +91,15 @@ async function manageCron(command: Command): Promise<unknown> {
   validateAutomationTagAssignments(tagDatabase, workspace.workspaceId, command.input.tags, workspace.ownerNodeId);
   const existing = command.action === "update" ? store.get(command.id) : null;
   if (existing) assertAutomationCreator(existing.creatorAccountId, command.input.creatorAccountId);
+  if (command.input.assistantId) {
+    const assistant = command.input.creatorAccountId ? await getPersonalAssistant(command.input.creatorAccountId, command.input.assistantId) : undefined;
+    if (!assistant || assistant.projectId !== project.id || assistant.nodeId && assistant.nodeId !== local.id || command.input.ownerNodeId !== local.id || command.input.sessionId) {
+      throw new Error("Assistant scheduled tasks must stay on their assistant's execution node");
+    }
+    if (command.input.model || command.input.reasoning) throw new Error("Assistant scheduled tasks use the assistant's execution settings");
+    command.input.engine = assistant.executionSettings?.harnessId ?? command.input.engine;
+    if (existing && existing.assistantId !== command.input.assistantId) throw new Error("Assistant target cannot be changed in place");
+  }
   if (command.input.providerProfileId) {
     if (!command.input.creatorAccountId) throw new Error("A signed-in creator is required to select a profile");
     accessibleProviderProfile(command.input.creatorAccountId, command.input.providerProfileId, "automation");

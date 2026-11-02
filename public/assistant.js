@@ -1,233 +1,221 @@
-const params = new URLSearchParams(location.search);
-const message = document.querySelector("#message");
-const detail = document.querySelector("#detail");
-let assistant;
-let csrf;
-let sharedImages = [];
-let shareDatabase;
-let pendingTurn = null;
-async function pendingShare() {
-  if (!params.has("share")) return null;
-  shareDatabase = await new Promise((resolve, reject) => {
-    const open = indexedDB.open("joint-bob-assistant-shares", 1);
-    open.onupgradeneeded = () => open.result.createObjectStore("pending");
-    open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error);
-  });
-  return new Promise((resolve, reject) => {
-    const transaction = shareDatabase.transaction("pending", "readonly");
-    const get = transaction.objectStore("pending").get(params.get("share"));
-    get.onsuccess = () => resolve(get.result); get.onerror = () => reject(get.error);
-  });
+import { request, setCsrf, subscribe } from "./assistant/api.js";
+import { activityChanged, activityCounts, activityOpen, loadActivity, openActivity } from "./assistant/activity.js";
+import { showActions } from "./assistant/actions.js";
+import { bindChat, showTranscript, showWaitingStrip } from "./assistant/chat.js";
+import { app, closeOverlay, fail, isMobile, navigate, notify, setRouter } from "./assistant/context.js";
+import { bot, h, icon, rowText } from "./assistant/dom.js";
+import { currentGroup, leftGroupScreen, loadGroups, openNewGroupSheet, pendingInvitations, showGroup, showInvitations } from "./assistant/groups.js";
+import { loadMe, showFind, showYou } from "./assistant/people.js";
+import { showResources } from "./assistant/resources.js";
+import { arrivesWithShare, bindSaved, prefillShare, showItems } from "./assistant/saved.js";
+import { bindSettings, fillSettings, showSettings } from "./assistant/settings.js";
+import { currentThread, leftThreadScreen, loadThreads, showThread, threadStatus } from "./assistant/threads.js";
+
+const VIEWS = ["chat", "resources", "actions", "settings", "saved-items"];
+const $ = selector => document.querySelector(selector);
+const params = () => new URLSearchParams(location.search);
+
+function findableOn(kind, id) {
+  const me = app.me;
+  if (!me) return "";
+  const relays = me.relays.filter(relay => me.discovery.some(item => item.subjectKind === kind && item.subjectId === id && item.relayNodeId === relay.relayNodeId));
+  return relays.length ? `Findable on ${relays.map(relay => relay.name).join(", ")}` : "Not findable";
 }
-async function clearShare() {
-  if (!shareDatabase || !params.has("share")) return;
-  await new Promise((resolve, reject) => {
-    const transaction = shareDatabase.transaction("pending", "readwrite");
-    transaction.objectStore("pending").delete(params.get("share"));
-    transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error);
-  });
-  const url = new URL(location.href); url.searchParams.delete("share"); history.replaceState({}, "", url);
-  sharedImages = [];
+const assistantSubtitle = entry => [app.me?.profile.defaultAssistantId === entry.id ? "Default" : "", findableOn("assistant", entry.id)].filter(Boolean).join(" · ");
+
+// ---- Rail and mobile tabs ----
+
+function badge(count) { return count ? h("span", { class: "badge", "aria-label": `${count} waiting` }, String(count)) : null; }
+
+function renderRail() {
+  const selected = params();
+  $("#rail-assistants").replaceChildren(...(app.assistants.length ? app.assistants.map(entry => h("button", { type: "button", class: "row", "aria-current": String(selected.get("id") === entry.id), onclick: () => openAssistant(entry.id) },
+    bot(), rowText(entry.name, assistantSubtitle(entry)), badge(app.pendingCounts.get(entry.id) ?? 0))) : [h("p", { class: "empty-line" }, "No assistant yet.")]));
+  const invitations = pendingInvitations();
+  $("#rail-groups").replaceChildren(
+    h("button", { type: "button", class: "row", "aria-current": String(selected.get("screen") === "invitations"), onclick: () => navigate({ screen: "invitations" }) }, h("span", { class: "av ghost", "aria-hidden": "true" }, icon("send-out")), rowText("Invitations", invitations ? `${invitations} waiting for you` : "Nothing waiting"), badge(invitations)),
+    ...app.groups.map(group => h("button", { type: "button", class: "row", "aria-current": String(selected.get("group") === group.groupId), onclick: () => navigate({ group: group.groupId }) }, h("span", { class: "av", "aria-hidden": "true" }, icon("people")), rowText(group.name, app.me?.relays.find(relay => relay.relayNodeId === group.relayNodeId)?.name ?? ""))));
+  $("#rail-requests").replaceChildren(...(app.threads.length ? app.threads.map(thread => h("button", { type: "button", class: "row", "aria-current": String(selected.get("thread") === thread.threadId), onclick: () => navigate({ thread: thread.threadId }) }, bot("other"), rowText(thread.assistantName, threadStatus(thread))))
+    : [h("p", { class: "empty-line" }, "Start one from Find.")]));
+  $("#rail-you").setAttribute("aria-current", String(selected.get("screen") === "you"));
+  if (app.me) { $("#rail-you-name").textContent = app.me.account.name; $("#rail-you .av").textContent = app.me.account.name.slice(0, 2).toUpperCase(); }
+  const tab = selected.get("screen") === "find" ? "find" : selected.get("screen") === "groups" || selected.has("group") || selected.get("screen") === "invitations" ? "groups" : selected.get("screen") === "requests" || selected.has("thread") ? "requests" : "assistants";
+  for (const button of document.querySelectorAll("#tabbar [data-tab]")) button.setAttribute("aria-current", button.dataset.tab === tab ? "page" : "false");
+  const totals = { assistants: [...app.pendingCounts.values()].reduce((sum, count) => sum + count, 0), groups: invitations };
+  for (const element of document.querySelectorAll("#tabbar [data-badge]")) { const count = totals[element.dataset.badge] ?? 0; element.textContent = String(count); element.classList.toggle("hidden", !count); }
 }
-function notify(text, error = false) { message.textContent = text; message.classList.toggle("danger", error); }
-async function request(path, options = {}) {
-  const response = await fetch(path, { credentials: "same-origin", ...options,
-    headers: { "Content-Type": "application/json", ...(csrf ? { "X-CSRF-Token": csrf } : {}), ...options.headers } });
-  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `Request failed (${response.status})`);
-  return response.status === 204 ? null : response.json();
+
+function renderChooser() {
+  const target = $("#assistants");
+  target.replaceChildren(...(app.assistants.length ? app.assistants.map(entry => h("button", { type: "button", class: "row", "aria-label": entry.name, onclick: () => openAssistant(entry.id, true) }, bot(), rowText(entry.name, assistantSubtitle(entry)), badge(app.pendingCounts.get(entry.id) ?? 0)))
+    : [h("p", { class: "empty" }, "No assistant yet. Open a conversation, then choose Create assistant in its toolbar.")]));
 }
-const link = () => {
-  const target = new URL("/", location.origin);
-  target.searchParams.set("projectId", assistant.projectId);
-  target.searchParams.set("sessionId", assistant.sessionId);
-  if (assistant.nodeId) target.searchParams.set("nodeId", assistant.nodeId);
-  return target;
-};
-function text(parent, tag, value) { const element = document.createElement(tag); element.textContent = value; parent.append(element); return element; }
-function confirmItemDeletion(title) {
-  const dialog = document.querySelector("#delete-item-dialog");
-  dialog.querySelector("p").textContent = `Delete ${title}? This cannot be undone.`;
-  dialog.returnValue = "";
-  dialog.showModal();
-  return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), { once: true }));
-}
-async function showTranscript() {
-  const target = document.querySelector("#timeline"); target.replaceChildren();
-  const { timeline } = await request(`/api/personal-assistants/${assistant.id}/transcript`);
-  for (const item of timeline) {
-    const bubble = text(target, "div", item.text); bubble.className = `chat-bubble ${item.role === "user" ? "user" : "assistant"}`;
+
+function mobileList(kind) {
+  const target = $("#social-view");
+  if (kind === "groups") {
+    const invitations = pendingInvitations();
+    target.replaceChildren(h("div", { class: "m-head" }, h("h1", { class: "page-title" }, "Groups"), h("button", { type: "button", class: "icon ghost", "aria-label": "New group", onclick: openNewGroupSheet }, icon("plus"))),
+      h("div", { class: "m-lists" }, h("button", { type: "button", class: "row", onclick: () => navigate({ screen: "invitations" }) }, h("span", { class: "av ghost", "aria-hidden": "true" }, icon("send-out")), rowText("Invitations", invitations ? `${invitations} waiting for you` : "Nothing waiting"), badge(invitations)),
+        app.groups.map(group => h("button", { type: "button", class: "row", onclick: () => navigate({ group: group.groupId }) }, h("span", { class: "av", "aria-hidden": "true" }, icon("people")), rowText(group.name, app.me?.relays.find(relay => relay.relayNodeId === group.relayNodeId)?.name ?? "")))));
+    return;
   }
-  target.scrollTop = target.scrollHeight;
+  target.replaceChildren(h("h1", { class: "page-title" }, "Requests"), h("div", { class: "m-lists" },
+    app.threads.map(thread => h("button", { type: "button", class: "row", onclick: () => navigate({ thread: thread.threadId }) }, bot("other"), rowText(thread.assistantName, threadStatus(thread)))),
+    h("p", { class: "fine", style: "padding:12px 16px" }, "Your requests to other people's assistants. Start one from Find.")));
 }
-async function showItems() {
-  const target = document.querySelector("#items"); target.replaceChildren();
-  const { items } = await request(`/api/personal-assistants/${assistant.id}/items`);
-  if (!items.length) { text(target, "p", "Nothing saved yet."); return; }
-  for (const entry of items) {
-    const card = document.createElement("article");
-    text(card, "small", `${entry.collection} · ${new Date(entry.createdAt).toLocaleDateString()}`);
-    text(card, "h3", entry.title);
-    if (entry.url) { const anchor = text(card, "a", entry.url); anchor.href = entry.url; anchor.target = "_blank"; anchor.rel = "noopener noreferrer"; }
-    else text(card, "small", "No source link saved");
-    if (entry.note) text(card, "p", entry.note);
-    const images = document.createElement("div"); images.className = "images";
-    for (const name of entry.imageNames) {
-      const image = document.createElement("img"); image.loading = "lazy"; image.alt = `Screenshot for ${entry.title}`;
-      image.src = `/api/personal-assistants/${assistant.id}/items/${entry.id}/images/${encodeURIComponent(name)}`; images.append(image);
-    }
-    card.append(images);
-    const remove = text(card, "button", "Delete item"); remove.type = "button"; remove.dataset.testid = "assistant-delete-item";
-    remove.addEventListener("click", async () => {
-      remove.disabled = true;
-      try {
-        if (!await confirmItemDeletion(entry.title)) return;
-        await request(`/api/personal-assistants/${assistant.id}/items/${entry.id}`, { method: "DELETE" });
-        await showItems();
-      } catch (error) { notify(error.message, true); }
-      finally { remove.disabled = false; }
-    });
-    target.append(card);
+
+// ---- The assistant ----
+
+async function refreshCounts() {
+  const local = new Set((app.me?.assistants ?? []).filter(entry => entry.local).map(entry => entry.id));
+  await Promise.all(app.assistants.filter(entry => local.has(entry.id)).map(async entry => {
+    try {
+      const activity = await request(`/api/personal-assistants/${entry.id}/activity`);
+      const resources = app.resources && app.assistant?.id === entry.id ? app.resources : null;
+      app.pendingCounts.set(entry.id, activityCounts(activity, resources).total);
+      if (app.assistant?.id === entry.id) app.activity = activity;
+    } catch (error) { console.warn(`Activity for ${entry.name} is unavailable:`, error.message); }
+  }));
+}
+
+function updateActivityBadge() {
+  if (!app.assistant) return;
+  const counts = activityCounts();
+  const element = $("#activity-badge");
+  element.textContent = String(counts.total);
+  element.classList.toggle("hidden", !counts.total);
+  $("#activity-button").setAttribute("aria-label", counts.total ? `Activity, ${counts.total} waiting` : "Activity");
+  showWaitingStrip(counts, openActivity);
+}
+
+function openAssistant(id, keepShare = false) {
+  const target = new URL(location.pathname, location.origin);
+  if (keepShare) for (const key of ["share", "url", "title", "text"]) if (params().has(key)) target.searchParams.set(key, params().get(key));
+  target.searchParams.set("id", id);
+  history.pushState({}, "", target);
+  closeOverlay();
+  render().catch(fail);
+}
+
+async function showAssistantView(view) {
+  for (const name of VIEWS) $(`#${name}-view`).classList.toggle("hidden", name !== view);
+  for (const button of document.querySelectorAll("#assistant-nav [data-assistant-view]")) {
+    if (button.dataset.assistantView === view) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+  }
+  if (view === "chat") await showTranscript();
+  if (view === "resources") await showResources();
+  if (view === "actions") await showActions();
+  if (view === "settings") await showSettings();
+  if (view === "saved-items") await showItems();
+}
+
+async function showAssistant(id) {
+  const entry = app.assistants.find(candidate => candidate.id === id);
+  if (!entry) { notify("Assistant not found or unavailable on this machine", true); showChooser(); return; }
+  const changed = app.assistant?.id !== entry.id;
+  app.assistant = entry;
+  if (changed) { app.resources = null; app.activity = null; }
+  $("#detail").classList.remove("hidden");
+  document.body.classList.add("in-detail");
+  $("#heading").textContent = entry.name;
+  $("#detail-subtitle").textContent = assistantSubtitle(entry);
+  fillSettings();
+  if (changed && arrivesWithShare()) await prefillShare();
+  const requested = params().get("view");
+  await showAssistantView(VIEWS.includes(requested) ? requested : arrivesWithShare() ? "saved-items" : "chat");
+  loadActivity().then(updateActivityBadge).catch(error => console.warn("Assistant activity is unavailable:", error.message));
+}
+
+function showChooser() {
+  app.assistant = null;
+  $("#chooser").classList.remove("hidden");
+  renderChooser();
+}
+
+// ---- Routing ----
+
+async function render() {
+  for (const id of ["#chooser", "#detail", "#social-view"]) $(id).classList.add("hidden");
+  document.body.classList.remove("in-detail");
+  const current = params();
+  if (!current.has("group")) leftGroupScreen();
+  if (!current.has("thread")) leftThreadScreen();
+  renderRail();
+  if (current.has("id")) { await showAssistant(current.get("id")); renderRail(); return; }
+  app.assistant = null;
+  const screen = current.get("screen");
+  const social = $("#social-view");
+  social.classList.remove("hidden");
+  if (current.has("group") || current.has("thread") || ["you", "invitations"].includes(screen)) document.body.classList.add("in-detail");
+  if (current.has("group")) await showGroup(current.get("group"));
+  else if (current.has("thread")) await showThread(current.get("thread"));
+  else if (screen === "find") await showFind();
+  else if (screen === "you") await showYou();
+  else if (screen === "invitations") await showInvitations();
+  else if ((screen === "groups" || screen === "requests") && isMobile()) mobileList(screen);
+  else { social.classList.add("hidden"); showChooser(); }
+  renderRail();
+}
+setRouter(() => render().catch(fail));
+
+function onChange(change) {
+  if (change.kind === "group") {
+    if (currentGroup() === change.groupId) showGroup(change.groupId).catch(fail);
+    loadGroups().then(renderRail).catch(() => {});
+  } else if (change.kind === "thread") {
+    if (currentThread() === change.threadId) showThread(change.threadId).catch(fail);
+  } else if (change.kind === "invitations") {
+    loadGroups().then(() => { renderRail(); if (params().get("screen") === "invitations") return showInvitations(); }).catch(fail);
+  } else if (change.kind === "activity") {
+    refreshCounts().then(() => {
+      renderRail();
+      if (app.assistant?.id !== change.assistantId) return undefined;
+      updateActivityBadge();
+      return activityOpen() ? activityChanged() : undefined;
+    }).catch(fail);
   }
 }
-async function showMcp() {
-  const target = document.querySelector("#mcp-options"); target.replaceChildren();
-  const response = await request(`/api/resources/inventory?${new URLSearchParams({ projectId: assistant.projectId, conversationId: assistant.sessionId })}`);
-  const servers = [...new Map((response.nodes[0]?.inventory?.mcpServers ?? []).map(server => [server.name, server])).values()];
-  if (!servers.length) { text(target, "p", "No MCP servers installed for this project or node. Add one in Joint Bob Resources first."); return; }
-  for (const server of servers) {
-    const label = document.createElement("label");
-    const box = document.createElement("input"); box.type = "checkbox"; box.value = server.name; box.checked = assistant.mcpServerNames === null || assistant.mcpServerNames.includes(server.name); box.style.width = "auto"; box.style.marginRight = "8px";
-    label.append(box, document.createTextNode(`${server.name} · ${server.source}`)); target.append(label);
+
+function bindShell() {
+  for (const button of document.querySelectorAll("#assistant-nav [data-assistant-view]")) {
+    button.addEventListener("click", () => navigate({ id: app.assistant.id, view: button.dataset.assistantView === "chat" ? "" : button.dataset.assistantView }));
   }
-}
-async function showSecrets() {
-  const target = document.querySelector("#secret-options"); target.replaceChildren();
-  const save = document.querySelector("#secrets button"); save.disabled = true;
-  const scope = encodeURIComponent(`${assistant.engine}:${assistant.sessionId}`);
-  try {
-    const [{ accounts }, { accountIds }] = await Promise.all([
-      request("/api/secrets"), request(`/api/secrets/scopes/conversation/${scope}`),
-    ]);
-    if (!accounts.length) text(target, "p", "Create a secret account in Settings → Secrets first.");
-    for (const account of accounts) {
-      const label = document.createElement("label");
-      const box = document.createElement("input"); box.type = "checkbox"; box.value = account.id; box.checked = accountIds.includes(account.id);
-      box.style.width = "auto"; box.style.marginRight = "8px";
-      label.append(box, document.createTextNode(account.label)); target.append(label);
-    }
-    save.disabled = false;
-  } catch (error) { text(target, "p", `Secret management unavailable: ${error.message}`); }
-}
-async function open(entry) {
-  assistant = entry; document.querySelector("#heading").textContent = entry.name;
-  detail.classList.remove("hidden"); document.querySelector("#chooser").classList.add("hidden");
-  document.querySelector("#name").value = entry.name;
-  document.querySelector("#instructions").value = entry.instructions;
-  document.querySelector("#allow-browser").checked = entry.allowBrowser;
-  document.querySelector("#allow-terminal").checked = entry.allowTerminal;
-  document.querySelector("#classifier").value = entry.classifierId || "typesafe";
-  document.querySelector("#chat").href = link();
-  document.querySelector("#resources").href = link();
-  if (params.get("url")) document.querySelector("#url").value = params.get("url");
-  if (params.get("title") || params.get("text")) document.querySelector("#title").value = params.get("title") || params.get("text").slice(0, 300);
-  if (params.has("share")) {
-    const shared = await pendingShare();
-    if (shared && Date.now() - shared.createdAt < 24 * 60 * 60 * 1000) {
-      document.querySelector("#title").value = shared.title.slice(0, 300) || document.querySelector("#title").value;
-      document.querySelector("#url").value = shared.url || "";
-      document.querySelector("#note").value = shared.text;
-      sharedImages = shared.images;
-      notify(`${sharedImages.length} shared screenshot(s) ready. Review and save.`);
-    } else notify("Shared content expired. Share it again.", true);
+  for (const button of document.querySelectorAll("[data-go]")) button.addEventListener("click", () => navigate({ screen: button.dataset.go }));
+  for (const button of document.querySelectorAll("[data-sheet=new-group]")) button.addEventListener("click", openNewGroupSheet);
+  for (const button of document.querySelectorAll("#tabbar [data-tab]")) {
+    button.addEventListener("click", () => navigate(button.dataset.tab === "assistants" ? {} : { screen: button.dataset.tab }));
   }
-  await Promise.all([showItems(), showSecrets(), showMcp(), showTranscript()]);
+  $("#detail-back").addEventListener("click", () => navigate({}));
+  $("#activity-button").addEventListener("click", openActivity);
+  window.addEventListener("popstate", () => render().catch(fail));
+  bindChat();
+  bindSettings();
+  bindSaved(showTranscript);
 }
-document.querySelector("#secrets").addEventListener("submit", async event => {
-  event.preventDefault();
+
+async function loadSocial() {
   try {
-    const accountIds = [...document.querySelectorAll("#secret-options input:checked")].map(box => box.value);
-    await request(`/api/secrets/scopes/conversation/${encodeURIComponent(`${assistant.engine}:${assistant.sessionId}`)}`, { method: "PUT", body: JSON.stringify({ accountIds }) });
-    notify("Secret accounts saved. Changes take effect on the next turn.");
-  } catch (error) { notify(error.message, true); }
-});
-const fileData = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = reject; reader.readAsDataURL(file);
-});
-document.querySelector("#settings").addEventListener("submit", async event => {
-  event.preventDefault();
-  try {
-    const { assistant: updated } = await request(`/api/personal-assistants/${assistant.id}`, { method: "PUT", body: JSON.stringify({ projectId: assistant.projectId, engine: assistant.engine, sessionId: assistant.sessionId, name: document.querySelector("#name").value, instructions: document.querySelector("#instructions").value, classifierId: document.querySelector("#classifier").value, allowBrowser: document.querySelector("#allow-browser").checked, allowTerminal: document.querySelector("#allow-terminal").checked }) });
-    assistant = updated; document.querySelector("#heading").textContent = updated.name; notify("Instructions saved");
-  } catch (error) { notify(error.message, true); }
-});
-document.querySelector("#capture").addEventListener("submit", async event => {
-  event.preventDefault(); const form = event.currentTarget; const button = form.querySelector("button[type=submit], button.primary");
-  const files = [...sharedImages, ...document.querySelector("#images").files];
-  if (files.length > 4 || files.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024) { notify("Select up to four images, at most 20 MiB total", true); return; }
-  button.disabled = true;
-  try {
-    const images = await Promise.all(files.map(async file => ({ name: file.name, mimeType: file.type, data: await fileData(file) })));
-    await request(`/api/personal-assistants/${assistant.id}/items`, { method: "POST", body: JSON.stringify({ collection: document.querySelector("#collection").value, title: document.querySelector("#title").value, url: document.querySelector("#url").value || null, note: document.querySelector("#note").value, images }) });
-    await clearShare();
-    form.reset(); document.querySelector("#collection").value = "Shopping"; notify("Item saved"); await showItems();
-  } catch (error) { notify(error.message, true); } finally { button.disabled = false; }
-});
-document.querySelector("#save-mcp").addEventListener("click", async () => {
-  try {
-    const { assistant: updated } = await request(`/api/personal-assistants/${assistant.id}`, { method: "PUT", body: JSON.stringify({ projectId: assistant.projectId, engine: assistant.engine, sessionId: assistant.sessionId, name: document.querySelector("#name").value, instructions: document.querySelector("#instructions").value, classifierId: document.querySelector("#classifier").value, allowBrowser: document.querySelector("#allow-browser").checked, allowTerminal: document.querySelector("#allow-terminal").checked, mcpServerNames: [...document.querySelectorAll("#mcp-options input:checked")].map(box => box.value) }) });
-    assistant = updated; await showMcp(); notify("MCP access saved. Changes take effect on the next turn.");
-  } catch (error) { notify(error.message, true); }
-});
-document.querySelector("#chat-form").addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = event.currentTarget; const field = document.querySelector("#chat-message"); const button = form.querySelector("button");
-  const content = field.value.trim(); if (!content) return;
-  if (pendingTurn && pendingTurn.message !== content) { notify("Retry the pending message before editing it.", true); return; }
-  pendingTurn ??= { requestId: crypto.randomUUID(), message: content };
-  button.disabled = true; notify("Thinking…");
-  try {
-    const recentMessages = [...document.querySelectorAll("#timeline .chat-bubble")].slice(-6).map(bubble => bubble.textContent.slice(0, 4000));
-    await request(`/api/personal-assistants/${assistant.id}/turn`, { method: "POST", body: JSON.stringify({ requestId: pendingTurn.requestId, message: content, recentMessages }) });
-    pendingTurn = null; field.value = ""; await showTranscript(); notify("");
-  } catch (error) { await showTranscript().catch(() => {}); notify(error.message, true); }
-  finally { button.disabled = false; }
-});
-document.querySelector("#refresh").addEventListener("click", () => Promise.all([showItems(), showTranscript()]).catch(error => notify(error.message, true)));
-function openAssistantAutomation(action) {
-  const target = new URL("/", location.origin);
-  target.searchParams.set("projectId", assistant.projectId);
-  target.searchParams.set("sessionId", assistant.sessionId);
-  if (assistant.nodeId) target.searchParams.set("nodeId", assistant.nodeId);
-  target.searchParams.set("assistantId", assistant.id);
-  target.searchParams.set("assistantAction", action);
-  const page = window.open(target.toString(), "_blank");
-  if (page) page.opener = null;
-  else notify("Allow pop-ups to open automation controls.", true);
+    await loadMe();
+    await Promise.all([loadGroups(), loadThreads(), refreshCounts()]);
+  } catch (error) { console.warn("Groups and discovery are unavailable:", error.message); }
 }
-document.querySelector("#new-scheduled-task").addEventListener("click", () => openAssistantAutomation("cron"));
-document.querySelector("#new-webhook").addEventListener("click", () => openAssistantAutomation("webhook"));
-document.querySelector("#copy").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(location.origin + `/assistant.html?id=${encodeURIComponent(assistant.id)}`); notify("Assistant link copied"); }
-  catch (error) { notify(error.message, true); }
-});
-try {
+
+async function boot() {
   const status = await (await fetch("/api/auth/status", { credentials: "same-origin" })).json();
   if (!status.authenticated) {
     notify("Sign in to Joint Bob, then reopen this link.", true);
-    const anchor = text(document.querySelector("#chooser"), "a", "Sign in"); anchor.href = "/";
-  } else {
-    csrf = status.csrfToken;
-    const { assistants } = await request("/api/personal-assistants");
-    const selected = assistants.find(entry => entry.id === params.get("id"));
-    if (selected) await open(selected);
-    else {
-      const target = document.querySelector("#assistants");
-      if (!assistants.length) text(target, "p", "No assistant yet. Open a conversation, then choose Personal assistant in its More menu.");
-      for (const entry of assistants) {
-        const button = text(target, "button", entry.name); button.type = "button";
-        button.addEventListener("click", () => { const url = new URL(location.href); url.searchParams.set("id", entry.id); history.replaceState({}, "", url); open(entry).catch(error => notify(error.message, true)); });
-      }
-      if (params.has("id")) notify("Assistant not found or unavailable on this machine", true);
-    }
+    $("#chooser").classList.remove("hidden");
+    $("#assistants").replaceChildren(h("a", { href: "/" }, "Sign in"));
+    return;
   }
-} catch (error) { notify(error.message, true); }
+  setCsrf(status.csrfToken);
+  bindShell();
+  const { assistants } = await request("/api/personal-assistants");
+  app.assistants = assistants;
+  await loadSocial();
+  await render();
+  subscribe(onChange);
+}
+
+boot().catch(fail);

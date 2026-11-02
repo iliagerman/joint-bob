@@ -19,6 +19,7 @@ import { getProject } from "../store.js";
 import { takeLocalSessionOwnership } from "./routes/sessions.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
 import { flags } from "./state.js";
+import { runPersonalAssistantAutomationTurn } from "./routes/personal-assistants.js";
 
 export async function cronConversationReady(projectId: string, sessionId: string, engine: string): Promise<boolean> {
   const project = await getProject(projectId);
@@ -85,6 +86,27 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
 async function executeCronRun(task: CronTask, run: CronRun): Promise<void> {
   try {
     await runWithAutomationProfile(task, async () => {
+      if (task.assistantId) {
+        if (!task.creatorAccountId) throw new Error("Assistant scheduled task has no creator account");
+        const turn = await runPersonalAssistantAutomationTurn(task.creatorAccountId, task.assistantId, run.id, scheduledPromptText(task.prompt), {
+          label: "Scheduled", automationProfile: automationProfileContext(task),
+          prepare: async destination => {
+            cronStore().target(run.id, destination.sessionId);
+            if (destination.isNew) await markCronConversation(task.projectId, destination.engine, destination.sessionId, task.id, task.ownerNodeId);
+          },
+          onStarted: destination => {
+            cronStore().started(run.id, destination.sessionId);
+            void clusterV2Database().then(db => transitionAutomationExecution(db, run.id, "running", null, destination.sessionId, destination.engine));
+          },
+        });
+        const [engine, ...sessionParts] = turn.topicId.split(":");
+        const sessionId = sessionParts.join(":");
+        if (!engine || !sessionId) throw new Error("Assistant scheduled turn has no conversation target");
+        cronStore().target(run.id, sessionId);
+        transitionAutomationExecution(await clusterV2Database(), run.id, "succeeded", null, sessionId, engine);
+        cronStore().finish(run.id, "succeeded", null);
+        return;
+      }
       const sessionId = await prepareConversation(task);
       await ensureConversationRecord(task.projectId, task.engine, sessionId, task.ownerNodeId);
       await markCronConversation(task.projectId, task.engine, sessionId, task.id, task.ownerNodeId);

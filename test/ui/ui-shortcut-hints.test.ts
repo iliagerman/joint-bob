@@ -103,8 +103,11 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
     const box = await button.boundingBox();
     assert.ok(box && box.height <= 36, `a toolbar button stays icon-sized, got ${box?.height}px tall`);
   }
-  const rows = await tools.locator("button:visible").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().top));
-  assert.ok(rows.every((top) => top === rows[0]), "all visible toolbar buttons fit on one row");
+  const assistants = tools.getByTestId("projects-open-assistants-button");
+  assert.equal(await assistants.isVisible(), true, "the toolbar has its own switch to assistants");
+  assert.equal(await assistants.getAttribute("href"), "/assistant.html");
+  const rows = await tools.locator(":is(button, a):visible").evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().top));
+  assert.ok(rows.every((top) => top === rows[0]), "all visible toolbar controls fit on one row");
 });
 
 test("chat controls advertise shortcuts", async () => {

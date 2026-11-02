@@ -25,18 +25,20 @@ const profilePicker = createAutomationProfilePicker(field("model").closest("labe
 const tagPicker = createAutomationTagPicker(document.querySelector("#cronAutomationTags"), "cron-tags");
 field("ownerNodeId").addEventListener("change", () => void profilePicker.refresh());
 
-export async function openScheduledTasks(projectId, session = null) {
+export async function openScheduledTasks(projectId, session = null, assistant = null) {
   if (!state.harnesses.length) state.harnesses = (await api("/api/harnesses")).harnesses;
   const project = await api(`/api/projects/${encodeURIComponent(projectId)}`);
-  context = { projectId, session, workspaceId: project.project.type ?? "personal" };
+  context = { projectId, session, assistant, workspaceId: project.project.type ?? "personal" };
   await tagPicker.setWorkspace(context.workspaceId);
   editing = null;
   showList();
   showLoading();
   errorText.textContent = "";
-  document.querySelector("#cronContext").textContent = session
-    ? "Appends to this conversation. Ownership transfers automatically to the selected node after the active run finishes."
-    : "Each run starts a new conversation using the selected agent's project settings and inherited credentials.";
+  document.querySelector("#cronContext").textContent = assistant
+    ? `Routes each run through ${assistant.name}'s decision model and adds its response to this assistant chat.`
+    : session
+      ? "Appends to this conversation. Ownership transfers automatically to the selected node after the active run finishes."
+      : "Each run starts a new conversation using the selected agent's project settings and inherited credentials.";
   const newTaskButton = document.querySelector("#cronNew");
   newTaskButton.disabled = true;
   dialog.showModal();
@@ -49,12 +51,22 @@ export async function openScheduledTasks(projectId, session = null) {
       option.disabled = !node.mapped;
       return option;
     }));
+    if (assistant) {
+      const ownerNodeId = assistant.nodeId || state.localNodeId;
+      const owner = [...field("ownerNodeId").options].find(option => option.value === ownerNodeId);
+      if (!owner || owner.disabled) throw new Error("Assistant execution node is unavailable");
+      field("ownerNodeId").value = ownerNodeId;
+      field("ownerNodeId").disabled = true;
+    }
     availableHarnesses = harnessBody.harnesses;
     field("engine").replaceChildren(...availableHarnesses.map(harnessOption));
     availableModels = modelBody.models;
     renderExecutionFields();
     document.querySelector("#cronTimezones").replaceChildren(...["UTC", ...Intl.supportedValuesOf("timeZone")].map(zone => new Option(zone)));
     await refreshTasks();
+  } catch (error) {
+    errorText.textContent = error.message;
+    throw error;
   } finally {
     newTaskButton.disabled = false;
   }
@@ -75,7 +87,9 @@ async function refreshTasks() {
   errorText.textContent = body.errors.map(error => `${error.nodeId}: ${error.error}`).join("\n");
   const list = document.querySelector("#cronList");
   list.replaceChildren();
-  const tasks = body.tasks.filter(task => !context.session || task.sessionId === context.session.id);
+  const tasks = body.tasks.filter(task => context.assistant
+    ? task.assistantId === context.assistant.id
+    : !context.session || task.sessionId === context.session.id);
   if (!tasks.length) {
     const empty = document.createElement("p");
     empty.className = "cron-empty";
@@ -89,7 +103,7 @@ async function refreshTasks() {
     const heading = document.createElement("div");
     heading.className = "cron-task-heading";
     const title = document.createElement("strong"); title.textContent = task.name;
-    const kind = document.createElement("span"); kind.className = "cron-task-kind"; kind.textContent = task.sessionId ? "Existing conversation" : "New conversation";
+    const kind = document.createElement("span"); kind.className = "cron-task-kind"; kind.textContent = task.assistantId ? "Personal assistant" : task.sessionId ? "Existing conversation" : "New conversation";
     heading.append(title, kind);
 
     const last = task.lastRun ? `${task.lastRun.status}${task.lastRun.error ? `: ${task.lastRun.error}` : ""}` : "Not run yet";
@@ -184,6 +198,10 @@ function boundSession() {
   return session ? { id: session.id, engine: session.harnessId || session.engine || harnessIdFromPath(state.harnesses, session.path) } : null;
 }
 function updateCronContext() {
+  if (context.assistant) {
+    document.querySelector("#cronContext").textContent = `Routes each run through ${context.assistant.name}'s decision model and adds its response to this assistant chat.`;
+    return;
+  }
   const bound = boundSession();
   const appends = bound?.engine === field("engine").value;
   document.querySelector("#cronContext").textContent = appends
@@ -208,7 +226,7 @@ function renderExecutionFields(modelKey = "", reasoning = field("reasoning").val
 }
 function editTask(task) {
   editing = task;
-  const selectedEngine = task?.engine || context.session?.harnessId || context.session?.engine
+  const selectedEngine = context.assistant?.executionSettings?.harnessId || task?.engine || context.session?.harnessId || context.session?.engine
     || (context.session ? harnessIdFromPath(state.harnesses, context.session.path) : null)
     || state.harnesses.find((harness) => harness.ready)?.id;
   field("engine").replaceChildren(...state.harnesses.filter((harness) => harness.runtimeConfigured).map(harnessOption));
@@ -225,7 +243,12 @@ function editTask(task) {
   for (const name of ["name", "prompt", "ownerNodeId"]) if (task) field(name).value = task[name];
   void profilePicker.refresh(task?.providerProfileId ?? null);
   field("engine").value = selectedEngine;
-  renderExecutionFields(task?.model ? `${task.model.provider}|${task.model.modelId}` : "", task?.reasoning ?? task?.model?.reasoning ?? "");
+  const assistantExecution = context.assistant?.executionSettings;
+  renderExecutionFields(assistantExecution ? `${assistantExecution.provider}|${assistantExecution.modelId}` : task?.model ? `${task.model.provider}|${task.model.modelId}` : "", assistantExecution?.reasoning ?? task?.reasoning ?? task?.model?.reasoning ?? "");
+  document.querySelector("#cronEngineLabel").hidden = Boolean(context.assistant);
+  field("model").closest("label").hidden = Boolean(context.assistant);
+  document.querySelector("#cronReasoningLabel").hidden = Boolean(context.assistant);
+  field("ownerNodeId").disabled = Boolean(context.assistant);
   if (task) {
     field("enabled").checked = task.enabled;
     field("pauseOnFailure").checked = task.pauseOnFailure;
@@ -271,9 +294,10 @@ form.addEventListener("submit", async event => {
     const input = {
       providerProfileId: profilePicker.value(), tags: tagPicker.getValue(),
       projectId: context.projectId, name: field("name").value, prompt: field("prompt").value,
-      ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
-      model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
-      sessionId: session?.engine === field("engine").value ? session.id : null, enabled: field("enabled").checked,
+      ownerNodeId: field("ownerNodeId").value, engine: context.assistant?.executionSettings?.harnessId ?? field("engine").value,
+      assistantId: context.assistant?.id ?? null,
+      model: context.assistant ? null : modelId ? { provider, modelId } : null, reasoning: context.assistant ? undefined : field("reasoning").value || undefined,
+      sessionId: context.assistant ? null : session?.engine === field("engine").value ? session.id : null, enabled: field("enabled").checked,
       pauseOnFailure: field("pauseOnFailure").checked, markForReview: field("markForReview").checked,
       hideFromHistory: field("hideFromHistory").checked,
       schedule: { frequency: field("frequency").value, intervalMinutes: field("frequency").value === "minutely" ? Number(field("intervalMinutes").value) : undefined,

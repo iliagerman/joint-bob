@@ -39,6 +39,7 @@ import { listProjectSessionsWithReviewState } from "../sessions-helpers.js";
 import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
 import { acceptWebhookCall } from "../webhooks.js";
 import { updateWebhookHistory } from "../webhook-history.js";
+import { getPersonalAssistant } from "../../personal-assistants.js";
 import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
 import { ensureWebhookAgentSchema, webhookMemoryAgentIdentity, runWebhookMemoryAgentCommand } from "../../webhook-agent.js";
 import { readWebhookMemory, writeWebhookMemory, setWebhookMemoryEnabled } from "../../webhook-memory.js";
@@ -204,6 +205,11 @@ async function checkTarget(input: WebhookInput): Promise<void> {
     try { validateProjectSecretAccounts(project.id, input.secretAccountIds); }
     catch { throw new WebhookError(400, "Selected secret accounts are unavailable for this project or conflict"); }
   }
+  if (input.target.kind === "assistant") {
+    const assistant = input.creatorAccountId ? await getPersonalAssistant(input.creatorAccountId, input.target.assistantId) : undefined;
+    if (!assistant || assistant.projectId !== project.id || assistant.nodeId && assistant.nodeId !== (await getClusterNode()).id) throw new WebhookError(404, "Assistant not found on this machine");
+    return;
+  }
   if (input.target.kind !== "conversation") return;
   const { sessionId, engine } = input.target;
   const found = (await listProjectSessionsWithReviewState(project, "", "")).find((session) => session.id === sessionId && session.harnessId === engine);
@@ -328,7 +334,10 @@ async function manage(command: Command): Promise<unknown> {
   }
   if (command.action === "create" || command.action === "update") {
     const existing = command.action === "update" ? getWebhook(db, command.id) : undefined;
-    if (existing) assertAutomationCreator(existing.creatorAccountId, command.input.creatorAccountId);
+    if (existing) {
+      assertAutomationCreator(existing.creatorAccountId, command.input.creatorAccountId);
+      if (existing.target.kind === "assistant" && (command.input.target.kind !== "assistant" || command.input.target.assistantId !== existing.target.assistantId)) throw new WebhookError(409, "Assistant webhook target cannot be changed in place");
+    }
     if (command.input.providerProfileId) {
       if (!command.input.creatorAccountId) throw new WebhookError(400, "Sign in to select a profile");
       accessibleProviderProfile(command.input.creatorAccountId, command.input.providerProfileId, "automation");

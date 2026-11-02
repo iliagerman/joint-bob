@@ -253,10 +253,10 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
   });
 }
 
-async function inventorySkills(projectPath: string | undefined, projectId: string | undefined, sharedRoot: string, conversationId?: string): Promise<InventorySkill[]> {
+async function inventorySkills(projectPath: string | undefined, projectId: string | undefined, sharedRoot: string, conversationId?: string, ignoreAssistantPreferences = false): Promise<InventorySkill[]> {
   const configured = getScopedResourcePaths(projectId, conversationId);
   // Without a project, only user-level skills apply; a path that cannot exist keeps project roots empty.
-  const summaries = await listSkills(projectPath ?? path.join(os.tmpdir(), "joint-bob-no-project"), { ...defaultSkillRoots(), skillScope: { projectId, conversationId }, shared: sharedRoot, global: configured.global.skills, project: projectPath ? configured.project.skills : [] });
+  const summaries = await listSkills(projectPath ?? path.join(os.tmpdir(), "joint-bob-no-project"), { ...defaultSkillRoots(), skillScope: { projectId, conversationId, ignoreAssistantPreferences }, shared: sharedRoot, global: configured.global.skills, project: projectPath ? configured.project.skills : [] });
   const shared = await resolved(sharedRoot);
   const scoped = await resolved(scopedSkillsRoot());
   const byKey = new Map<string, InventorySkill>();
@@ -294,13 +294,13 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
 }
 
 /** Everything this node would load: skills per harness and MCP servers, for one project or node-wide. */
-export async function resourceInventory(options: { projectPath?: string; projectId?: string; conversationId?: string; resourceRoot?: string } = {}): Promise<ResourceInventory> {
+export async function resourceInventory(options: { projectPath?: string; projectId?: string; conversationId?: string; resourceRoot?: string; ignoreAssistantPreferences?: boolean } = {}): Promise<ResourceInventory> {
   const paths = agentResourcePaths(options.resourceRoot);
   const configured = getScopedResourcePaths(options.projectPath ? options.projectId : undefined, options.conversationId);
   const globalPlugins = claudePluginSources(configured.global.plugins);
   const configuredPlugins = claudePluginSources([...configured.global.plugins, ...(options.projectPath ? configured.project.plugins : [])]);
   const [skills, mcpServers] = await Promise.all([
-    inventorySkills(options.projectPath, options.projectId, paths.sharedSkills, options.conversationId),
+    inventorySkills(options.projectPath, options.projectId, paths.sharedSkills, options.conversationId, options.ignoreAssistantPreferences),
     listMcpServers(options.projectPath, options.resourceRoot, configuredPlugins, options),
   ]);
   const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: adapter.id === "pi" || MCP_HARNESSES.includes(adapter.id) }));

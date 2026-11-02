@@ -1,3 +1,4 @@
+import { assistantDisabledResources } from "./assistant-resources.js";
 import { readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -33,7 +34,7 @@ export function readScopedSkillIndex(): ScopedSkillEntry[] {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
 
-export interface SkillScopeContext { projectId?: string; conversationId?: string }
+export interface SkillScopeContext { projectId?: string; conversationId?: string; ignoreAssistantPreferences?: boolean }
 
 /** Resource path objects carry their scope through all harness adapters. */
 export function skillScopeContext(configured?: object): SkillScopeContext {
@@ -59,6 +60,7 @@ export function unavailableSkillNames(context: SkillScopeContext = {}): string[]
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='revoked_scoped_skills'").get()) {
     for (const row of db.prepare("SELECT name FROM revoked_scoped_skills").all() as Array<{ name: string }>) unavailable.add(row.name);
   }
+  if (!context.ignoreAssistantPreferences) for (const name of assistantDisabledResources(context.projectId, context.conversationId).skills) unavailable.add(name);
   for (const entry of readScopedSkillIndex()) {
     if (!context.projectId || !(entry.projectIds.includes(context.projectId) || entry.conversations.some((item) => item.projectId === context.projectId && item.conversationId === context.conversationId))) unavailable.add(entry.name);
   }

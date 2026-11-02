@@ -74,6 +74,8 @@ import "./server/routes/projects.js";
 import "./server/routes/resources.js";
 import "./server/routes/quick-notes.js";
 import "./server/routes/personal-assistants.js";
+import "./server/routes/assistant-resources.js";
+import "./server/routes/social.js";
 import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.js";
 import { sweepConversationRetention } from "./server/conversation-retention.js";
 import { sweepWorktrees } from "./server/worktree-cleanup.js";

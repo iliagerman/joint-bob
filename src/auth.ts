@@ -266,7 +266,7 @@ export function roamingProofValid(userId: string, proof: string): boolean {
   return Boolean(stored) && stored!.length === offered.length && timingSafeEqual(Buffer.from(stored!), Buffer.from(offered));
 }
 
-function validUsername(username: string): boolean {
+export function validUsername(username: string): boolean {
   // A name shaped like an account id would be taken for one where older rows are read.
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/.test(username) && !/^[0-9a-f]{32}$/i.test(username);
 }

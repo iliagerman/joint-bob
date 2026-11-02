@@ -2,6 +2,27 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { enableCompileCache } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
+
+delete process.env.TYPESAFE_AI_API_KEY;
+const decisionGuardPath = fileURLToPath(new URL("./decision-network-guard.mjs", import.meta.url));
+const guardOption = `--import=${decisionGuardPath}`;
+if (!(process.env.NODE_OPTIONS ?? "").split(/\s+/).includes(guardOption)) process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, guardOption].filter(Boolean).join(" ");
+await import("./decision-network-guard.mjs");
+const decisionStub = createServer((_request, response) => {
+  process.exitCode = 87;
+  process.stderr.write("Unexpected request reached the default loopback decision-service stub.\n");
+  response.writeHead(503, { "Content-Type": "application/json" }).end("{}");
+});
+await new Promise((resolve, reject) => {
+  decisionStub.once("error", reject);
+  decisionStub.listen(0, "127.0.0.1", resolve);
+});
+const decisionAddress = decisionStub.address();
+if (!decisionAddress || typeof decisionAddress === "string") throw new Error("Could not start the loopback decision-service stub");
+process.env.JOINT_BOB_TYPESAFE_ENDPOINT = `http://127.0.0.1:${decisionAddress.port}/v1/systemone`;
+decisionStub.unref();
 
 // V8 bytecode cache shared by every test process and the nodes they spawn; it only skips recompiling unchanged modules.
 process.env.NODE_COMPILE_CACHE ??= path.join(os.tmpdir(), "joint-bob-test-compile-cache");

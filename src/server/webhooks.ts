@@ -27,6 +27,7 @@ import { bindWebhookConversation } from "../webhook-agent.js";
 import { readWebhookMemory } from "../webhook-memory.js";
 import { queueConversationPrompt, type PromptAttachment, type PromptQueueSettings } from "./conversation-prompt.js";
 import { broadcastToProject } from "./realtime.js";
+import { runPersonalAssistantAutomationTurn } from "./routes/personal-assistants.js";
 
 /** What one chat-socket prompt may carry, as for a browser message (src/server/schemas.ts). */
 const SOCKET_IMAGES = 4;
@@ -101,6 +102,33 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   const titleTemplate = webhook.target.kind === "project" ? webhook.titleTemplate || webhook.name : "";
   const titleInstruction = automationTitleInstruction(titleTemplate);
   const message = [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed].filter(Boolean).join("\n\n");
+  if (webhook.target.kind === "assistant") {
+    if (!webhook.creatorAccountId) throw new WebhookError(409, "Assistant webhook has no creator account");
+    const assistantId = webhook.target.assistantId;
+    let activeSessionId: string | null = null;
+    const turn = await runPersonalAssistantAutomationTurn(webhook.creatorAccountId, assistantId, call.requestId!, message, {
+      label: "Webhook", automationProfile: automationProfileContext(webhook), images: placed.images, files: placed.files,
+      prepare: async destination => {
+        await attachSecrets(webhook, destination.engine, destination.sessionId);
+        bindWebhookConversation(db, webhook.id, project.id, destination.sessionId, local.id, destination.isNew);
+        if (destination.isNew) setWebhookConversationHistory(db, project.id, destination.sessionId, webhook.id, webhook.hideFromHistory, local.id);
+      },
+      onStarted: destination => {
+        activeSessionId = destination.sessionId;
+        call.started = true;
+        const files = call.attachments?.length ? ` with ${call.attachments.length} file${call.attachments.length === 1 ? "" : "s"}` : "";
+        void clusterV2Database().then(db => {
+          transitionAutomationExecution(db, call.requestId!, "running", null, destination.sessionId, destination.engine);
+          recordWebhookDelivery(db, webhook.id, "delivered", `Routed through assistant ${assistantId}${files}`);
+        });
+      },
+    });
+    const [engine, ...sessionParts] = turn.topicId.split(":");
+    activeSessionId = sessionParts.join(":");
+    if (!engine || !activeSessionId) throw new WebhookError(500, "Assistant webhook turn has no conversation target");
+    transitionAutomationExecution(await clusterV2Database(), call.requestId!, "succeeded", null, activeSessionId, engine);
+    return activeSessionId;
+  }
   const engine = webhook.target.engine ?? defaultEngine();
   let activeSessionId = webhook.target.kind === "conversation" ? webhook.target.sessionId : null;
   const prompt = {
@@ -167,7 +195,8 @@ export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): void {
     const local = await getClusterNode();
     const workspace = project ? automationWorkspaceIdentity(db, local.id, project.type ?? "personal") : null;
     const tags = workspace ? snapshotAutomationTags(db, workspace.workspaceId, webhook.tags, workspace.ownerNodeId) : [];
-    createAutomationExecution(db, { id: requestId, sourceKind: "webhook", sourceId: webhook.id, sourceName: webhook.name, workspaceId: workspace ? automationWorkspaceKey(workspace) : null, projectId: webhook.target.projectId, ownerNodeId: local.id, engine: webhook.target.kind === "conversation" ? webhook.target.engine : webhook.target.engine ?? null, requestId, sessionId: webhook.target.kind === "conversation" ? webhook.target.sessionId : null, tags, status: "queued", error: null, acceptedAt: new Date().toISOString(), startedAt: null, finishedAt: null });
+    const targetEngine = webhook.target.kind === "assistant" ? null : webhook.target.engine ?? null;
+    createAutomationExecution(db, { id: requestId, sourceKind: "webhook", sourceId: webhook.id, sourceName: webhook.name, workspaceId: workspace ? automationWorkspaceKey(workspace) : null, projectId: webhook.target.projectId, ownerNodeId: local.id, engine: targetEngine, requestId, sessionId: webhook.target.kind === "conversation" ? webhook.target.sessionId : null, tags, status: "queued", error: null, acceptedAt: new Date().toISOString(), startedAt: null, finishedAt: null });
     try {
       const sessionId = await deliver(webhook, call);
       const files = call.attachments?.length ? ` with ${call.attachments.length} file${call.attachments.length === 1 ? "" : "s"}` : "";

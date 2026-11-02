@@ -685,6 +685,11 @@ body:not(.booting) .app-boot,
 html.by-the-way-pane .app-boot { display: none; }
 body.booting :is(.shell, .mobile-nav) { visibility: hidden; }
 html.by-the-way-pane body.booting :is(.shell, .mobile-nav) { visibility: visible; }
+html.assistant-automation body { overflow:hidden; background:var(--app-bg); }
+html.assistant-automation body > :not(dialog):not(script):not(form) { display:none !important; }
+html.assistant-automation #settingsDialog .settings-tabs-select,
+html.assistant-automation #settingsDialog .settings-sidebar { display:none !important; }
+html.assistant-automation #settingsDialog .settings-body { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr); }
 
 /* ---- App shell: mobile-first, one full-screen panel at a time ---- */
 .shell {
@@ -2934,8 +2939,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     gap: 10px;
     padding: 10px;
   }
-  .project-actions { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
-  .project-actions button.icon-button { min-width: 0; width: 100%; padding-inline: 0; }
+  .project-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; }
+  .project-actions .icon-button { min-width: 0; width: 100%; padding-inline: 0; }
   /* The toolbar reads as one straight line: the badges hang below their controls
      rather than claiming a second line in the layout. */
   .chat-toolbar { --control-line: 32px; align-items: end; gap: 4px; }

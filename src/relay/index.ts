@@ -108,6 +108,8 @@ export function startRelay(): Promise<void> {
     runtime.on("workspace-sharing-ready", () => {
       void import("../server/shared-workspaces.js").then(({ syncSharedWorkspaces }) => syncSharedWorkspaces())
         .catch((error) => console.warn("Relay workspace sync failed", error));
+      void import("../social/catch-up.js").then(({ socialCatchUp }) => socialCatchUp())
+        .catch((error) => console.warn("Relay social catch-up failed", error));
     });
     // A new policy installs or removes the skills it enforces, then reloads idle conversations; busy ones reload before their next message.
     const applyPolicy = (reloadAlways: boolean) => {

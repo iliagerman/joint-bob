@@ -29,7 +29,7 @@ export function createAutomationExecution(db: DatabaseSync, raw: AutomationExecu
   if (stored.requestId !== execution.requestId || stored.sourceId !== execution.sourceId || stored.sourceName !== execution.sourceName || stored.tags !== JSON.stringify(execution.tags)) throw new Error("Conflicting automation execution identity");
 }
 
-export function transitionAutomationExecution(db: DatabaseSync, requestId: string, status: AutomationExecution["status"], error: string | null = null, sessionId: string | null = null): void {
+export function transitionAutomationExecution(db: DatabaseSync, requestId: string, status: AutomationExecution["status"], error: string | null = null, sessionId: string | null = null, engine?: string): void {
   ensureAutomationExecutionSchema(db);
   const current = db.prepare("SELECT status,started_at startedAt FROM automation_executions WHERE request_id=?").get(requestId) as { status: AutomationExecution["status"]; startedAt: string | null } | undefined;
   if (!current) return;
@@ -37,7 +37,7 @@ export function transitionAutomationExecution(db: DatabaseSync, requestId: strin
   const now = new Date().toISOString();
   const startedAt = status === "running" ? current.startedAt ?? now : current.startedAt;
   const finishedAt = ["succeeded", "failed", "cancelled", "interrupted"].includes(status) ? now : null;
-  db.prepare("UPDATE automation_executions SET status=?,error=?,session_id=COALESCE(?,session_id),started_at=?,finished_at=? WHERE request_id=?").run(status, error?.slice(0, 2000) ?? null, sessionId, startedAt, finishedAt, requestId);
+  db.prepare("UPDATE automation_executions SET status=?,error=?,session_id=COALESCE(?,session_id),engine=COALESCE(?,engine),started_at=?,finished_at=? WHERE request_id=?").run(status, error?.slice(0, 2000) ?? null, sessionId, engine ?? null, startedAt, finishedAt, requestId);
 }
 
 export function automationExecutions(db: DatabaseSync, workspaceId: string): AutomationExecution[] {

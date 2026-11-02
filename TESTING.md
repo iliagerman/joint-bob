@@ -74,14 +74,9 @@ npm run test:file -- test/ui/ui-harness-settings.test.ts
 
 The harness checks use synthetic Node ACP fixtures with a disposable `HOME` and no real credentials. They do not replace authenticated Kiro resume, cancellation, and cross-node smoke testing on two execution nodes.
 
-Always go through `npm run test:file`. It carries `--import ./test/setup.mjs`,
-which points `HOME` and `PI_WEB_DATA_DIR` at a throwaway directory and sets
-`JOINT_BOB_BIND_HOST=127.0.0.1` before any test code loads. Disposable servers
-bind only to loopback, not the machine's external network interfaces. The shared data-directory resolver also detects Node's test
-runner. A bare `node --test test/<file>.test.ts` gets its own temporary data
-directory, and a test process aimed at `~/.joint-bob` fails before opening
-SQLite. This second boundary prevents a missed setup import from writing
-fixtures into the production database.
+Always go through `npm run test:file`. Its launcher removes only `TYPESAFE_AI_API_KEY` before starting the test process, preserving other inherited variables. `test/setup.mjs` points `HOME` and `PI_WEB_DATA_DIR` at a throwaway directory, sets `JOINT_BOB_BIND_HOST=127.0.0.1`, and installs a network guard before test code loads. The default TypeSafe endpoint is a loopback trap; classifier tests use explicit loopback servers or synthetic fetch fixtures. The guard is preloaded into Node child processes and terminates any attempt to reach a production System One endpoint, including custom remote Laya URLs. `test/dev-nodes.ts` also removes only `TYPESAFE_AI_API_KEY` when starting seeded nodes. Other credentials and fixture settings are preserved.
+
+Disposable servers bind only to loopback, not the machine's external network interfaces. The shared data-directory resolver also detects Node's test runner. A bare `node --test test/<file>.test.ts` gets its own temporary data directory, and a test process aimed at `~/.joint-bob` fails before opening SQLite. This second boundary prevents a missed setup import from writing fixtures into the production database.
 
 ## The three kinds of test in this repository
 

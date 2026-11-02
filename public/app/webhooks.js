@@ -90,6 +90,7 @@ const senderCount = (hook) => `${hook.senders.allowed.length} allowed sender${ho
 
 function targetLabel(hook) {
   const project = projectNames.get(hook.target.projectId) || hook.target.projectId;
+  if (hook.target.kind === "assistant") return `Personal assistant${assistantTarget?.id === hook.target.assistantId ? ` · ${assistantTarget.name}` : ""}`;
   return hook.target.kind === "project" ? `New conversation in ${project}` : `Conversation in ${project}`;
 }
 
@@ -151,7 +152,9 @@ async function refresh() {
   const revision = ownerRevision;
   const body = await api(endpoint());
   if (revision !== ownerRevision) return;
-  webhooks = body.webhooks;
+  webhooks = assistantTarget
+    ? body.webhooks.filter(hook => hook.target.kind === "assistant" && hook.target.assistantId === assistantTarget.id)
+    : body.webhooks;
   telegramSenderFields = body.telegramSenderFields ?? [];
   await list.reload();
 }
@@ -323,9 +326,18 @@ function syncSenders() {
 
 function syncKind() {
   const conversation = field.kind.value === "conversation";
+  const assistant = field.kind.value === "assistant";
   field.conversationLabel.hidden = !conversation;
-  byId("webhooksTitleTemplateLabel").hidden = conversation;
-  field.harness.disabled = conversation;
+  byId("webhooksAssistantTargetLabel").hidden = !assistant;
+  byId("webhooksTitleTemplateLabel").hidden = conversation || assistant;
+  field.project.disabled = assistant;
+  field.harness.disabled = conversation || assistant;
+  field.harness.closest("label").hidden = assistant;
+  field.model.closest("label").hidden = assistant;
+  field.effort.closest("label").hidden = assistant;
+  if (assistant) byId("webhooksAssistantTargetLabel").textContent = assistantTarget?.name
+    ? `Every call routes through ${assistantTarget.name}; its decision model chooses the conversation.`
+    : `This webhook routes through personal assistant ${editing?.target.kind === "assistant" ? editing.target.assistantId : ""}.`;
   if (conversation) void fillConversations(editing?.target.sessionId ?? assistantTarget?.sessionId).catch((error) => say(errorText(error), "error"));
 }
 
@@ -340,8 +352,15 @@ async function fillFields(hook) {
   field.secretSearch.value = "";
   renderSecrets();
   field.name.value = hook?.name ?? (assistantTarget ? `${assistantTarget.name} webhook` : "");
-  field.kind.value = target?.kind ?? (assistantTarget ? "conversation" : "project");
-  fillHarnesses(target?.engine ?? "");
+  field.kind.value = target?.kind ?? (assistantTarget ? "assistant" : "project");
+  const assistantOption = [...field.kind.options].find(option => option.value === "assistant");
+  assistantOption.hidden = !assistantTarget && target?.kind !== "assistant";
+  field.kind.disabled = Boolean(assistantTarget || target?.kind === "assistant");
+  field.project.disabled = field.kind.value === "assistant";
+  if (field.kind.value === "assistant") byId("webhooksAssistantTargetLabel").textContent = assistantTarget?.name
+    ? `Every call routes through ${assistantTarget.name}; its decision model chooses the conversation.`
+    : `This webhook routes through personal assistant ${target?.kind === "assistant" ? target.assistantId : ""}.`;
+  fillHarnesses(target?.kind === "assistant" ? "" : target?.engine ?? "");
   void profilePicker.refresh(hook?.providerProfileId ?? null);
   renderExecution(hook?.model ? `${hook.model.provider}|${hook.model.modelId}` : "", hook?.reasoning ?? "");
   field.context.value = hook?.context ?? "";
@@ -444,7 +463,7 @@ async function openDetail(hook = null, tab = "setup") {
   finally {
     opening = false;
     listSection.removeAttribute("aria-busy");
-    field.owner.disabled = false;
+    field.owner.disabled = Boolean(assistantTarget);
     for (const button of listSection.querySelectorAll("button")) button.disabled = false;
   }
 }
@@ -517,17 +536,21 @@ function missingField() {
 }
 
 function buildBody() {
-  const target = field.kind.value === "conversation"
-    ? { kind: "conversation", projectId: field.project.value, sessionId: field.conversation.value, engine: field.conversation.selectedOptions[0]?.dataset.engine || "" }
-    : { kind: "project", projectId: field.project.value, ...(field.harness.value ? { engine: field.harness.value } : {}) };
+  const assistant = assistantTarget ?? (editing?.target.kind === "assistant" ? editing.target : null);
+  if (field.kind.value === "assistant" && !assistant) throw new Error("Choose an assistant from its chat");
+  const target = field.kind.value === "assistant"
+    ? { kind: "assistant", projectId: field.project.value, assistantId: assistant.id ?? assistant.assistantId }
+    : field.kind.value === "conversation"
+      ? { kind: "conversation", projectId: field.project.value, sessionId: field.conversation.value, engine: field.conversation.selectedOptions[0]?.dataset.engine || "" }
+      : { kind: "project", projectId: field.project.value, ...(field.harness.value ? { engine: field.harness.value } : {}) };
   const [provider, modelId] = field.model.value.split("|");
-  const model = modelId ? { provider, modelId } : null;
+  const model = field.kind.value !== "assistant" && modelId ? { provider, modelId } : null;
   // Pin a machine-default selection when it has model overrides, so those cannot land on a different harness.
   if (target.kind === "project" && !target.engine && (model || field.effort.value)) target.engine = harnesses[0]?.id;
   const senders = field.sendersEnabled.checked
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
-  return JSON.stringify({ providerProfileId: profilePicker.value(), tags: tagPicker.getValue(), name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, hideFromHistory: field.hideFromHistory.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: [...selectedSecretIds], titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
+  return JSON.stringify({ providerProfileId: profilePicker.value(), tags: tagPicker.getValue(), name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, hideFromHistory: field.hideFromHistory.checked, senders, model, reasoning: field.kind.value === "assistant" ? null : field.effort.value || null, secretAccountIds: [...selectedSecretIds], titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
 }
 
 async function submit() {
@@ -635,16 +658,19 @@ export async function loadWebhooks() {
 }
 
 export async function openAssistantWebhook(assistant) {
-  assistantTarget = { projectId: assistant.projectId, sessionId: assistant.sessionId, engine: assistant.engine, name: assistant.name, kind: "conversation" };
-  try {
-    await loadWebhooks();
-    if (assistant.nodeId && field.owner.value !== assistant.nodeId) {
-      if (![...field.owner.options].some(option => option.value === assistant.nodeId)) throw new Error("Assistant webhook owner is unavailable");
-      field.owner.value = assistant.nodeId;
-      await loadOwner();
-    }
-    await openDetail();
-    await fillConversations(assistant.sessionId);
-    if (field.conversation.value !== assistant.sessionId) throw new Error("Assistant conversation is unavailable for webhook delivery");
-  } finally { assistantTarget = null; }
+  assistantTarget = { id: assistant.id, projectId: assistant.projectId, nodeId: assistant.nodeId, name: assistant.name, kind: "assistant" };
+  await loadWebhooks();
+  const ownerId = assistant.nodeId || field.owner.options[0]?.value;
+  if (!ownerId) throw new Error("Assistant webhook owner is unavailable");
+  if (field.owner.value !== ownerId) {
+    if (![...field.owner.options].some(option => option.value === ownerId)) throw new Error("Assistant webhook owner is unavailable");
+    field.owner.value = ownerId;
+    await loadOwner();
+  }
+  field.owner.disabled = true;
+  await refresh();
 }
+byId("settingsDialog").addEventListener("close", () => {
+  assistantTarget = null;
+  field.owner.disabled = false;
+});

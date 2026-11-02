@@ -71,7 +71,7 @@ test("weekly schedules skip a DST gap even when the next valid week is more than
 });
 
 test("cron validates schedule and required user input", async () => {
-  const { cronInputSchema } = await import("../src/cron.js");
+  const { cronInputSchema, CronStore } = await import("../src/cron.js");
   for (const invalid of [{ name: " " }, { prompt: "" }, { ownerNodeId: "bad" }, { schedule: { ...input().schedule, timezone: "Mars" } }, { schedule: { ...input().schedule, hour: 24 } }]) {
     assert.equal(cronInputSchema.safeParse({ ...input(), ...invalid }).success, false);
   }
@@ -85,6 +85,18 @@ test("cron validates schedule and required user input", async () => {
   assert.equal(cronInputSchema.safeParse({ ...input(), schedule: { ...input().schedule, intervalHours: 0 } }).success, false);
   assert.equal(cronInputSchema.safeParse({ ...input(), engine: "claude", model: { provider: "claude", modelId: "sonnet", reasoning: "high" } }).success, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), engine: "claude", model: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" } }).success, false);
+  const assistantId = randomUUID();
+  const assistantTask = cronInputSchema.safeParse({ ...input(), assistantId, sessionId: null });
+  assert.equal(assistantTask.success, true, "a scheduled task can target the stable assistant instead of one topic");
+  if (assistantTask.success) {
+    const db = new DatabaseSync(":memory:");
+    try {
+      const store = new CronStore(db);
+      const saved = store.create(assistantTask.data);
+      assert.equal(store.get(saved.id)?.assistantId, assistantId, "assistant identity survives persistence");
+      assert.throws(() => store.update(saved.id, { ...assistantTask.data, assistantId: randomUUID() }), /Assistant target cannot be changed in place/);
+    } finally { db.close(); }
+  }
 });
 
 test("SQLite claims are owner-only, unique, non-overlapping and survive reopen; offline runs skip", async () => {

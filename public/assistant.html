@@ -2,76 +2,144 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#141618"><link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#101215"><link rel="manifest" href="/manifest.webmanifest">
   <title>Personal assistant · Joint Bob</title>
-  <style>
-    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background:#141618; color:#eee; }
-    * { box-sizing: border-box; } body { max-width: 760px; margin: auto; padding: max(24px, env(safe-area-inset-top)) 20px 80px; line-height: 1.45; }
-    header { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid #343939; padding-bottom:18px; }
-    .header-links { display:flex; gap:14px; flex-wrap:wrap; justify-content:flex-end; }
-    h1 { font-size:1.6rem; letter-spacing:-.045em; margin:0; } h2 { font-size:1.1rem; margin:0 0 18px; } small, .muted { color:#a7afae; }
-    a { color:#9adcca; overflow-wrap:anywhere; } button { cursor:pointer; } button, input, textarea, select { font:inherit; }
-    button, input, textarea, select { border:1px solid #49514f; background:#222827; color:#f7f9f8; border-radius:10px; padding:10px 12px; }
-    input, textarea, select { width:100%; } textarea { min-height:100px; resize:vertical; } input[type=file] { border-style:dashed; }
-    button:hover, button:focus-visible { border-color:#86d5bd; } button.primary { background:#9adcca; color:#10221e; font-weight:700; border-color:#9adcca; }
-    section { margin-top:26px; padding:22px; border:1px solid #343939; border-radius:18px; background:#1b201f; }
-    label { display:block; font-size:.9rem; color:#c7d1cf; margin:16px 0 6px; } form > label:first-child { margin-top:0; }
-    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; } .row > * { flex:1; } .row button { flex:0 0 auto; }
-    article { border-top:1px solid #343939; padding:18px 0; } article:first-of-type { border:0; } article h3 { margin:0 0 4px; font-size:1rem; }
-    .images { display:flex; gap:8px; overflow-x:auto; margin:10px 0; } .images img { max-height:180px; max-width:200px; border-radius:8px; object-fit:contain; background:#101313; }
-    #message { min-height:24px; color:#9adcca; } .danger { color:#ffc9c3; } .hidden { display:none; }
-    #timeline { display:flex; flex-direction:column; gap:12px; max-height:55vh; overflow:auto; padding:4px; }
-    .chat-bubble { max-width:92%; padding:12px 14px; border:1px solid #343939; border-radius:14px; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .chat-bubble.user { align-self:flex-end; background:#20332e; } .chat-bubble.assistant { align-self:flex-start; background:#222827; }
-    #chat-form textarea { min-height:72px; } #chat-form button { margin-top:8px; }
-    dialog { max-width:min(440px, calc(100vw - 40px)); padding:24px; border:1px solid #49514f; border-radius:18px; background:#1b201f; color:#eee; overflow-wrap:anywhere; }
-    dialog::backdrop { background:#0009; }
-  </style>
+  <link rel="stylesheet" href="/assistant/assistant.css">
 </head>
 <body>
-  <header><div><small>JOINT BOB / PERSONAL</small><h1 id="heading">Your assistants</h1></div><nav class="header-links" aria-label="Assistant navigation"><a href="/assistant.html">All assistants</a><a href="/">Workspace</a></nav></header>
-  <p id="message" role="status" aria-live="polite"></p>
-  <section id="chooser"><h2>Assistants</h2><div id="assistants"></div></section>
-  <main id="detail" class="hidden">
-    <section><h2>Chat</h2><div id="timeline" aria-live="polite"></div><form id="chat-form"><label for="chat-message">Message</label><textarea id="chat-message" maxlength="20000" required placeholder="What would you like help with?"></textarea><button class="primary" type="submit">Send</button></form>
-      <div class="row" style="margin-top:12px"><a id="chat">Open source conversation</a><button id="copy" type="button">Copy assistant link</button></div>
+<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+<symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="4"/><path d="M12 3v4M8.5 12.5h.01M15.5 12.5h.01M9 16h6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 21h4"/></symbol>
+<symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 5a3.5 3.5 0 0 1 0 6.5M18 14.5c2 .8 3.2 2.8 3.2 5.5"/></symbol>
+<symbol id="i-send-out" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19zM12 10v4.5M12 17.5h.01"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+<symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5" fill="currentColor"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.3 3.8 5.2 3.8 8.5s-1.3 6.2-3.8 8.5c-2.5-2.3-3.8-5.2-3.8-8.5s1.3-6.2 3.8-8.5"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4.5h10a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/></symbol>
+<symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M4 5h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v6h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z"/></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2 2M14 9l2 2"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-hook" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="m10.5 7-4 7a3 3 0 1 0 5 3M13.5 7l4 7a3 3 0 1 1-2 5M8 17h8"/></symbol>
+</defs></svg>
+
+<div class="app" id="app">
+  <aside class="rail" id="rail" aria-label="Assistants, groups and requests">
+    <header class="brand"><a class="brand-home" href="/assistant.html"><span class="brand-mark" aria-hidden="true">b</span>joint bob</a><a class="brand-workspace" href="/">Workspace</a></header>
+    <button class="rail-search" type="button" data-go="find">Find people and assistants</button>
+    <div class="sec">Assistants</div><div id="rail-assistants"></div>
+    <div class="sec">Groups<button class="ghost icon-small" type="button" data-sheet="new-group" aria-label="New group">+</button></div><div id="rail-groups"></div>
+    <div class="sec">Requests</div><div id="rail-requests"></div>
+    <div class="rail-foot"><button class="row" type="button" data-go="you" id="rail-you"><span class="av you" aria-hidden="true">·</span><span class="row-text"><strong><span id="rail-you-name">You</span></strong><small>Who can find you</small></span></button></div>
+  </aside>
+
+  <main class="main">
+    <section id="chooser" class="view" aria-label="Your assistants">
+      <div class="m-head"><h1 class="page-title">Assistants</h1><button class="ghost" type="button" data-go="you" id="chooser-you">Who can find you</button></div>
+      <div id="assistants" class="m-lists"></div>
     </section>
-    <section><h2>Automations</h2><p class="muted">Create a scheduled task or webhook that targets this assistant's source conversation. It will use the assistant's current instructions and access settings.</p><div class="row"><button id="new-scheduled-task" data-testid="assistant-new-scheduled-task" type="button">Scheduled task</button><button id="new-webhook" data-testid="assistant-new-webhook" type="button">Webhook</button></div></section>
-    <section><h2>Instructions</h2><form id="settings">
-      <label for="name">Name</label><input id="name" required maxlength="100">
-      <label for="instructions">What should this assistant do?</label><textarea id="instructions" maxlength="20000" placeholder="When comparing offers, cite each original link and flag missing details."></textarea>
-      <label for="classifier">Conversation routing classifier</label><select id="classifier"><option value="typesafe">TypeSafe</option><option value="laya">Laya</option></select>
-      <label><input id="allow-browser" type="checkbox" style="width:auto"> Allow browser use</label>
-      <label><input id="allow-terminal" type="checkbox" style="width:auto"> Allow terminal use</label>
-      <p class="muted">Disabled tools are removed before each turn. Skills and MCP servers use conversation-scoped settings in Joint Bob.</p>
-      <a id="resources" href="/">Configure skills and MCP servers for this conversation</a>
-      <button class="primary">Save instructions</button>
-    </form></section>
-    <section><h2>MCP servers</h2>
-      <p class="muted">Choose which installed project and shared MCP servers this assistant can use. The server must already be installed in Joint Bob Resources.</p>
-      <div id="mcp-options"></div><button id="save-mcp" type="button">Save MCP access</button>
+
+    <section id="detail" class="view hidden" aria-labelledby="heading">
+      <header class="head">
+        <button class="icon ghost mobile-only" type="button" id="detail-back" aria-label="Back to assistants"><svg><use href="#i-back"/></svg></button>
+        <span class="bot" aria-hidden="true"><svg><use href="#i-agent"/></svg></span>
+        <div class="head-text"><h1 id="heading">Your assistants</h1><p id="detail-subtitle"></p></div>
+        <div class="head-actions"><button type="button" id="activity-button" data-testid="assistant-activity-button" aria-label="Activity"><svg><use href="#i-bell"/></svg><span class="desktop-only">Activity</span><span class="badge hidden" id="activity-badge"></span></button></div>
+      </header>
+      <nav id="assistant-nav" class="tabs" aria-label="Assistant views">
+        <button type="button" data-assistant-view="chat" data-testid="assistant-view-chat">Chat</button>
+        <button type="button" data-assistant-view="resources" data-testid="assistant-view-resources">Resources</button>
+        <button type="button" data-assistant-view="actions" data-testid="assistant-view-actions">Public actions</button>
+        <button type="button" data-assistant-view="settings" data-testid="assistant-view-settings">Settings</button>
+        <button type="button" data-assistant-view="saved-items" data-testid="assistant-view-saved-items">Saved items</button>
+      </nav>
+
+      <section id="chat-view" class="panel chat-panel">
+        <div class="strip hidden" id="waiting-strip"><span id="waiting-text"></span><button type="button" id="waiting-review">Review</button></div>
+        <div class="scroll" id="chat-scroll"><div class="msgs"><div class="sys">Only you see this chat</div><div id="timeline" aria-live="polite"></div></div></div>
+        <div class="composer-wrap">
+          <form id="chat-form" class="composer">
+            <label for="chat-message" class="visually-hidden">Message</label>
+            <textarea id="chat-message" rows="2" maxlength="20000" required placeholder="What would you like help with?"></textarea>
+            <div class="composer-foot">
+              <button type="button" id="new-scheduled-task" data-testid="assistant-new-scheduled-task"><svg><use href="#i-clock"/></svg>Scheduled task</button>
+              <button type="button" id="new-webhook" data-testid="assistant-new-webhook"><svg><use href="#i-hook"/></svg>Webhook</button>
+              <span class="spacer"></span>
+              <button class="primary icon" type="submit" aria-label="Send"><svg><use href="#i-send"/></svg></button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="resources-view" class="panel hidden"></section>
+      <section id="actions-view" class="panel hidden"></section>
+
+      <section id="settings-view" class="panel hidden"><div class="scroll"><div class="narrow">
+        <form id="settings" class="settings-sec">
+          <h2>Instructions</h2>
+          <label class="field" for="name">Name<input id="name" required maxlength="100"></label>
+          <label class="field" for="instructions">Instructions<textarea id="instructions" rows="4" maxlength="20000" placeholder="How should this assistant help you?"></textarea></label>
+          <label class="field" for="classifier"><span>Decision model</span><select id="classifier"><option value="typesafe">TypeSafe</option><option value="laya">Laya</option></select><small>Decides which conversation each message continues, and what this assistant may do for other people. The agent can't override it.</small></label>
+          <h2>Execution</h2>
+          <p class="muted">Choose the agent, model, and effort for new assistant topics and the next turn in resumed topics. Changing agents keeps the topic and its history in a new segment. Without an override, new topics use the source conversation's agent and existing topics keep their current settings.</p>
+          <label class="field" for="execution-harness">Agent / harness<select id="execution-harness"><option value="">Use conversation settings</option></select></label>
+          <label class="field" for="execution-model">Model<select id="execution-model" disabled><option value="">Choose an agent first</option></select></label>
+          <label class="field" for="execution-effort">Effort<select id="execution-effort" disabled><option value="">Choose an agent first</option></select></label>
+          <label class="check"><input id="allow-terminal" type="checkbox"> Allow terminal use</label>
+          <p class="fine">Skills, plugins, MCP servers, secrets and browser logins are under Resources.</p>
+          <p class="fine"><a id="chat">Open source conversation</a></p>
+          <button class="primary" type="submit">Save settings</button>
+        </form>
+        <section class="settings-sec" id="settings-default"></section>
+        <section class="settings-sec" id="settings-discovery"></section>
+        <section class="settings-sec"><h2>Link</h2><p class="muted">Bookmark the assistant on your Mac or phone.</p><button type="button" id="copy">Copy assistant link</button></section>
+      </div></div></section>
+
+      <section id="saved-items-view" class="panel hidden"><div class="scroll"><div class="narrow">
+        <form id="capture" class="settings-sec">
+          <h2>Save an item</h2>
+          <label class="field" for="collection">Collection<input id="collection" value="Personal" required maxlength="100"></label>
+          <label class="field" for="title">Title<input id="title" required maxlength="300" placeholder="A useful link or note"></label>
+          <label class="field" for="url">Original link<input id="url" type="url" placeholder="https://…"></label>
+          <label class="field" for="note">Notes<textarea id="note" maxlength="10000" placeholder="Details to remember"></textarea></label>
+          <label class="field" for="images">Screenshots (up to four, 20 MiB total)<input id="images" type="file" accept="image/png,image/jpeg,image/webp" multiple></label>
+          <p class="fine">Saved items stay private. Groups and requests can't see them.</p>
+          <button class="primary" type="submit">Save item</button>
+        </form>
+        <div class="settings-sec"><div class="sec-row"><h2>Saved items</h2><button id="refresh" type="button">Refresh</button></div><div id="items"></div><div id="items-pager"></div></div>
+      </div></div></section>
     </section>
-    <section><h2>Secret accounts</h2>
-      <p class="muted">Accounts attached here are available to this conversation. Configure values in Joint Bob Settings → Secrets; never paste them into instructions.</p>
-      <form id="secrets"><div id="secret-options"></div><button class="primary">Save accounts</button></form>
-    </section>
-    <section><h2>Save a link with screenshots</h2><form id="capture">
-      <label for="collection">Collection</label><input id="collection" value="Shopping" required maxlength="100">
-      <label for="title">Title</label><input id="title" required maxlength="300" placeholder="Phone listing">
-      <label for="url">Original link</label><input id="url" type="url" placeholder="https://…">
-      <label for="note">Notes</label><textarea id="note" maxlength="10000" placeholder="Price, condition, what caught your eye"></textarea>
-      <label for="images">Screenshots (up to four, 20 MiB total)</label><input id="images" type="file" accept="image/png,image/jpeg,image/webp" multiple>
-      <p class="muted">Link and screenshots stay together. If there is no link, the assistant will flag it.</p>
-      <button class="primary">Save item</button>
-    </form></section>
-    <section><div class="row"><h2>Saved items</h2><button id="refresh" type="button">Refresh</button></div><div id="items"></div></section>
+
+    <section id="social-view" class="view hidden"></section>
   </main>
-  <dialog id="delete-item-dialog" data-testid="assistant-delete-dialog" aria-labelledby="delete-item-title" aria-describedby="delete-item-message">
-    <form method="dialog">
-      <h2 id="delete-item-title">Delete saved item?</h2><p id="delete-item-message"></p>
-      <div class="row"><button value="cancel" data-testid="assistant-delete-cancel" autofocus>Cancel</button><button value="delete" class="danger" data-testid="assistant-delete-confirm">Delete item</button></div>
-    </form>
-  </dialog>
-  <script type="module" src="/assistant.js"></script>
+
+  <nav class="tabbar" id="tabbar" aria-label="Main">
+    <button type="button" data-tab="assistants"><svg><use href="#i-agent"/></svg>Assistants<span class="badge hidden" data-badge="assistants"></span></button>
+    <button type="button" data-tab="groups"><svg><use href="#i-people"/></svg>Groups<span class="badge hidden" data-badge="groups"></span></button>
+    <button type="button" data-tab="requests"><svg><use href="#i-send-out"/></svg>Requests</button>
+    <button type="button" data-tab="find"><svg><use href="#i-search"/></svg>Find</button>
+  </nav>
+</div>
+
+<div id="overlay" class="overlay" hidden></div>
+<p id="message" class="toast-line" role="status" aria-live="polite"></p>
+
+<dialog id="assistant-automation-dialog" data-testid="assistant-automation-dialog" aria-label="Assistant automations">
+  <iframe id="assistantAutomationFrame" title="Assistant automations"></iframe>
+</dialog>
+<dialog id="delete-item-dialog" data-testid="assistant-delete-dialog" aria-labelledby="delete-item-title" aria-describedby="delete-item-message">
+  <form method="dialog">
+    <h2 id="delete-item-title">Delete saved item?</h2><p id="delete-item-message"></p>
+    <div class="actions"><button value="cancel" data-testid="assistant-delete-cancel" autofocus>Cancel</button><button value="delete" class="danger" data-testid="assistant-delete-confirm">Delete item</button></div>
+  </form>
+</dialog>
+<script type="module" src="/assistant.js"></script>
 </body>
 </html>

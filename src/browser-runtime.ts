@@ -1,3 +1,4 @@
+import { sameAssistantTopics } from "./assistant-resources.js";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -230,11 +231,41 @@ export class BrowserRuntime {
   }
 
   /** accessNodeId is the machine the caller authenticated as; it defaults to the conversation's app node. */
-  create(input: BrowserStart, credentialOrigins: string[] = [], options: { accessNodeId?: string } = {}): Promise<BrowserSessionView> {
+  async create(input: BrowserStart, credentialOrigins: string[] = [], options: { accessNodeId?: string } = {}): Promise<BrowserSessionView> {
     const start = browserStartSchema.parse(input);
-    const job = this.creates.then(() => { void this.ready(); return this.createSession(start, credentialOrigins, options); });
-    this.creates = job.catch(() => {});
-    return job;
+    const deadline = Date.now() + 5 * 60_000;
+    for (;;) {
+      if (start.profileId) await this.takeTurnWithSiblingTopic(start, options.accessNodeId ?? start.appNodeId, deadline);
+      const job = this.creates.then(() => { void this.ready(); return this.createSession(start, credentialOrigins, options); });
+      this.creates = job.catch(() => {});
+      try { return await job; }
+      catch (error) {
+        // Another topic of the same assistant took the login while this one waited: wait again.
+        const holder = start.profileId ? this.store.profileHolder(start.profileId) : null;
+        if (error instanceof Error && error.message === profileBusyMessage && holder && Date.now() < deadline
+          && holder.projectId === start.projectId && sameAssistantTopics(start.projectId, holder.conversationId, start.conversationId)) continue;
+        throw error;
+      }
+    }
+  }
+
+  /** Topics of one assistant share its browser logins one at a time. While another topic is
+      using the profile — a command running, a person watching or signing in, a restore in
+      progress, or activity in the last minute — this start waits; once that browser is idle
+      it is closed and this topic takes over. Only a topic granted the profile ever waits. */
+  private async takeTurnWithSiblingTopic(start: BrowserStart, accessNodeId: string, deadline: number): Promise<void> {
+    this.assertProfileGranted(start.profileId!, { nodeId: accessNodeId, projectId: start.projectId, conversationId: start.conversationId, workspaceId: start.workspaceId ?? null });
+    for (;;) {
+      const holder = this.store.profileHolder(start.profileId!);
+      if (!holder || holder.projectId !== start.projectId || holder.conversationId === start.conversationId
+        || !sameAssistantTopics(start.projectId, holder.conversationId, start.conversationId)) return;
+      const live = this.sessions.get(holder.id);
+      const busy = this.recoveries.has(holder.id) || this.store.loginRequest(holder.id) !== null || (live && (live.restoring || live.human !== null || live.activeOperations > 0
+        || live.viewers.size > 0 || live.lastActivityAt > Date.now() - 60_000));
+      if (!busy) { await this.closeProfileSessions(start.profileId!); return; }
+      if (Date.now() > deadline) throw new Error("Another topic of this assistant is using this browser login. Try again when it finishes.");
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
 
   private async createSession(start: BrowserStart, credentialOrigins: string[], options: { accessNodeId?: string } = {}): Promise<BrowserSessionView> {

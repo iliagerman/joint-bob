@@ -29,6 +29,7 @@ const cronModelSchema = z.object({
 }).strict();
 export const cronInputSchema = z.object({
   creatorAccountId: z.string().min(1).nullable().optional(),
+  assistantId: z.string().uuid().nullable().default(null),
   providerProfileId: z.string().min(1).nullable().optional(),
   tags: automationTagAssignmentSchema.default({ managedTagIds: [], manualTags: [] }),
   projectId: z.string().min(1).max(240), name: z.string().trim().min(1).max(120),
@@ -39,6 +40,7 @@ export const cronInputSchema = z.object({
   sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false), markForReview: z.boolean().default(false), hideFromHistory: z.boolean().default(false),
   schedule: scheduleSchema,
 }).strict().superRefine((input, context) => {
+  if (input.assistantId && input.sessionId) context.addIssue({ code: z.ZodIssueCode.custom, path: ["sessionId"], message: "Assistant tasks route to the assistant, not a pinned conversation" });
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === input.engine);
   if (!adapter?.configuration) return;
   const reasoning = input.reasoning ?? input.model?.reasoning;
@@ -142,6 +144,7 @@ export class CronStore {
     const old = this.get(id);
     if (!old) throw new Error("Scheduled task not found");
     if (old.ownerNodeId !== data.ownerNodeId || old.projectId !== data.projectId) throw new Error("Task owner and project cannot be changed in place");
+    if (old.assistantId !== data.assistantId) throw new Error("Assistant target cannot be changed in place");
     const next = JSON.stringify(old.schedule) === JSON.stringify(data.schedule) && old.enabled === data.enabled ? old.nextRun : nextCronRun(data.schedule, now);
     this.db.prepare("UPDATE cron_tasks SET input = ?, next_run = ? WHERE id = ?").run(JSON.stringify(data), next, id);
     return this.get(id)!;

@@ -33,6 +33,7 @@ export const webhookInputSchema = z.object({
   target: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("project"), projectId: z.string().min(1).max(240), engine: z.string().min(1).max(80).optional() }).strict(),
     z.object({ kind: z.literal("conversation"), projectId: z.string().min(1).max(240), sessionId: z.string().min(1).max(240), engine: z.string().min(1).max(80) }).strict(),
+    z.object({ kind: z.literal("assistant"), projectId: z.string().min(1).max(240), assistantId: z.string().uuid() }).strict(),
   ]),
   secretAccountIds: z.array(z.string().uuid()).max(100).refine(ids => new Set(ids).size === ids.length, "Secret account IDs must be unique").default([]),
   model: z.object({ provider: z.string().trim().min(1).max(240), modelId: z.string().trim().min(1).max(240) }).strict().nullable().default(null),
@@ -54,7 +55,9 @@ export const webhookInputSchema = z.object({
     fields: z.array(z.string().trim().regex(SENDER_FIELD_PATTERN, "A sender field is a dot path such as message.from.id")).min(1).max(20),
     allowed: z.array(z.object({ value: z.string().trim().min(1).max(200), label: z.string().trim().max(120).default("") }).strict()).max(500),
   }).strict().nullable().default(null),
-}).strict();
+}).strict().superRefine((input, context) => {
+  if (input.target.kind === "assistant" && (input.model || input.reasoning)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["target"], message: "Assistant webhooks use the assistant's execution settings" });
+});
 export type WebhookInput = z.infer<typeof webhookInputSchema>;
 export type WebhookSenders = NonNullable<WebhookInput["senders"]>;
 
@@ -125,6 +128,7 @@ export function ensureWebhookSchema(db: DatabaseSync): void {
   if (!columns.some(column => column.name === "tags")) db.exec("ALTER TABLE webhooks ADD COLUMN tags TEXT NOT NULL DEFAULT '{}'");
   if (!columns.some(column => column.name === "creator_account_id")) db.exec("ALTER TABLE webhooks ADD COLUMN creator_account_id TEXT");
   if (!columns.some(column => column.name === "provider_profile_id")) db.exec("ALTER TABLE webhooks ADD COLUMN provider_profile_id TEXT");
+  if (!columns.some(column => column.name === "assistant_id")) db.exec("ALTER TABLE webhooks ADD COLUMN assistant_id TEXT");
   const deliveryColumns = db.prepare("PRAGMA table_info(webhook_deliveries)").all() as Array<{ name: string }>;
   if (!deliveryColumns.some((column) => column.name === "sender")) db.exec("ALTER TABLE webhook_deliveries ADD COLUMN sender TEXT");
 }
@@ -134,9 +138,11 @@ export const hashWebhookSecret = (secret: string): string => createHash("sha256"
 export const newWebhookSecret = (): string => randomBytes(32).toString("base64url");
 
 function webhookRow(row: Record<string, unknown>): Webhook {
-  const target = row.target_kind === "conversation"
-    ? { kind: "conversation" as const, projectId: String(row.project_id), sessionId: String(row.session_id), engine: String(row.engine) }
-    : { kind: "project" as const, projectId: String(row.project_id), ...(row.engine ? { engine: String(row.engine) } : {}) };
+  const target = row.assistant_id
+    ? { kind: "assistant" as const, projectId: String(row.project_id), assistantId: String(row.assistant_id) }
+    : row.target_kind === "conversation"
+      ? { kind: "conversation" as const, projectId: String(row.project_id), sessionId: String(row.session_id), engine: String(row.engine) }
+      : { kind: "project" as const, projectId: String(row.project_id), ...(row.engine ? { engine: String(row.engine) } : {}) };
   return {
     id: String(row.id), name: String(row.name), target,
     tags: automationTagAssignmentSchema.parse(row.tags ? JSON.parse(String(row.tags)) : {}),
@@ -157,8 +163,10 @@ function webhookRow(row: Record<string, unknown>): Webhook {
 const sendersColumn = (input: WebhookInput): string | null => input.senders ? JSON.stringify(input.senders) : null;
 
 const targetColumns = (target: WebhookInput["target"]) => ({
+  targetKind: target.kind === "assistant" ? "conversation" : target.kind,
   sessionId: target.kind === "conversation" ? target.sessionId : null,
-  engine: target.engine ?? null,
+  engine: target.kind === "conversation" || target.kind === "project" ? target.engine ?? null : null,
+  assistantId: target.kind === "assistant" ? target.assistantId : null,
 });
 
 export function listWebhooks(db: DatabaseSync): Webhook[] {
@@ -185,18 +193,18 @@ export function createWebhook(db: DatabaseSync, input: WebhookInput): { webhook:
   const secret = newWebhookSecret();
   const id = randomUUID();
   const now = new Date().toISOString();
-  const { sessionId, engine } = targetColumns(input.target);
-  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,context,enabled,attachments,mark_for_review,senders,model,reasoning,secret_account_ids,title_template,created_at,updated_at,creator_account_id,provider_profile_id,tags)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, now, now, input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags));
+  const { targetKind, sessionId, engine, assistantId } = targetColumns(input.target);
+  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,assistant_id,context,enabled,attachments,mark_for_review,senders,model,reasoning,secret_account_ids,title_template,created_at,updated_at,creator_account_id,provider_profile_id,tags)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, now, now, input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags));
   db.prepare("UPDATE webhooks SET hide_from_history=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, id);
   return { webhook: getWebhook(db, id)!, secret };
 }
 
 export function updateWebhook(db: DatabaseSync, id: string, input: WebhookInput): Webhook {
   ensureWebhookSchema(db);
-  const { sessionId, engine } = targetColumns(input.target);
-  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,context=?,enabled=?,attachments=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,title_template=?,updated_at=?,creator_account_id=?,provider_profile_id=?,tags=? WHERE id=?`)
-    .run(input.name, input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, new Date().toISOString(), input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags), id);
+  const { targetKind, sessionId, engine, assistantId } = targetColumns(input.target);
+  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,assistant_id=?,context=?,enabled=?,attachments=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,title_template=?,updated_at=?,creator_account_id=?,provider_profile_id=?,tags=? WHERE id=?`)
+    .run(input.name, targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, new Date().toISOString(), input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags), id);
   if (!result.changes) throw new WebhookError(404, "Webhook not found");
   db.prepare("UPDATE webhooks SET hide_from_history=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, id);
   return getWebhook(db, id)!;

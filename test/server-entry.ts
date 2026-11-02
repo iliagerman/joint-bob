@@ -47,8 +47,10 @@ function buildCompiledServer(): string {
 
 /** Node arguments that start the server. Preloaded probes, stub harnesses and `.ts` override modules need the tsx loader. */
 export function serverArgs(env: NodeJS.ProcessEnv, preload: string[] = []): string[] {
+  const decisionGuardOption = `--import=${path.join(root, "test", "decision-network-guard.mjs")}`;
+  const nodeOptions = (env.NODE_OPTIONS ?? "").split(/\s+/).filter(option => option !== decisionGuardOption).join(" ");
   const needsTypeScript = preload.length > 0
-    || /--(import|require|loader|experimental-loader)\b/.test(env.NODE_OPTIONS ?? "")
+    || /--(import|require|loader|experimental-loader)\b/.test(nodeOptions)
     || Object.values(env).some((value) => typeof value === "string" && /\.[cm]?tsx?(?=$|[\s?#"'])/.test(value));
   if (needsTypeScript || process.env.JOINT_BOB_TEST_TSX_SERVER === "1") return ["--import", "tsx", ...preload.flatMap((file) => ["--import", file]), "src/server.ts"];
   compiledEntry ??= buildCompiledServer();

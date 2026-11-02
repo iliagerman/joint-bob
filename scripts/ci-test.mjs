@@ -4,6 +4,8 @@
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 
+delete process.env.TYPESAFE_AI_API_KEY;
+
 const CONCURRENCY = Number(process.env.TEST_CONCURRENCY || 4);
 // More failing files than this is a real breakage, not a flaky test; rerunning them only delays the report.
 const MAX_RERUN_FILES = 8;

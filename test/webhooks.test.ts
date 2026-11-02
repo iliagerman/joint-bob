@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   createWebhook, deleteWebhook, listWebhooks, readWebhookPayload, recordWebhookDelivery, regenerateWebhookSecret, TELEGRAM_SENDER_FIELDS, updateWebhook,
@@ -37,6 +38,18 @@ test("an update changes the target and keeps the address", () => {
   const updated = updateWebhook(db, webhook.id, input({ name: "Renamed", enabled: false, target: { kind: "conversation", projectId: "p2", sessionId: "s9", engine: "claude" } }));
   assert.deepEqual([updated.name, updated.enabled, updated.target], ["Renamed", false, { kind: "conversation", projectId: "p2", sessionId: "s9", engine: "claude" }]);
   assert.equal(webhookForSecret(db, secret)?.id, webhook.id);
+});
+
+test("assistant webhooks persist a stable assistant target and use assistant execution settings", () => {
+  const db = new DatabaseSync(":memory:");
+  const assistantId = randomUUID();
+  const assistantInput = input({ target: { kind: "assistant", projectId: "p1", assistantId } });
+  const { webhook, secret } = createWebhook(db, assistantInput);
+  assert.deepEqual(webhook.target, assistantInput.target);
+  assert.deepEqual(webhookForSecret(db, secret)?.target, assistantInput.target);
+  assert.equal(updateWebhook(db, webhook.id, input({ ...assistantInput, name: "Renamed" })).target.kind, "assistant");
+  assert.equal(webhookInputSchema.safeParse({ ...assistantInput, model: { provider: "anthropic", modelId: "model" } }).success, false);
+  assert.equal(webhookInputSchema.safeParse({ ...assistantInput, reasoning: "high" }).success, false);
 });
 
 test("automation tags survive webhook creation and editing", () => {
@@ -185,6 +198,13 @@ test("the input must name a target and stay within limits", () => {
   assert.throws(() => webhookInputSchema.parse({ name: "", target: { kind: "project", projectId: "p" } }));
   assert.throws(() => webhookInputSchema.parse({ name: "x", target: { kind: "conversation", projectId: "p" } }));
   assert.throws(() => webhookInputSchema.parse({ name: "x", target: { kind: "project", projectId: "p" }, context: "y".repeat(10_001) }));
+  const target = { kind: "assistant", projectId: "p", assistantId: randomUUID() };
+  const db = new DatabaseSync(":memory:");
+  try {
+    const { webhook, secret } = createWebhook(db, webhookInputSchema.parse({ name: "Assistant webhook", target }));
+    assert.deepEqual(webhook.target, target, "assistant target remains stable rather than pinning a topic conversation");
+    assert.deepEqual(webhookForSecret(db, secret)?.target, target, "assistant target survives storage and lookup");
+  } finally { db.close(); }
 });
 
 const telegram = { fields: TELEGRAM_SENDER_FIELDS, allowed: [{ value: "111", label: "Ilia" }, { value: "222", label: "" }] };

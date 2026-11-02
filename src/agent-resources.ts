@@ -1,3 +1,4 @@
+import { assistantDisabledResources } from "./assistant-resources.js";
 import { skillScopeContext, unavailableSkillNames, type SkillScopeContext } from "./scoped-skills.js";
 import { nodeMcpServersApply } from "./account-runtime.js";
 import { adminAccountId } from "./ownership.js";
@@ -842,16 +843,19 @@ export function claudeAgentResourceArgs(root?: string, scoped?: ScopedResourcePa
   const paths = agentResourcePaths(root);
   const configuredPlugins = claudePluginSources(configuredPaths(configured, "plugins"));
   const installed = strict ? new Set<string>() : installedUserPluginNames();
+  const scope = skillScopeContext(configured);
+  const assistantPlugins = new Set(assistantDisabledResources(scope.projectId, scope.conversationId).plugins);
+  const assistantAllows = (plugin: string) => !pluginActivationNames(plugin, paths.claudePlugins, configuredPlugins).some((name) => assistantPlugins.has(name));
   const args: string[] = [];
   if (existsSync(paths.claudePlugins)) for (const entry of readdirSync(paths.claudePlugins).sort()) {
     const plugin = path.join(paths.claudePlugins, entry);
     const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
     if (!decisions.some(({ name }) => installed.has(name)) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))
-      && decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin, skillScopeContext(configured))) args.push("--plugin-dir", plugin);
+      && decisions.every(({ decision }) => decision.enabled) && assistantAllows(plugin) && pluginContentsSafe(plugin, scope)) args.push("--plugin-dir", plugin);
   }
   for (const plugin of configuredPlugins) {
     const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
-    if (decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin, skillScopeContext(configured))) args.push("--plugin-dir", plugin);
+    if (decisions.every(({ decision }) => decision.enabled) && assistantAllows(plugin) && pluginContentsSafe(plugin, scope)) args.push("--plugin-dir", plugin);
   }
   const generated = generatedResourcePlugin(paths, configured, projectAgents);
   if (generated) args.push("--plugin-dir", generated);

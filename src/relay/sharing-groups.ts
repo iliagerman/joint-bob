@@ -15,6 +15,8 @@ export function relayPeerRequestAllowed(db: DatabaseSync, local: string, peer: s
   if (!discovered) return true;
   if (!groups.length) return false;
   if (!groups.some(group => relaySharingGroupActive(db, group.cluster_id))) return false;
+  // Social requests (directory, groups, direct requests) authorize their own operation and account.
+  if (pathname.startsWith("/api/cluster/v2/social/")) return true;
   if (["/api/cluster/v2/resources/policy", "/api/cluster/v2/membership/snapshot", "/api/cluster/v2/membership/descriptor", "/api/cluster/v2/workspaces/manifest", "/api/cluster/v2/workspaces/changed"].includes(pathname)) return true;
   const projects = db.prepare("SELECT resource_id FROM sharing_resource_owners WHERE kind='project'").all() as Array<{resource_id: string}>;
   return projects.some(project => mayReceiveResource(db, local, "project", project.resource_id) && mayReceiveResource(db, peer, "project", project.resource_id));
