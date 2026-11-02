@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.201.3 — 2026-11-02
+
+- Fixed the assistant chat's send button turning grey with nothing to explain it: the sent message and a running "Working on it…" time now stay in the chat until the answer arrives.
+
 ## 2.201.2 — 2026-11-02
 
 - Fixed settings sections spilling sideways on phones: the user list now shows each person as a card with labelled fields, and relay headings stack so their buttons stay inside the panel.

@@ -91,9 +91,31 @@ test("assistant shell: resources, public actions, activity and discovery without
     await page.getByRole("button", { name: "Disable", exact: true }).click();
     await page.locator("#actions-view .card-top .chip", { hasText: "Disabled" }).waitFor();
 
-    // Activity: empty, private, and closing returns to the same chat.
+    // A sent message stays in the chat with a running "Working on it…" until its answer arrives.
     await page.getByTestId("assistant-view-chat").click();
     await page.locator("#chat-form").waitFor();
+    let releaseTurn!: () => void;
+    const turnHeld = new Promise<void>(resolve => { releaseTurn = resolve; });
+    await page.route("**/api/personal-assistants/*/turn", async route => {
+      await turnHeld;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ turn: { status: "completed" } }) });
+    });
+    const send = page.locator("#chat-form button[type=submit]");
+    await page.locator("#chat-message").fill("Plan my week");
+    await send.click();
+    const working = page.getByTestId("assistant-working");
+    await working.waitFor();
+    assert.equal(await page.locator("#timeline .chat-bubble.user.pending", { hasText: "Plan my week" }).count(), 1, "the sent message shows at once");
+    await page.waitForTimeout(6_000); // longer than a passing status line lasts
+    assert.equal(await working.isVisible(), true, "the status stays while the answer is pending");
+    assert.match(await working.textContent() || "", /^Working on it… \d+:\d\d$/);
+    assert.equal(await send.isDisabled(), true);
+    releaseTurn();
+    await working.waitFor({ state: "detached" });
+    assert.equal(await send.isDisabled(), false, "send is available again once the answer is in");
+    await page.unroute("**/api/personal-assistants/*/turn");
+
+    // Activity: empty, private, and closing returns to the same chat.
     await page.getByTestId("assistant-activity-button").click();
     await page.getByTestId("assistant-activity").getByText("Nothing yet.", { exact: false }).waitFor();
     await page.getByRole("button", { name: "Close activity and return to chat" }).click();

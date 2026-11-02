@@ -24,16 +24,30 @@ async function sendTurn(event) {
   if (pendingTurn && pendingTurn.message !== content) { notify("Retry the pending message before editing it.", true); return; }
   pendingTurn ??= { requestId: crypto.randomUUID(), message: content };
   button.disabled = true;
-  notify("Thinking…");
+  const recentMessages = [...document.querySelectorAll("#timeline .chat-bubble")].slice(-6).map(bubble => bubble.textContent.slice(0, 4000));
+  const stopWorking = showWorking(content);
   try {
-    const recentMessages = [...document.querySelectorAll("#timeline .chat-bubble")].slice(-6).map(bubble => bubble.textContent.slice(0, 4000));
     await request(`/api/personal-assistants/${app.assistant.id}/turn`, { method: "POST", body: JSON.stringify({ requestId: pendingTurn.requestId, message: content, recentMessages }) });
     pendingTurn = null;
     field.value = "";
     await showTranscript();
-    notify("");
   } catch (error) { await showTranscript().catch(() => {}); fail(error); }
-  finally { button.disabled = false; }
+  finally { stopWorking(); button.disabled = false; }
+}
+
+/** Until the answer arrives, the sent message and how long the assistant has been at it stay in
+    the chat. A turn can wait behind another one, so a passing status line is not enough. */
+function showWorking(content) {
+  const status = h("div", { class: "chat-working", role: "status", "data-testid": "assistant-working" }, "Working on it…");
+  document.querySelector("#timeline").append(h("div", { class: "chat-bubble user pending" }, content), status);
+  const scroll = document.querySelector("#chat-scroll");
+  scroll.scrollTop = scroll.scrollHeight;
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const seconds = Math.floor((Date.now() - started) / 1000);
+    status.textContent = `Working on it… ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }, 1000);
+  return () => clearInterval(timer);
 }
 
 const automationDialog = () => document.querySelector("#assistant-automation-dialog");
