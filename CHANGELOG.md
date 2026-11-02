@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.195.1 — 2026-11-02
 
-- Fixed podcasts failing to save when the writer returned a code line that was too long or a malformed draft. The writer now corrects its draft automatically before the podcast is saved, and a story's existing podcast is kept if a follow-up question cannot be answered.
+- Fixed podcast creation and follow-up answers failing when the writer's draft broke a rule, such as a code line that was too long; the writer now corrects its draft automatically.
 
 ## 2.195.0 — 2026-11-02
 
