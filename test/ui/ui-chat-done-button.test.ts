@@ -35,7 +35,7 @@ test("the chat More menu closes a conversation out without a nested menu", { tim
     await row.locator("button").first().click();
     await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
 
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 720, height: 844 });
     await page.getByTestId("chat-more-button").click();
     const doneButton = page.getByTestId("chat-done-button");
     assert.equal(await doneButton.innerText(), "Mark done");

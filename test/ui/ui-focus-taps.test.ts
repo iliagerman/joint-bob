@@ -6,7 +6,6 @@ import { api, signIn } from "../dev-nodes.js";
 test("focus controls support single, double, and triple taps", { timeout: 180_000 }, async t => {
   const fixture = await nativeUiFixture(t);
   const session = await signIn(fixture.environment, fixture.node);
-  await api(fixture.node, session, "PUT", "/preferences", { focusUiEnabled: true });
   const context = await fixture.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, serviceWorkers: "block" });
   t.after(() => context.close());
   const page = await context.newPage();

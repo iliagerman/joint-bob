@@ -46,7 +46,7 @@ test("the open conversation offers the same menu its row offers", { timeout: 120
     await page.keyboard.press("Escape");
 
     // On a phone the toolbar hides its actions behind More, so the entry lives there.
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 720, height: 844 });
     assert.equal(await page.getByTestId("chat-session-menu-button").isVisible(), false);
     await page.getByTestId("chat-more-button").click();
     await page.getByTestId("chat-session-menu-button").click();

@@ -5,7 +5,7 @@ import { clearAttachments } from "./attachments.js";
 import { setComposerEnabled } from "./chat-controls.js";
 import { clearChat } from "./chat-transcript.js";
 import { elements } from "./elements.js";
-import { setFocusUi } from "./focus-ui.js";
+import { applyFocusUi } from "./focus-ui.js";
 import { setMobileView, setPanelCollapsed } from "./layout.js";
 import { clearMfaSecrets } from "./mfa.js";
 import { renderProjects } from "./project-list.js";
@@ -194,7 +194,7 @@ export async function initializeApplication() {
   state.recentSessions = recents.recentSessions || [];
   setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
   setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
-  setFocusUi(preferences.focusUiEnabled);
+  applyFocusUi();
   syncNotifyButton();
   updateInstallButton();
   state.canvasLayout = preferences.canvasLayout || emptyCanvasLayout();

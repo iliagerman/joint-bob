@@ -1,6 +1,5 @@
 import { DEFAULT_CANVAS_KEYMAP, normalizeCanvasKeymap } from "../canvas-layout.js";
 import { api } from "./api.js";
-import { setFocusUi } from "./focus-ui.js";
 import { applyTerminalDockPreference } from "./terminal.js";
 import { setPanelCollapsed } from "./layout.js";
 import { toast } from "./shell.js";
@@ -18,7 +17,6 @@ export async function reloadTravellingPreferences() {
     state.gitReviewer = preferences.gitReviewer;
     setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
     setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
-    setFocusUi(preferences.focusUiEnabled);
     state.canvasKeymap = normalizeCanvasKeymap(preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP);
     state.canvasController?.setKeymap(state.canvasKeymap);
     syncShortcutHints();

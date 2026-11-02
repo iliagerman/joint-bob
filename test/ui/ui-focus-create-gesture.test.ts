@@ -5,7 +5,6 @@ import { api, signIn } from "../dev-nodes.js";
 
 test("mobile creation works through visible controls and C/N gestures", { timeout: 180_000 }, async t => {
   const fixture = await nativeUiFixture(t);
-  await api(fixture.node, await signIn(fixture.environment, fixture.node), "PUT", "/preferences", { focusUiEnabled: true });
   const context = await fixture.page.context().browser()!.newContext({ viewport: { width: 390, height: 650 }, hasTouch: true, isMobile: true, serviceWorkers: "block" });
   t.after(() => context.close());
   const page = await context.newPage();

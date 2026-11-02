@@ -12,10 +12,9 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and shared FAB
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.locator(".project-card").first().waitFor();
-  await page.getByTestId("app-menu-button").click();
-  await page.getByTestId("app-menu-settings-button").click();
+  await page.getByTestId("focus-controls-button").click();
+  await page.getByTestId("focus-settings").click();
   if (theme === "dark") await page.getByTestId("settings-theme-toggle-button").click();
-  await page.getByTestId("settings-focus-ui-toggle").check();
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
   await page.getByTestId("settings-cancel-button").click();
   const sharedStyles = new Map<string, string>();
@@ -92,9 +91,8 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and shared FAB
     const box = await button.boundingBox();
     assert.ok(box && box.y >= 0 && box.y + box.height <= 460, `${id} fits a short viewport: ${JSON.stringify(box)}`);
   }
-  await page.getByTestId("focus-settings").click();
-  await page.getByTestId("settings-focus-ui-toggle").uncheck();
-  await page.getByTestId("settings-cancel-button").click();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.waitForFunction(() => !document.body.classList.contains("focus-ui"));
   await page.locator("#chatPanel > #chatToolbar").waitFor({ state: "attached" });
   assert.equal(await page.locator("#chatPanel > #chatToolbar").count(), 1);
   assert.deepEqual(errors, [], "focus navigation has no page errors");

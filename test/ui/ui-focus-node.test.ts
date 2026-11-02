@@ -5,7 +5,6 @@ import { api, signIn } from "../dev-nodes.js";
 
 test("mobile focus menu names the execution node and switches it", { timeout: 120_000 }, async t => {
   const fixture = await nativeUiFixture(t);
-  await api(fixture.node, await signIn(fixture.environment, fixture.node), "PUT", "/preferences", { focusUiEnabled: true });
   const context = await fixture.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: "block" });
   t.after(() => context.close());
   const page = await context.newPage();

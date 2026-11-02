@@ -126,10 +126,10 @@ test("classification filters combine with search and status, include custom labe
     await rows.first().waitFor();
     assert.equal(await filter.trigger.innerText(), "All labels", "changing project resets classification filtering");
     assert.equal((await filter.labels()).includes("Investigation <custom>"), false, "custom labels come from the selected project");
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 720, height: 844 });
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const box = await filter.root.boundingBox();
-    assert.ok(box && box.width > 150 && box.x >= 0 && box.x + box.width <= 390, "filter fits the mobile conversation panel");
+    assert.ok(box && box.width > 150 && box.x >= 0 && box.x + box.width <= 720, "filter fits the mobile conversation panel");
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

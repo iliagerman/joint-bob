@@ -6,7 +6,6 @@ import { api, signIn } from "../dev-nodes.js";
 test("focus chat header stays one line with elapsed time and a working-only colored context number", { timeout: 180_000 }, async t => {
   const { page, environment, node } = await nativeUiFixture(t);
   const session = await signIn(environment, node);
-  await api(node, session, "PUT", "/preferences", { focusUiEnabled: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -52,7 +51,6 @@ test("focus chat header stays one line with elapsed time and a working-only colo
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await page.locator("body.focus-ui").count(), 0, "focus mode only applies to mobile screens");
   assert.equal(await page.getByTestId("focus-controls-button").isVisible(), false, "desktop has no focus controls handle");
-  assert.equal(await page.getByTestId("settings-focus-ui-toggle").isChecked(), true, "the saved preference stays on");
   assert.equal(await page.locator(".context-usage-bar").isVisible(), true, "desktop retains the context bar");
   assert.match(await page.locator("#turnTimer").innerText(), /^Total /, "desktop labels the cumulative conversation time");
 });

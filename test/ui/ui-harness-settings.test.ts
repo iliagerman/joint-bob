@@ -107,7 +107,7 @@ test("new conversation buttons are disabled for a harness that is not signed in"
 
 test("mobile harness dialog disables a harness that is not signed in", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 720, height: 844 });
   await markClaudeSignedOut(page);
   await signIn(page, node.url, environment.username, environment.password);
   await waitForHarnesses(page);
@@ -122,7 +122,7 @@ test("mobile harness dialog disables a harness that is not signed in", { timeout
 
 test("mobile uses one new conversation button with a dynamic harness dialog", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 720, height: 844 });
   await signIn(page, node.url, environment.username, environment.password);
   await waitForHarnesses(page);
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
@@ -149,7 +149,7 @@ test("mobile uses one new conversation button with a dynamic harness dialog", { 
 
 test("mobile chat toolbar keeps model, reasoning and tasks on one row", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 720, height: 844 });
   await signIn(page, node.url, environment.username, environment.password);
   await waitForHarnesses(page);
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
@@ -425,7 +425,7 @@ test("harness settings choose provider and model from searchable dropdowns of wh
 test("on a phone the harness pickers open as a list of options", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await signIn(page, node.url, environment.username, environment.password);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 720, height: 844 });
   // The phone layout keeps Settings behind the menu; open it the way that menu does.
   await page.evaluate(async () => (await import("/app/settings.js")).openSettings("engines"));
   await page.locator("#settingsDialog[open]").waitFor();

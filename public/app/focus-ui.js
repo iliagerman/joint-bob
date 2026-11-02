@@ -1,4 +1,3 @@
-import { savePreferences } from "./api.js";
 import { openDashboardMode } from "./dashboards.js";
 import { elements } from "./elements.js";
 import { menuIcon } from "./icons.js";
@@ -15,14 +14,12 @@ import { openNewSecretAccount } from "./secrets.js";
 
 const fab = document.querySelector("#focusControlsButton");
 const menu = document.querySelector("#focusControls");
-const toggle = document.querySelector("#settingsFocusUi");
 const chatHost = document.querySelector("#focusChatControls");
 const context = document.querySelector("#focusContextActions");
 const nodeList = document.querySelector("#focusNodeList");
 const toolsList = document.querySelector("#focusToolsList");
 const toolbarHome = document.createComment("Chat toolbar location");
 let enabled = false;
-let preferred = false;
 let position = null;
 
 // Toolbar actions the chat menu already offers on its own; the Tools submenu lists every other one.
@@ -225,16 +222,9 @@ function renderNodeSegments() {
 }
 
 /** Layout only: never reload a session or change the user's panel-collapse preferences.
- *  The saved preference applies to mobile screens only; desktops keep the classic layout. */
-export function setFocusUi(value) {
-  preferred = Boolean(value);
-  applyFocusUi();
-}
-
-function applyFocusUi() {
-  enabled = preferred && mobileFocusViewport.matches && !state.canvasPaneMode;
-  toggle.checked = preferred && !state.canvasPaneMode;
-  toggle.disabled = state.canvasPaneMode;
+ *  Mobile screens always use the focus interface; desktops keep the classic layout. */
+export function applyFocusUi() {
+  enabled = mobileFocusViewport.matches && !state.canvasPaneMode;
   document.body.classList.toggle("focus-ui", enabled);
   syncMobileProjectControls();
   fab.hidden = !enabled;
@@ -291,13 +281,6 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#focusConversations").onclick = () => setMobileView("sessions");
   document.querySelector("#focusClose").onclick = () => showMenu(false);
   chatHost.addEventListener("click", event => { if (!mobileFocusViewport.matches && event.target.closest("button:not(:disabled)")) showMenu(false); });
-  toggle.addEventListener("change", async () => {
-    const next = toggle.checked;
-    toggle.disabled = true;
-    try { await savePreferences({ focusUiEnabled: next }); setFocusUi(next); }
-    catch (error) { toggle.checked = preferred; toast(`Could not save interface preference: ${error.message}`); }
-    finally { toggle.disabled = state.canvasPaneMode; }
-  });
   window.addEventListener("app-view-changed", syncView);
   mobileFocusViewport.addEventListener("change", applyFocusUi);
   window.addEventListener("resize", resize);

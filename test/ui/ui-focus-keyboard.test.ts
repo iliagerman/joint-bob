@@ -7,7 +7,6 @@ import { api, signIn } from "../dev-nodes.js";
 async function mobileFocusPage(t: TestContext) {
   const fixture = await nativeUiFixture(t);
   const session = await signIn(fixture.environment, fixture.node);
-  await api(fixture.node, session, "PUT", "/preferences", { focusUiEnabled: true });
   const context = await fixture.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, serviceWorkers: "block" });
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);

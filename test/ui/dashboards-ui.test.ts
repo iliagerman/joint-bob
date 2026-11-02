@@ -145,11 +145,8 @@ async function within(page: import("playwright-core").Page, testid: string, heig
 
 test("on a phone, the project sheet and the conversation tools open dashboard mode", { timeout: 180_000 }, async (t) => {
   const { page } = await signedIn(t);
-  await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-focus-ui-toggle").check();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
-  await page.getByTestId("settings-cancel-button").click();
 
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("body.view-sessions").waitFor();

@@ -21,7 +21,7 @@ test("mobile conversations expose running work and keep the current chat globall
   const node = environment.nodes[0];
   server = await startDevNode(environment, node);
   browser = await launchChrome({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 375, height: 850 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ viewport: { width: 720, height: 850 }, serviceWorkers: "block" });
   const session = await signIn(environment, node);
   await context.addCookies([{ name: node.cookieName, value: session.cookie.split("=")[1], url: node.url }]);
   const page = await context.newPage();
@@ -62,7 +62,7 @@ test("mobile chat toolbar reaches running work and the label filter matches the 
   browser = await launchChrome({ headless: true });
   const session = await signIn(environment, node);
 
-  const phone = await browser.newContext({ viewport: { width: 375, height: 850 }, serviceWorkers: "block" });
+  const phone = await browser.newContext({ viewport: { width: 720, height: 850 }, serviceWorkers: "block" });
   await phone.addCookies([{ name: node.cookieName, value: session.cookie.split("=")[1], url: node.url }]);
   const page = await phone.newPage();
   await page.goto(node.url, { waitUntil: "domcontentloaded" });

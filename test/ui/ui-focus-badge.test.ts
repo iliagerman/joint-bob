@@ -6,7 +6,6 @@ import { api, signIn } from "../dev-nodes.js";
 test("logo FAB reflects the live cross-project review count and clears at zero", { timeout: 180_000 }, async t => {
   const { page, environment, node } = await nativeUiFixture(t);
   const session = await signIn(environment, node);
-  await api(node, session, "PUT", "/preferences", { focusUiEnabled: true });
   let count = 2;
   await page.route("**/api/reviews/pending", route => route.fulfill({
     json: { projects: node.projects.slice(0, count).map(project => ({

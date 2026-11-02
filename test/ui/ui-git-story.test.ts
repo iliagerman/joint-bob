@@ -874,7 +874,7 @@ test("Activity overview plays the stick-figure movie from the activity panel wit
   await dock.getByTestId("git-story-podcast-dock-end").click();
   await movie.waitFor({ state: "detached" });
   assert.equal(await dock.count(), 0);
-  await page.setViewportSize({ width: 390, height: 800 });
+  await page.setViewportSize({ width: 720, height: 800 });
   assert.equal(await page.getByTestId("nav-story-button").isVisible(), true);
   assert.equal(await page.getByTestId("nav-overview-button").isVisible(), true);
   assert.equal(await page.getByTestId("nav-overview-button").getAttribute("aria-label"), "Activity overview");

@@ -12,12 +12,9 @@ test("focus actions work before choosing a project, on lists and in chat; classi
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.locator(".project-card").first().waitFor();
-  await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-focus-ui-toggle").check();
-  // Focus mode only applies to mobile screens.
+  // Focus mode applies to mobile screens only.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
-  await page.getByTestId("settings-cancel-button").click();
   // No active project yet: note creation must still offer a project picker.
   await page.getByTestId("focus-controls-button").click();
   for (const action of actions) assert.equal(await page.getByTestId(action).isVisible(), true, `${action} available on Projects`);
@@ -62,12 +59,9 @@ test("focus actions work before choosing a project, on lists and in chat; classi
     const box = await page.getByTestId(action).boundingBox();
     assert.ok(box && box.y >= 0 && box.y + box.height <= 460, `${action} reachable in a short viewport: ${JSON.stringify(box)}`);
   }
-  await page.getByTestId("focus-settings").click();
-  await page.getByTestId("settings-focus-ui-toggle").uncheck();
-  await page.waitForFunction(() => !document.body.classList.contains("focus-ui"));
-  await page.getByTestId("settings-cancel-button").click();
-  for (const action of actions) assert.equal(await page.getByTestId(action).isVisible(), false);
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForFunction(() => !document.body.classList.contains("focus-ui"));
+  for (const action of actions) assert.equal(await page.getByTestId(action).isVisible(), false);
   await page.getByTestId("session-create-button").click();
   await page.getByTestId("new-session-name-dialog").waitFor();
   assert.equal(await page.getByTestId("new-session-project-select").isVisible(), false, "classic wizard has no focus-only project picker");

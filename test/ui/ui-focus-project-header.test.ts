@@ -6,7 +6,6 @@ import { api, signIn } from "../dev-nodes.js";
 
 test("mobile project header hides clutter, offers copyable path and moves real filters into project actions", { timeout: 180_000 }, async t => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await api(node, await signIn(environment, node), "PUT", "/preferences", { focusUiEnabled: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);

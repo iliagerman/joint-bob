@@ -74,7 +74,7 @@ test("notes can be reordered and retain order after reload", async () => {
     assert.equal(await page.getByTestId("quick-note-move-up").first().isDisabled(), true);
     assert.equal(await page.getByTestId("quick-note-move-down").last().isDisabled(), true);
     await page.getByTestId("conversations-tab").click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 720, height: 844 });
     await page.getByTestId("nav-projects-button").click();
   } finally {
     for (const id of ids) await fetch(`${node.url}/api/quick-notes/${id}`, { method: "DELETE", headers: { Cookie: authSession.cookie, "x-csrf-token": authSession.csrfToken } });
@@ -113,7 +113,7 @@ test("mobile keeps creation actions together and switches conversations and note
   t.after(async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
   });
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 720, height: 844 });
   const projectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;
   await page.locator(`[data-project-id="${projectId}"] .project-card`).click();
   await page.getByTestId("session-list-loading-bar").waitFor({ state: "hidden" });

@@ -462,7 +462,7 @@ test("the chat toolbar actions are visible on a wide screen and fold into the me
   assert.equal(browserBox.height, terminalBox.height, "Browser and Terminal reserve the same shortcut badge row");
   assert.equal(await page.getByTestId("chat-more-button").isVisible(), false, "the overflow summary stays hidden on desktop");
 
-  await page.setViewportSize({ width: 430, height: 900 });
+  await page.setViewportSize({ width: 720, height: 900 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await page.getByTestId("chat-open-terminal-button").isVisible(), false, "the actions fold away on a phone");
   assert.equal(await page.getByTestId("chat-more-button").isVisible(), true, "the overflow summary appears on a phone");
@@ -478,7 +478,7 @@ test("the chat toolbar actions are visible on a wide screen and fold into the me
 
 test("a phone reloads conversations missed while its watch socket was disconnected", async () => {
   const mobileContext = await browser.newContext({
-    viewport: { width: 430, height: 900 },
+    viewport: { width: 720, height: 900 },
     reducedMotion: "reduce",
     serviceWorkers: "block",
   });
@@ -1056,7 +1056,7 @@ test("the View link renders a source file as themed, highlighted code", async ()
 });
 
 test("a top toast stays above the mobile composer", async () => {
-  const mobileContext = await browser.newContext({ viewport: { width: 430, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
+  const mobileContext = await browser.newContext({ viewport: { width: 720, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   const mobilePage = await mobileContext.newPage();
   try {
     await mobilePage.goto(node.url, { waitUntil: "domcontentloaded" });

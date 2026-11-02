@@ -7,7 +7,6 @@ import { nativeUiFixture } from "./native-ui-fixture.js";
 test("Focus mode leaves sign-in taps and typing with the browser viewer", { timeout: 120_000 }, async t => {
   const fixture = await nativeUiFixture(t);
   const login = await signIn(fixture.environment, fixture.node);
-  await api(fixture.node, login, "PUT", "/preferences", { focusUiEnabled: true });
   const context = await fixture.page.context().browser()!.newContext({
     viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, serviceWorkers: "block",
   });

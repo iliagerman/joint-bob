@@ -62,7 +62,7 @@ test("Share copies the open conversation's identity and its link overrides saved
     const { api } = await import("/app/api.js");
     await api("/api/preferences", { method: "PUT", body: JSON.stringify({ mobileView: "projects", activeSessionPath: null, activeSessionId: null }) });
   });
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 720, height: 844 });
   await page.goto(link.toString());
   await page.locator("body.view-chat").waitFor();
   await page.waitForFunction(() => !(document.querySelector("#messageInput") as HTMLTextAreaElement).disabled);

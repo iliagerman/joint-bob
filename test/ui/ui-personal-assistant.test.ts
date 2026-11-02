@@ -29,7 +29,7 @@ test("personal assistant opens from conversation and saves a link with its scree
     assert.equal(await button.isVisible(), true, "create assistant is visible in the desktop toolbar");
     assert.equal(await button.locator("svg.chat-toolbar-icon").count(), 1);
     assert.ok((await button.boundingBox())!.width <= 40, "assistant fits the icon toolbar");
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 720, height: 844 });
     await page.getByTestId("chat-more-button").click();
     assert.equal(await button.getByText("Create assistant", { exact: true }).isVisible(), true, "mobile menu names the create action");
     await button.click();

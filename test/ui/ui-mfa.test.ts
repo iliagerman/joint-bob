@@ -65,7 +65,7 @@ test("account MFA setup, two-step login, recovery rotation and disable work on d
     await recovery.waitFor().catch(async error => { throw new Error(`${error.message}; MFA error: ${await page.getByTestId("mfa-error").textContent()}`); });
     const codes = (await recovery.inputValue()).trim().split("\n");
     assert.equal(codes.length, 10);
-    for (const width of [1440, 390]) {
+    for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 844 });
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const bounds = await page.getByTestId("mfa-dialog").evaluate(dialog => ({ width: dialog.clientWidth, content: dialog.scrollWidth, left: dialog.getBoundingClientRect().left, right: dialog.getBoundingClientRect().right }));
@@ -127,7 +127,7 @@ test("account MFA setup, two-step login, recovery rotation and disable work on d
 
     // The gateway's enrollment responses exercise the phone login UI without a live relay.
     await logout();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 720, height: 844 });
     const challenge = "a".repeat(43);
     await page.route("**/api/auth/login", route => route.fulfill({ json: { mfaRequired: true, mfaSetupRequired: true, challenge } }));
     await page.route("**/api/auth/login/mfa/setup", route => route.fulfill({ json: { secret: "A".repeat(32) } }));
@@ -137,7 +137,7 @@ test("account MFA setup, two-step login, recovery rotation and disable work on d
     await phoneKey.waitFor({ state: "visible" });
     assert.equal(await phoneKey.inputValue(), "A".repeat(32));
     const loginBounds = await page.getByTestId("login-dialog").evaluate(dialog => ({ width: dialog.clientWidth, content: dialog.scrollWidth, left: dialog.getBoundingClientRect().left, right: dialog.getBoundingClientRect().right }));
-    assert.ok(loginBounds.content <= loginBounds.width && loginBounds.left >= 0 && loginBounds.right <= 390, "phone MFA setup fits the viewport");
+    assert.ok(loginBounds.content <= loginBounds.width && loginBounds.left >= 0 && loginBounds.right <= 720, "phone MFA setup fits the viewport");
     assert.equal(await page.getByTestId("login-password-input").inputValue(), "", "password is cleared during phone enrollment");
     await loginCode.fill("123456");
     await page.getByTestId("login-submit-button").click();

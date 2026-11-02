@@ -3,7 +3,7 @@ import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 import { api, signIn } from "../dev-nodes.js";
 
-test("focus UI is opt-in, uses real conversations, and reverts without losing the draft", { timeout: 180_000 }, async t => {
+test("focus UI is the only mobile interface, uses real conversations, and desktops keep the classic layout", { timeout: 180_000 }, async t => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -11,20 +11,9 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   await page.getByTestId("login-submit-button").click();
   await page.locator(".project-card").first().waitFor();
   assert.equal(await page.locator("body").evaluate(el => el.classList.contains("focus-ui")), false);
-  await page.getByTestId("settings-open-button").click();
-  await page.route("**/api/preferences", route => route.request().method() === "PUT"
-    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Preference store unavailable" }) })
-    : route.continue());
-  await page.getByTestId("settings-focus-ui-toggle").check();
-  await page.getByText("Could not save interface preference: Preference store unavailable", { exact: true }).waitFor();
-  assert.equal(await page.getByTestId("settings-focus-ui-toggle").isChecked(), false);
-  assert.equal(await page.locator("body").evaluate(el => el.classList.contains("focus-ui")), false);
-  await page.unroute("**/api/preferences");
-  await page.getByTestId("settings-focus-ui-toggle").check();
-  // Focus mode only applies to mobile screens.
+  // Focus mode applies to mobile screens only.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
-  await page.locator("#cancelSettingsButton").click();
   await page.reload();
   await page.locator("body.focus-ui .project-card").first().waitFor();
   assert.equal(await page.locator("#chatsPanel").isVisible(), false);
@@ -54,12 +43,8 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   await page.getByTestId("new-session-name-cancel-button").click();
   assert.equal(await page.locator("#sessionTitle").innerText(), title, "cancelling another-project wizard keeps current chat");
   assert.equal(await page.locator("#messageInput").inputValue(), "Keep my real conversation draft");
-  await page.getByTestId("focus-controls-button").click();
-  await page.getByTestId("focus-settings").click();
-  await page.getByTestId("settings-focus-ui-toggle").uncheck();
-  await page.waitForFunction(() => !document.body.classList.contains("focus-ui"));
-  await page.locator("#cancelSettingsButton").click();
   await page.setViewportSize({ width: 1280, height: 720 });
+  await page.waitForFunction(() => !document.body.classList.contains("focus-ui"));
   assert.equal(await page.locator("#projectsPanel").isVisible(), true);
   assert.equal(await page.locator("#chatsPanel").isVisible(), true);
   assert.equal(await page.locator("#chatPanel > #chatToolbar").isVisible(), true, "real toolbar returns to original parent");
@@ -89,11 +74,7 @@ test("mobile focus controls, fixed composer and cross-project creation use the l
   await page.getByTestId("login-password-input").fill(fixture.environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.locator(".project-card").first().waitFor();
-  await page.getByTestId("app-menu-button").click();
-  await page.getByTestId("app-menu-settings-button").click();
-  await page.getByTestId("settings-focus-ui-toggle").check();
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
-  await page.getByTestId("settings-cancel-button").click();
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card").first().click();
   await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>("#messageInput")!.disabled);
