@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.193.0 — 2026-11-02
+
+- Added a persistent chat to each assistant's page, with a timeline of earlier messages that is still there after reloading and a message box to keep talking to the assistant.
+- Added a conversation routing setting to each assistant that chooses between the TypeSafe and Laya classifiers.
+- Added Scheduled task and Webhook buttons to each assistant's page that open a new scheduled task or webhook for the assistant's source conversation, using its current instructions and access settings.
+- Changed the conversation toolbar button to read Create assistant until the conversation has one, then Open personal assistant.
+
 ## 2.192.0 — 2026-11-02
 
 - Added standalone Kiro profiles that sign in with AWS IAM Identity Center on their own, each with its own name, start URL and region, kept apart from your Claude and Pi accounts and from subscription pools.
