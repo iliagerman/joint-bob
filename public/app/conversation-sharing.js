@@ -73,17 +73,35 @@ const personalButton = document.createElement("button");
 personalButton.className = "ghost compact chat-action";
 personalButton.type = "button";
 personalButton.dataset.testid = "chat-personal-assistant-button";
-personalButton.title = "Open personal assistant";
-personalButton.setAttribute("aria-label", "Open personal assistant");
+personalButton.title = "Create assistant";
+personalButton.setAttribute("aria-label", "Create assistant");
 const personalLabel = document.createElement("span");
 personalLabel.className = "chat-action-label";
-personalLabel.textContent = "Personal assistant";
+personalLabel.textContent = "Create assistant";
 const personalIcon = menuIcon("assistant");
 personalIcon.classList.add("chat-toolbar-icon");
 personalButton.append(personalIcon, personalLabel);
 const personalDialog = document.querySelector("#personalAssistantDialog");
 const personalForm = document.querySelector("#personalAssistantForm");
 let personalConversation;
+let assistantLabelKey = "";
+document.addEventListener("activeConversationChanged", async () => {
+  const projectId = state.activeConversationProjectId || state.activeProjectId;
+  const sessionId = state.activeSessionId;
+  const key = JSON.stringify([projectId, state.engine, sessionId]);
+  if (key === assistantLabelKey) return;
+  assistantLabelKey = key;
+  if (!projectId || !sessionId) return;
+  try {
+    const { assistants } = await api("/api/personal-assistants");
+    if (assistantLabelKey !== key) return;
+    const exists = assistants.some(entry => entry.projectId === projectId && entry.engine === state.engine && entry.sessionId === sessionId);
+    const label = exists ? "Open personal assistant" : "Create assistant";
+    personalButton.title = label;
+    personalButton.setAttribute("aria-label", label);
+    personalLabel.textContent = label;
+  } catch (error) { toast(error.message); }
+});
 personalButton.addEventListener("click", async () => {
   const projectId = state.activeConversationProjectId || state.activeProjectId;
   const sessionId = state.activeSessionId;

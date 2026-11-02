@@ -20,6 +20,10 @@
     article { border-top:1px solid #343939; padding:18px 0; } article:first-of-type { border:0; } article h3 { margin:0 0 4px; font-size:1rem; }
     .images { display:flex; gap:8px; overflow-x:auto; margin:10px 0; } .images img { max-height:180px; max-width:200px; border-radius:8px; object-fit:contain; background:#101313; }
     #message { min-height:24px; color:#9adcca; } .danger { color:#ffc9c3; } .hidden { display:none; }
+    #timeline { display:flex; flex-direction:column; gap:12px; max-height:55vh; overflow:auto; padding:4px; }
+    .chat-bubble { max-width:92%; padding:12px 14px; border:1px solid #343939; border-radius:14px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .chat-bubble.user { align-self:flex-end; background:#20332e; } .chat-bubble.assistant { align-self:flex-start; background:#222827; }
+    #chat-form textarea { min-height:72px; } #chat-form button { margin-top:8px; }
     dialog { max-width:min(440px, calc(100vw - 40px)); padding:24px; border:1px solid #49514f; border-radius:18px; background:#1b201f; color:#eee; overflow-wrap:anywhere; }
     dialog::backdrop { background:#0009; }
   </style>
@@ -29,12 +33,14 @@
   <p id="message" role="status" aria-live="polite"></p>
   <section id="chooser"><h2>Assistants</h2><div id="assistants"></div></section>
   <main id="detail" class="hidden">
-    <section><div class="row"><a id="chat" class="primary">Open conversation</a><button id="copy" type="button">Copy assistant link</button></div>
-      <p class="muted">This assistant uses your existing conversation. Open conversation to chat. Save instructions and access below; they apply on its next turn. Bookmark this page on Mac or add it to your phone's home screen. You can also reopen it from the assistant icon in that conversation.</p>
+    <section><h2>Chat</h2><div id="timeline" aria-live="polite"></div><form id="chat-form"><label for="chat-message">Message</label><textarea id="chat-message" maxlength="20000" required placeholder="What would you like help with?"></textarea><button class="primary" type="submit">Send</button></form>
+      <div class="row" style="margin-top:12px"><a id="chat">Open source conversation</a><button id="copy" type="button">Copy assistant link</button></div>
     </section>
+    <section><h2>Automations</h2><p class="muted">Create a scheduled task or webhook that targets this assistant's source conversation. It will use the assistant's current instructions and access settings.</p><div class="row"><button id="new-scheduled-task" data-testid="assistant-new-scheduled-task" type="button">Scheduled task</button><button id="new-webhook" data-testid="assistant-new-webhook" type="button">Webhook</button></div></section>
     <section><h2>Instructions</h2><form id="settings">
       <label for="name">Name</label><input id="name" required maxlength="100">
       <label for="instructions">What should this assistant do?</label><textarea id="instructions" maxlength="20000" placeholder="When comparing offers, cite each original link and flag missing details."></textarea>
+      <label for="classifier">Conversation routing classifier</label><select id="classifier"><option value="typesafe">TypeSafe</option><option value="laya">Laya</option></select>
       <label><input id="allow-browser" type="checkbox" style="width:auto"> Allow browser use</label>
       <label><input id="allow-terminal" type="checkbox" style="width:auto"> Allow terminal use</label>
       <p class="muted">Disabled tools are removed before each turn. Skills and MCP servers use conversation-scoped settings in Joint Bob.</p>

@@ -9,6 +9,8 @@ import { api, savePreferences } from "./app/api.js";
 import { installConversationSwitcher } from "./app/conversation-switcher.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
 import { openSettings } from "./app/settings.js";
+import { openScheduledTasks } from "./app/cron.js";
+import { openAssistantWebhook } from "./app/webhooks.js";
 import { runChatShortcut } from "./app/chat-shortcuts.js";
 import { syncShortcutHints } from "./app/shortcut-hints.js";
 import { focusTopmostInput } from "./app/focus-input.js";
@@ -264,5 +266,27 @@ setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
 syncNotifyButton();
 updateInstallButton();
 initializeApplication()
+  .then(async () => {
+    const parameters = new URLSearchParams(location.search);
+    const action = parameters.get("assistantAction");
+    if (!action) return;
+    const projectId = parameters.get("projectId");
+    const sessionId = parameters.get("sessionId");
+    const assistantId = parameters.get("assistantId");
+    const session = state.sessions.find(item => item.id === sessionId);
+    if (!projectId || !sessionId || !session || session.id !== sessionId) throw new Error("Open this assistant conversation before creating an automation");
+    parameters.delete("assistantAction"); parameters.delete("assistantId");
+    history.replaceState({}, "", `${location.pathname}?${parameters}${location.hash}`);
+    if (action === "cron") { await openScheduledTasks(projectId, session); return; }
+    if (action === "webhook") {
+      const { assistants } = await api("/api/personal-assistants");
+      const assistant = assistants.find(entry => entry.id === assistantId && entry.projectId === projectId && entry.sessionId === sessionId);
+      if (!assistant) throw new Error("Assistant not found");
+      await openSettings("webhooks");
+      await openAssistantWebhook(assistant);
+      return;
+    }
+    throw new Error("Unknown assistant automation");
+  })
   .catch((error) => toast(error.message))
   .finally(revealApplication);

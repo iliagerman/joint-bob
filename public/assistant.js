@@ -5,6 +5,7 @@ let assistant;
 let csrf;
 let sharedImages = [];
 let shareDatabase;
+let pendingTurn = null;
 async function pendingShare() {
   if (!params.has("share")) return null;
   shareDatabase = await new Promise((resolve, reject) => {
@@ -49,6 +50,14 @@ function confirmItemDeletion(title) {
   dialog.returnValue = "";
   dialog.showModal();
   return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), { once: true }));
+}
+async function showTranscript() {
+  const target = document.querySelector("#timeline"); target.replaceChildren();
+  const { timeline } = await request(`/api/personal-assistants/${assistant.id}/transcript`);
+  for (const item of timeline) {
+    const bubble = text(target, "div", item.text); bubble.className = `chat-bubble ${item.role === "user" ? "user" : "assistant"}`;
+  }
+  target.scrollTop = target.scrollHeight;
 }
 async function showItems() {
   const target = document.querySelector("#items"); target.replaceChildren();
@@ -116,6 +125,7 @@ async function open(entry) {
   document.querySelector("#instructions").value = entry.instructions;
   document.querySelector("#allow-browser").checked = entry.allowBrowser;
   document.querySelector("#allow-terminal").checked = entry.allowTerminal;
+  document.querySelector("#classifier").value = entry.classifierId || "typesafe";
   document.querySelector("#chat").href = link();
   document.querySelector("#resources").href = link();
   if (params.get("url")) document.querySelector("#url").value = params.get("url");
@@ -130,7 +140,7 @@ async function open(entry) {
       notify(`${sharedImages.length} shared screenshot(s) ready. Review and save.`);
     } else notify("Shared content expired. Share it again.", true);
   }
-  await Promise.all([showItems(), showSecrets(), showMcp()]);
+  await Promise.all([showItems(), showSecrets(), showMcp(), showTranscript()]);
 }
 document.querySelector("#secrets").addEventListener("submit", async event => {
   event.preventDefault();
@@ -146,7 +156,7 @@ const fileData = (file) => new Promise((resolve, reject) => {
 document.querySelector("#settings").addEventListener("submit", async event => {
   event.preventDefault();
   try {
-    const { assistant: updated } = await request(`/api/personal-assistants/${assistant.id}`, { method: "PUT", body: JSON.stringify({ projectId: assistant.projectId, engine: assistant.engine, sessionId: assistant.sessionId, name: document.querySelector("#name").value, instructions: document.querySelector("#instructions").value, allowBrowser: document.querySelector("#allow-browser").checked, allowTerminal: document.querySelector("#allow-terminal").checked }) });
+    const { assistant: updated } = await request(`/api/personal-assistants/${assistant.id}`, { method: "PUT", body: JSON.stringify({ projectId: assistant.projectId, engine: assistant.engine, sessionId: assistant.sessionId, name: document.querySelector("#name").value, instructions: document.querySelector("#instructions").value, classifierId: document.querySelector("#classifier").value, allowBrowser: document.querySelector("#allow-browser").checked, allowTerminal: document.querySelector("#allow-terminal").checked }) });
     assistant = updated; document.querySelector("#heading").textContent = updated.name; notify("Instructions saved");
   } catch (error) { notify(error.message, true); }
 });
@@ -164,11 +174,38 @@ document.querySelector("#capture").addEventListener("submit", async event => {
 });
 document.querySelector("#save-mcp").addEventListener("click", async () => {
   try {
-    const { assistant: updated } = await request(`/api/personal-assistants/${assistant.id}`, { method: "PUT", body: JSON.stringify({ projectId: assistant.projectId, engine: assistant.engine, sessionId: assistant.sessionId, name: document.querySelector("#name").value, instructions: document.querySelector("#instructions").value, allowBrowser: document.querySelector("#allow-browser").checked, allowTerminal: document.querySelector("#allow-terminal").checked, mcpServerNames: [...document.querySelectorAll("#mcp-options input:checked")].map(box => box.value) }) });
+    const { assistant: updated } = await request(`/api/personal-assistants/${assistant.id}`, { method: "PUT", body: JSON.stringify({ projectId: assistant.projectId, engine: assistant.engine, sessionId: assistant.sessionId, name: document.querySelector("#name").value, instructions: document.querySelector("#instructions").value, classifierId: document.querySelector("#classifier").value, allowBrowser: document.querySelector("#allow-browser").checked, allowTerminal: document.querySelector("#allow-terminal").checked, mcpServerNames: [...document.querySelectorAll("#mcp-options input:checked")].map(box => box.value) }) });
     assistant = updated; await showMcp(); notify("MCP access saved. Changes take effect on the next turn.");
   } catch (error) { notify(error.message, true); }
 });
-document.querySelector("#refresh").addEventListener("click", () => showItems().catch(error => notify(error.message, true)));
+document.querySelector("#chat-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget; const field = document.querySelector("#chat-message"); const button = form.querySelector("button");
+  const content = field.value.trim(); if (!content) return;
+  if (pendingTurn && pendingTurn.message !== content) { notify("Retry the pending message before editing it.", true); return; }
+  pendingTurn ??= { requestId: crypto.randomUUID(), message: content };
+  button.disabled = true; notify("Thinking…");
+  try {
+    const recentMessages = [...document.querySelectorAll("#timeline .chat-bubble")].slice(-6).map(bubble => bubble.textContent.slice(0, 4000));
+    await request(`/api/personal-assistants/${assistant.id}/turn`, { method: "POST", body: JSON.stringify({ requestId: pendingTurn.requestId, message: content, recentMessages }) });
+    pendingTurn = null; field.value = ""; await showTranscript(); notify("");
+  } catch (error) { await showTranscript().catch(() => {}); notify(error.message, true); }
+  finally { button.disabled = false; }
+});
+document.querySelector("#refresh").addEventListener("click", () => Promise.all([showItems(), showTranscript()]).catch(error => notify(error.message, true)));
+function openAssistantAutomation(action) {
+  const target = new URL("/", location.origin);
+  target.searchParams.set("projectId", assistant.projectId);
+  target.searchParams.set("sessionId", assistant.sessionId);
+  if (assistant.nodeId) target.searchParams.set("nodeId", assistant.nodeId);
+  target.searchParams.set("assistantId", assistant.id);
+  target.searchParams.set("assistantAction", action);
+  const page = window.open(target.toString(), "_blank");
+  if (page) page.opener = null;
+  else notify("Allow pop-ups to open automation controls.", true);
+}
+document.querySelector("#new-scheduled-task").addEventListener("click", () => openAssistantAutomation("cron"));
+document.querySelector("#new-webhook").addEventListener("click", () => openAssistantAutomation("webhook"));
 document.querySelector("#copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(location.origin + `/assistant.html?id=${encodeURIComponent(assistant.id)}`); notify("Assistant link copied"); }
   catch (error) { notify(error.message, true); }

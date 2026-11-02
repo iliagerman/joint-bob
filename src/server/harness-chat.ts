@@ -474,7 +474,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
       if (assistantSettings) {
         const available = connection.shared.session.tools();
         const active = available.filter(tool => tool.active).map(tool => tool.name);
-        const baseline = await personalAssistantToolBaseline(queued.author!.accountId, assistantSettings.id, active);
+        const baseline = await personalAssistantToolBaseline(queued.author!.accountId, assistantSettings.id, connection.engine, connection.shared.session.id, active);
         const allowed = filterPersonalAssistantTools(baseline, assistantSettings);
         if (allowed.length !== active.length || allowed.some(name => !active.includes(name))) await connection.shared.session.setTools(allowed);
         if (!assistantSettings.allowBrowser) revokeBrowserAgentTokens(connection.project.id, connection.conversationId);

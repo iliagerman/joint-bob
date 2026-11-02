@@ -45,6 +45,8 @@ let models = [];
 let secretAccounts = [];
 let selectedSecretIds = new Set();
 let deliveries = [];
+let assistantTarget = null;
+let webhooksLoading = null;
 
 const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComponent(field.owner.value)}`;
 /** Addresses the open webhook; the files, skills and memory modules build their requests with it. */
@@ -324,21 +326,22 @@ function syncKind() {
   field.conversationLabel.hidden = !conversation;
   byId("webhooksTitleTemplateLabel").hidden = conversation;
   field.harness.disabled = conversation;
-  if (conversation) void fillConversations(editing?.target.sessionId).catch((error) => say(errorText(error), "error"));
+  if (conversation) void fillConversations(editing?.target.sessionId ?? assistantTarget?.sessionId).catch((error) => say(errorText(error), "error"));
 }
 
 /** Puts a webhook's saved values (or the defaults for a new one) into the Setup and Access fields. */
 async function fillFields(hook) {
-  fillProjects(hook?.target.projectId);
+  const target = hook?.target ?? assistantTarget;
+  fillProjects(target?.projectId);
   const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`);
   await tagPicker.setWorkspace(project.project.type ?? "personal");
   tagPicker.setValue(hook?.tags ?? { managedTagIds: [], manualTags: [] });
   selectedSecretIds = new Set(hook?.secretAccountIds ?? []);
   field.secretSearch.value = "";
   renderSecrets();
-  field.name.value = hook?.name ?? "";
-  field.kind.value = hook?.target.kind ?? "project";
-  fillHarnesses(hook?.target.engine ?? "");
+  field.name.value = hook?.name ?? (assistantTarget ? `${assistantTarget.name} webhook` : "");
+  field.kind.value = target?.kind ?? (assistantTarget ? "conversation" : "project");
+  fillHarnesses(target?.engine ?? "");
   void profilePicker.refresh(hook?.providerProfileId ?? null);
   renderExecution(hook?.model ? `${hook.model.provider}|${hook.model.modelId}` : "", hook?.reasoning ?? "");
   field.context.value = hook?.context ?? "";
@@ -610,18 +613,38 @@ function wire() {
 
 export async function loadWebhooks() {
   wire();
+  if (webhooksLoading) return webhooksLoading;
   if (saving || opening) return;
-  closeDetail();
-  say("");
+  const loading = (async () => {
+    closeDetail();
+    say("");
+    try {
+      const { owners } = await api("/api/webhooks/owners");
+      const selected = field.owner.value;
+      field.owner.replaceChildren(...owners.map(owner => new Option(owner.local ? `${owner.name} (this machine)` : `${owner.name} (twin)`, owner.id)));
+      if (selected) {
+        // Revocation must not silently turn a remote selection into local creation.
+        if (!owners.some(owner => owner.id === selected)) field.owner.add(new Option("Unavailable owner", selected));
+        field.owner.value = selected;
+      }
+      await loadOwner();
+    } catch (error) { say(errorText(error), "error"); }
+  })();
+  webhooksLoading = loading;
+  try { await loading; } finally { if (webhooksLoading === loading) webhooksLoading = null; }
+}
+
+export async function openAssistantWebhook(assistant) {
+  assistantTarget = { projectId: assistant.projectId, sessionId: assistant.sessionId, engine: assistant.engine, name: assistant.name, kind: "conversation" };
   try {
-    const { owners } = await api("/api/webhooks/owners");
-    const selected = field.owner.value;
-    field.owner.replaceChildren(...owners.map(owner => new Option(owner.local ? `${owner.name} (this machine)` : `${owner.name} (twin)`, owner.id)));
-    if (selected) {
-      // Revocation must not silently turn a remote selection into local creation.
-      if (!owners.some(owner => owner.id === selected)) field.owner.add(new Option("Unavailable owner", selected));
-      field.owner.value = selected;
+    await loadWebhooks();
+    if (assistant.nodeId && field.owner.value !== assistant.nodeId) {
+      if (![...field.owner.options].some(option => option.value === assistant.nodeId)) throw new Error("Assistant webhook owner is unavailable");
+      field.owner.value = assistant.nodeId;
+      await loadOwner();
     }
-    await loadOwner();
-  } catch (error) { say(errorText(error), "error"); }
+    await openDetail();
+    await fillConversations(assistant.sessionId);
+    if (field.conversation.value !== assistant.sessionId) throw new Error("Assistant conversation is unavailable for webhook delivery");
+  } finally { assistantTarget = null; }
 }

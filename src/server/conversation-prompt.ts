@@ -3,6 +3,7 @@ import { getClusterNode } from "../cluster.js";
 import { getConversationRecord } from "../conversation-records.js";
 import { cancelQueuedPrompt } from "../prompt-queue.js";
 import { runtimeSocketHeaders } from "./runtime-peers.js";
+import { encodeAuthor, type MessageAuthor } from "../message-authors.js";
 import { server } from "./state.js";
 
 interface ReadyStatus { model: { provider: string; id: string }; thinkingLevel: string }
@@ -13,6 +14,7 @@ export interface ConversationPromptOptions {
   /** Trusted automation assignment, forwarded only over the signed local socket. */
   automationProfile?: { accountId: string; profileId: string | null };
   projectId: string;
+  author?: MessageAuthor;
   engine: string;
   sessionId: string;
   message: string;
@@ -37,7 +39,7 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
   const address = server.address();
   if (!address || typeof address === "string") throw new Error(`${label} executor server is not listening`);
   const url = new URL(`ws://127.0.0.1:${address.port}/ws`);
-  const parameters: Record<string, string> = { projectId: options.projectId, sessionId: options.sessionId, sessionPath: `draft:${options.engine}:${options.sessionId}`, nodeSession: "1", ...(options.worktreeId ? { worktreeId: options.worktreeId } : {}) };
+  const parameters: Record<string, string> = { projectId: options.projectId, sessionId: options.sessionId, sessionPath: `draft:${options.engine}:${options.sessionId}`, nodeSession: "1", ...(options.worktreeId ? { worktreeId: options.worktreeId } : {}), ...(options.author ? { author: encodeAuthor(options.author) } : {}) };
   if (options.automationProfile) parameters.automationProfile = JSON.stringify(options.automationProfile);
   for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
   const record = await getConversationRecord(options.projectId, options.engine, options.sessionId);

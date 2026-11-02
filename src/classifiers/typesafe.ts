@@ -95,6 +95,38 @@ function choiceFromAnswer(answer: ChoiceAnswer): DifficultyClassification | null
 /** A System One server: Jev, or a Laya server, which answers the same requests. */
 export interface SystemOneTarget { endpoint: string; model: string; stateCharacters: number; timeoutMs: number }
 
+export interface SystemOneChoice { choice: string; confidence: number }
+
+/** Selects one supplied option without coupling conversation routing to difficulty scoring. */
+export async function classifyConversationChoiceWithSystemOne(target: SystemOneTarget, state: string, questionId: string, criteria: Record<string, string>, apiKey: string, fetchImpl: typeof fetch = fetch): Promise<SystemOneChoice | null> {
+  if (!state.trim() || !Object.keys(criteria).length) return null;
+  let response: Response | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const candidate = await fetchImpl(target.endpoint, {
+        method: "POST",
+        headers: { ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), "Content-Type": "application/json" },
+        body: JSON.stringify({ state: state.slice(-target.stateCharacters), model: target.model, questions: { [questionId]: {
+          type: "choice",
+          instructions: "Choose the single action that best handles the new user message. Select a topic option only when the message should resume that exact saved conversation. Choose new_topic only when the user starts a distinct subject. Choose recall_history when the user asks what happened or was decided in past conversations without asking to resume that work.",
+          criteria,
+        } } }),
+        signal: AbortSignal.timeout(target.timeoutMs),
+      });
+      if (candidate.ok || (candidate.status !== 429 && candidate.status < 500) || attempt === MAX_ATTEMPTS) { response = candidate; break; }
+    } catch { if (attempt === MAX_ATTEMPTS) return null; }
+  }
+  if (!response?.ok) return null;
+  let body: unknown;
+  try { body = await response.json(); } catch { return null; }
+  const answers = (body as { answers?: unknown } | null)?.answers;
+  const answer = answers && typeof answers === "object" && !Array.isArray(answers) ? (answers as Record<string, unknown>)[questionId] : undefined;
+  if (!answer || typeof answer !== "object" || Array.isArray(answer)) return null;
+  const value = answer as { type?: unknown; choice?: unknown; confidence?: unknown };
+  if (value.type !== "choice" || typeof value.choice !== "string" || !Object.hasOwn(criteria, value.choice) || typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) return null;
+  return { choice: value.choice, confidence: value.confidence };
+}
+
 const JEV: SystemOneTarget = { endpoint: TYPESAFE_ENDPOINT, model: TYPESAFE_MODEL, stateCharacters: STATE_CHARACTER_LIMIT, timeoutMs: REQUEST_TIMEOUT_MS };
 
 async function postOnce(target: SystemOneTarget, text: string, apiKey: string, context: string | DifficultyClassifierContext, fetchImpl: typeof fetch): Promise<Response> {
