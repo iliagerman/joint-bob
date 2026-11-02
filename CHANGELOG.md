@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.191.1 — 2026-11-01
+
+- Changed the Joint Bob logo in the header, the Activity and story screens, the install banner and the startup screen to draw without its dark square, so it sits on the page background. The app icon and browser tab icon keep the square.
+
 ## 2.191.0 — 2026-11-01
 
 - Changed closing the Activity overview movie to hide it instead of leaving it playing, with a dock in the corner that shows whether it is answering, has an answer ready, or is paused, and opens it again where it left off.
