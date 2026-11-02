@@ -180,9 +180,7 @@ app.get("/api/clusters", handler(async (_request, response) => {
     });
     return { ...getSharingCluster(db, membership.clusterId), members,
       autoShareProjects: membership.autoShareProjects, pendingDeliveries: pending.get(membership.clusterId) ?? 0,
-      subscriptionPool: getClusterSubscriptionPool(db, membership.clusterId) ?? null,
-      // The relay manages these groups; the subscription pool routes refuse them (manualCluster).
-      relayGroup: Boolean(db.prepare("SELECT 1 FROM relay_sharing_groups WHERE cluster_id=?").get(membership.clusterId)) };
+      subscriptionPool: getClusterSubscriptionPool(db, membership.clusterId) ?? null };
   });
   response.json({ clusters });
 }));
@@ -197,7 +195,6 @@ app.post("/api/clusters/:clusterId/subscription-pool", handler(async (request, r
   const person = clusterPerson(response), clusterId = uuid.parse(request.params.clusterId);
   const payload = poolAssignmentRequestSchema.parse(request.body);
   const local = await getClusterNode(), db = await clusterV2Database();
-  manualCluster(db, clusterId);
   if (!accountInCluster(db, person.accountId, clusterId)) throw new ClusterV2HttpError(404, "Not found");
   const manifest = poolManifest(person.accountId, payload.poolId), manager = clusterManager(db, clusterId);
   const assignment = manager === local.id
@@ -212,7 +209,6 @@ app.delete("/api/clusters/:clusterId/subscription-pool", handler(async (request,
   const person = clusterPerson(response), clusterId = uuid.parse(request.params.clusterId);
   const payload = poolAssignmentRequestSchema.parse(request.body);
   const local = await getClusterNode(), db = await clusterV2Database();
-  manualCluster(db, clusterId);
   if (!accountInCluster(db, person.accountId, clusterId)) throw new ClusterV2HttpError(404, "Not found");
   getSubscriptionPool(person.accountId, payload.poolId);
   const manager = clusterManager(db, clusterId);
@@ -342,34 +338,34 @@ app.post("/api/cluster/v2/membership/invitations", handler(async (request, respo
 }));
 app.post("/api/cluster/v2/subscription-pools/capability", handler(async (request, response) => {
   const sender = machineOnly(response), payload = z.object({ clusterId: uuid }).strict().parse(request.body);
-  const db = await clusterV2Database(); manualCluster(db, payload.clusterId);
+  const db = await clusterV2Database();
   if (!listSharingClusterMembers(db, payload.clusterId).some(({ nodeId }) => nodeId === sender)) throw new ClusterV2HttpError(403, "Forbidden");
   response.json({ features: ["subscription-pools-v1"] });
 }));
 app.post("/api/cluster/v2/subscription-pools/snapshot", handler(async (request, response) => {
   const sender = machineOnly(response), payload = z.object({ clusterId: uuid }).strict().parse(request.body);
-  const local = await getClusterNode(), db = await clusterV2Database(); manualCluster(db, payload.clusterId);
+  const local = await getClusterNode(), db = await clusterV2Database();
   if (clusterManager(db, payload.clusterId) !== local.id || !listSharingClusterMembers(db, payload.clusterId).some(({ nodeId }) => nodeId === sender)) throw new ClusterV2HttpError(403, "Forbidden");
   const assignment = getClusterSubscriptionPool(db, payload.clusterId);
   response.json(assignment ? signedPoolAssignment(db, local.id, assignment) : { assignment: null });
 }));
 app.post("/api/cluster/v2/subscription-pools/assign", handler(async (request, response) => {
   const sender = machineOnly(response), payload = poolAssignMachineSchema.parse(request.body);
-  const local = await getClusterNode(), db = await clusterV2Database(); manualCluster(db, payload.clusterId);
+  const local = await getClusterNode(), db = await clusterV2Database();
   if (sender !== payload.poolOwnerNodeId) throw new ClusterV2HttpError(403, "Only the pool owner node may assign it");
   const assignment = await assignPoolAtManager(db, local.id, payload.clusterId, sender, payload.manifest as ClusterSubscriptionPoolManifest, payload.expectedEpoch);
   response.json(signedPoolAssignment(db, local.id, assignment));
 }));
 app.post("/api/cluster/v2/subscription-pools/clear", handler(async (request, response) => {
   const sender = machineOnly(response), payload = poolClearMachineSchema.parse(request.body);
-  const local = await getClusterNode(), db = await clusterV2Database(); manualCluster(db, payload.clusterId);
+  const local = await getClusterNode(), db = await clusterV2Database();
   if (sender !== payload.poolOwnerNodeId || !listSharingClusterMembers(db, payload.clusterId).some(({ nodeId }) => nodeId === sender)) throw new ClusterV2HttpError(403, "Only a current pool owner member may remove it");
   const assignment = await clearPoolAtManager(db, local.id, payload.clusterId, sender, payload.poolId, payload.expectedEpoch);
   response.json(signedPoolAssignment(db, local.id, assignment));
 }));
 app.post("/api/cluster/v2/subscription-pools/authorize-token", handler(async (request, response) => {
   const sender = machineOnly(response), payload = poolAuthorizeMachineSchema.parse(request.body);
-  const local = await getClusterNode(), db = await clusterV2Database(); manualCluster(db, payload.clusterId);
+  const local = await getClusterNode(), db = await clusterV2Database();
   if (clusterManager(db, payload.clusterId) !== local.id || sender !== payload.poolOwnerNodeId
     || !clusterPoolProfileAuthorized(db, payload.clusterId, sender, payload.requesterNodeId, payload.poolId, payload.profileId)) {
     throw new ClusterV2HttpError(403, "Forbidden");

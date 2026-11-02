@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.201.0 — 2026-11-02
+
+- Relay groups can now take a subscription pool, like a cluster: projects shared through the relay group use that pool for every member, while each person's own choices keep applying to their other projects.
+- While a pool is attached to a relay group, only machines that support pools can join it.
+
 ## 2.200.0 — 2026-11-02
 
 - When nothing is chosen and you have exactly one profile for a provider, that profile is now used automatically, and Assignments shows it as Automatic. A single Pi profile is used for the providers it holds.

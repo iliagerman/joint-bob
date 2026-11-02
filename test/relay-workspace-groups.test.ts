@@ -48,3 +48,41 @@ test("relay workspace group admits only approved machines and removes revoked ma
     assert.throws(() => redeemRelaySharingInvitation(server, relay, node, request, invitation.secret), /admitted/);
   } finally { server.close(); client.close(); }
 });
+
+test("a relay group takes a subscription pool, and then admits only machines that support pools", async () => {
+  const { setClusterSubscriptionPool, getClusterSubscriptionPool, clearClusterSubscriptionPool } = await import("../src/provider-profiles/pool-sharing.js");
+  const server = new DatabaseSync(":memory:"), client = new DatabaseSync(":memory:"), late = new DatabaseSync(":memory:");
+  try {
+    const relay = randomUUID(), owner = randomUUID(), joiner = randomUUID();
+    const identity = getOrCreateClusterIdentity(server, relay);
+    ensureRelaySchema(server);
+    saveServingSettings(server, { ...servingSettings(server), enabled: true, origin: "http://localhost:9124" });
+    const clusterId = ensureRelaySharingGroup(server, relay, "Pool relay");
+    const join = (db: DatabaseSync, nodeId: string) => {
+      const peer = getOrCreateClusterIdentity(db, nodeId);
+      ensureRelaySchema(db);
+      admitMachine(server, nodeId, peer.publicKey, "Fixture member", "test");
+      const invitation = relaySharingInvitation(server, relay, nodeId, "Pool relay")!;
+      return { invitation, request: prepareMembershipJoin(db, { nodeId, name: "Fixture member", url: virtualRelayUrl(nodeId) }, invitation, clusterPublicKeyFingerprint(identity.publicKey), randomUUID()) };
+    };
+    const first = join(client, owner);
+    assert.equal(first.invitation.body.requiredFeatures, undefined, "no pool attached yet, so nothing extra is required");
+    redeemRelaySharingInvitation(server, relay, owner, first.request, first.invitation.secret);
+
+    // The relay manages the group, so it is the manager that signs the pool assignment.
+    const manifest = { poolId: randomUUID(), name: "Team", fallbackModels: {}, members: [{ profileId: randomUUID(), provider: "claude" as const, label: "Claude", position: 0 }] };
+    setClusterSubscriptionPool(server, relay, clusterId, owner, manifest, 1);
+    assert.equal(getClusterSubscriptionPool(server, clusterId)?.poolOwnerNodeId, owner);
+
+    const second = join(late, joiner);
+    assert.deepEqual(second.invitation.body.requiredFeatures, ["subscription-pools-v1"], "while a pool is attached, the relay's invitation requires pool support");
+    assert.throws(() => redeemRelaySharingInvitation(server, relay, joiner, { ...second.request, features: [] }, second.invitation.secret), /Pool protocol support/);
+    redeemRelaySharingInvitation(server, relay, joiner, second.request, second.invitation.secret);
+    assert.deepEqual(listSharingClusterMembers(server, clusterId).map((member) => member.nodeId), [relay, owner, joiner]);
+    for (const path of ["capability", "snapshot", "authorize-token", "token"]) {
+      assert.equal(relayPeerRequestAllowed(server, relay, joiner, `/api/cluster/v2/subscription-pools/${path}`), true, `relay members reach the pool route ${path}, which checks membership itself`);
+    }
+    clearClusterSubscriptionPool(server, relay, clusterId, owner, manifest.poolId, 1);
+    assert.equal(getClusterSubscriptionPool(server, clusterId), undefined);
+  } finally { server.close(); client.close(); late.close(); }
+});

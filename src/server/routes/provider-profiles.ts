@@ -227,8 +227,7 @@ app.post("/api/cluster/v2/subscription-pools/token", route(async (request, respo
   const sender = response.locals.machineProtocol === 2 && typeof response.locals.machineNodeId === "string" ? response.locals.machineNodeId : undefined;
   if (!sender) { sendError(response, 401, "Unauthorized"); return; }
   const input = clusterTokenRequestSchema.parse(request.body), local = await getClusterNode(), db = await clusterV2Database();
-  if (db.prepare("SELECT 1 FROM relay_sharing_groups WHERE cluster_id=?").get(input.clusterId)
-    || !clusterPoolProfileAuthorized(db, input.clusterId, local.id, sender, input.poolId, input.profileId)) { sendError(response, 403, "Forbidden"); return; }
+  if (!clusterPoolProfileAuthorized(db, input.clusterId, local.id, sender, input.poolId, input.profileId)) { sendError(response, 403, "Forbidden"); return; }
   const selected = providerProfileById(input.profileId), pool = getSubscriptionPool(selected.owner, input.poolId);
   if (selected.shared || !pool.members.some(({ profileId }) => profileId === input.profileId) || !accountInCluster(db, selected.owner, input.clusterId)) { sendError(response, 403, "Forbidden"); return; }
   await authorizeClusterToken(db, local.id, sender, input);

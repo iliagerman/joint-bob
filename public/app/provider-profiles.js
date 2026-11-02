@@ -399,11 +399,10 @@ function clustersSection() {
   if (!clusters.length) return section;
   const list = el("div", { className: "cluster-pool-list" });
   for (const cluster of clusters) list.append(clusterPoolRow(cluster));
-  section.append(sectionHeader("Cluster pools", "A pool assigned to a cluster is used by every member, whatever their own choices, but only in projects shared through that cluster; everyone's choices keep applying to their other projects. Every current member must support pools. To attach one profile, make a pool with just that profile."), list);
+  section.append(sectionHeader("Cluster pools", "A pool assigned to a cluster is used by every member, whatever their own choices, but only in projects shared through that cluster; everyone's choices keep applying to their other projects. Every current member must support pools; for a relay group, so must the relay. To attach one profile, make a pool with just that profile."), list);
   return section;
 }
 function clusterPoolRow(cluster) {
-  if (cluster.relayGroup) return relayGroupRow(cluster);
   const assignment = cluster.subscriptionPool;
   const ownPool = assignment && poolNamed(assignment.poolId);
   const row = el("div", { testid: "cluster-pool-row", className: "cluster-pool-row" }); row.dataset.clusterId = cluster.id;
@@ -429,12 +428,6 @@ function clusterPoolRow(cluster) {
   picker.onChange(updateSaveState); updateSaveState();
   row.append(el("strong", { text: cluster.name }), picker.root, save);
   if (assignment) row.append(el("span", { className: "profile-status-detail", text: ownPool ? `Assigned pool: ${ownPool.name}` : "This pool must be changed by its owner." }));
-  return row;
-}
-/** The relay manages its groups, and the server refuses pool assignments to them. */
-function relayGroupRow(cluster) {
-  const row = el("div", { testid: "cluster-pool-row", className: "cluster-pool-row relay-group" }); row.dataset.clusterId = cluster.id;
-  row.append(el("strong", { text: cluster.name }), el("span", { testid: "cluster-pool-relay", className: "profile-status-detail", text: "A relay group: the relay manages it, so a pool cannot be attached to it." }));
   return row;
 }
 /** A dry run on the page only: marking a card unavailable never touches a real sign-in. */

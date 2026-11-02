@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { createMembershipCluster, createMembershipInvitation, getMembershipSnapshot, redeemMembershipInvitation, removeMembershipMember, type MembershipJoinRequest, type SignedMembershipSnapshot } from "../cluster-membership.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships, mayReceiveResource, relaySharingGroupActive } from "../cluster-sharing-policy.js";
 import { ensurePeerEndpointSchema, recordMembershipEndpoints } from "../cluster-peer-endpoints.js";
+import { getClusterSubscriptionPool } from "../provider-profiles/pool-sharing.js";
 import { relayMachine } from "./store.js";
 import { virtualRelayUrl } from "./protocol.js";
 
@@ -17,6 +18,8 @@ export function relayPeerRequestAllowed(db: DatabaseSync, local: string, peer: s
   if (!groups.some(group => relaySharingGroupActive(db, group.cluster_id))) return false;
   // Social requests (directory, groups, direct requests) authorize their own operation and account.
   if (pathname.startsWith("/api/cluster/v2/social/")) return true;
+  // Pool routes check membership of the named group, the manager's signature, and the pool's members themselves.
+  if (pathname.startsWith("/api/cluster/v2/subscription-pools/")) return true;
   if (["/api/cluster/v2/resources/policy", "/api/cluster/v2/membership/snapshot", "/api/cluster/v2/membership/descriptor", "/api/cluster/v2/workspaces/manifest", "/api/cluster/v2/workspaces/changed"].includes(pathname)) return true;
   const projects = db.prepare("SELECT resource_id FROM sharing_resource_owners WHERE kind='project'").all() as Array<{resource_id: string}>;
   return projects.some(project => mayReceiveResource(db, local, "project", project.resource_id) && mayReceiveResource(db, peer, "project", project.resource_id));
@@ -47,12 +50,15 @@ export function ensureRelaySharingGroup(db: DatabaseSync, relayNodeId: string, n
 export function relaySharingInvitation(db: DatabaseSync, relayNodeId: string, nodeId: string, name: string) {
   if (relayMachine(db, nodeId)?.status !== "admitted") throw new Error("Machine is not admitted to this relay");
   const clusterId = ensureRelaySharingGroup(db, relayNodeId, name);
-  return createMembershipInvitation(db, relayNodeId, relayNodeId, clusterId, 1);
+  // While a pool is attached, a machine that cannot honour it must not join, as for a cluster invite.
+  return createMembershipInvitation(db, relayNodeId, relayNodeId, clusterId, 1, Date.now(), getClusterSubscriptionPool(db, clusterId) ? ["subscription-pools-v1"] : []);
 }
 
 export function redeemRelaySharingInvitation(db: DatabaseSync, relayNodeId: string, nodeId: string, request: MembershipJoinRequest, secret: string): SignedMembershipSnapshot {
   const machine = relayMachine(db, nodeId);
   if (machine?.status !== "admitted" || request.member.nodeId !== nodeId || request.member.publicKey !== machine.publicKey || request.clusterId !== relaySharingGroupId(relayNodeId)) throw new Error("Machine is not admitted to this relay");
+  // An invitation issued before a pool was attached does not carry the requirement.
+  if (getClusterSubscriptionPool(db, request.clusterId) && !request.features?.includes("subscription-pools-v1")) throw new Error("Pool protocol support is required to join this relay group");
   const snapshot = redeemMembershipInvitation(db, relayNodeId, request, secret);
   recordMembershipEndpoints(db, snapshot);
   return snapshot;
