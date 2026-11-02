@@ -205,6 +205,7 @@ export const opSchemas = {
     availablePeers: z.array(z.string()).optional(),
     inFlight: z.array(z.union([z.string(), z.object({ share: z.string(), path: z.string() })])).optional(),
     shares: z.array(z.string()).optional(),
+    actions: z.enum(["fetch", "local"]).optional(),
   }),
   /** Writes what a transfer brought (or a move, a local copy) into the tree (§5.5); builtin phase only. */
   applyBatch: z.object({ share: z.string(), items: z.array(applyItemSchema).max(1000) }),

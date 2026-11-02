@@ -761,9 +761,13 @@ export class FileSyncDb {
     return row.p === null ? undefined : row.p as number;
   }
 
-  /** Unblocked creates and updates of one priority, every share, in transfer order: smallest first (need_order). */
-  needCreates(priority: number, offset: number, limit: number): SharedNeedRow[] {
-    return (this.statement(`SELECT share, ${NEED_COLUMNS} FROM need WHERE blocked = 0 AND priority = ? AND (action = 'delete') = 0 ORDER BY t_size, share, path LIMIT ? OFFSET ?`)
+  /**
+   * Unblocked creates and updates of one priority, every share, in transfer order: smallest first (need_order).
+   * `actions` keeps only downloads ("fetch") or only what is done on this disk ("local": folders, links, renames, metadata).
+   */
+  needCreates(priority: number, offset: number, limit: number, actions?: "fetch" | "local"): SharedNeedRow[] {
+    const only = actions === "fetch" ? " AND action = 'fetch'" : actions === "local" ? " AND action <> 'fetch'" : "";
+    return (this.statement(`SELECT share, ${NEED_COLUMNS} FROM need WHERE blocked = 0 AND priority = ? AND (action = 'delete') = 0${only} ORDER BY t_size, share, path LIMIT ? OFFSET ?`)
       .all(priority, limit, offset) as Row[]).map(toSharedNeed);
   }
 

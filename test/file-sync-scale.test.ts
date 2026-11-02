@@ -27,6 +27,7 @@ test(`the need queue works through a ${ROWS.toLocaleString("en")}-row delete bac
   const result = JSON.parse(run.stdout.trim().split("\n").pop()!) as {
     seeded: number; timings: Record<string, number>; heapPeakMb: number; first: number; second: number; overlap: number;
     actions: string[]; foldersFirst: number; pendingFiles: number; restored: number;
+    downloads: number; downloadShares: string[]; whilePulling: number; unsplitProjectItems: number;
   };
   t.diagnostic(JSON.stringify({ timings: result.timings, heapPeakMb: result.heapPeakMb }));
   assert.equal(result.seeded, ROWS);
@@ -34,7 +35,15 @@ test(`the need queue works through a ${ROWS.toLocaleString("en")}-row delete bac
   assert.deepEqual([result.first, result.second, result.overlap, result.actions, result.foldersFirst], [1088, 1088, 0, ["delete"], 0]);
   // One worktree's rows (its folder, 40 subfolders, 4,000 files), and a priority put back once it expired.
   assert.deepEqual([result.pendingFiles, result.restored], [4041, 1]);
+  // A small project's 50 downloads behind that backlog: one batch in transfer order holds none of them, which kept a
+  // project's files waiting for hours behind 200,000 worktree deletes (2026-11-02). Read on their own, they all come out.
+  assert.equal(result.unsplitProjectItems, 0);
+  assert.deepEqual([result.downloads, result.downloadShares], [50, ["project:p2"]]);
+  // While the big share is still pulling, the other shares' local work is read without it.
+  assert.equal(result.whilePulling, 0);
   assert.ok(result.timings.nextNeeds! < 400, `nextNeeds took ${result.timings.nextNeeds} ms`);
   assert.ok(result.timings.nextNeedsWithFirstInFlight! < 400, `nextNeeds with a batch in flight took ${result.timings.nextNeedsWithFirstInFlight} ms`);
   assert.ok(result.timings.prioritizeShareAgain! < 1500, `five more whole-share prioritizes took ${result.timings.prioritizeShareAgain} ms`);
+  assert.ok(result.timings.downloadsBehindBacklog! < 400, `downloads behind the backlog took ${result.timings.downloadsBehindBacklog} ms`);
+  assert.ok(result.timings.localWithBigShareHeldBack! < 1000, `local work without the pulling share took ${result.timings.localWithBigShareHeldBack} ms`);
 });

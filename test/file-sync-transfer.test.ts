@@ -146,12 +146,15 @@ class StandIn implements TransferQueue, TransferApplier {
 
   private id(relative: string, target: { sha256: string | null }): string { return `${relative}\n${target.sha256}`; }
 
-  nextNeeds(options: { limit: number; availablePeers?: readonly string[]; inFlight?: Iterable<string> }): { items: TransferItem[]; nextRetryAt?: number } {
+  nextNeeds(options: { limit: number; availablePeers?: readonly string[]; inFlight?: Iterable<string>; shares?: readonly string[]; actions?: "fetch" | "local" }): { items: TransferItem[]; nextRetryAt?: number } {
     const now = this.clock.now();
     const busy = new Set(options.inFlight ?? []);
     const items: TransferItem[] = [];
     let nextRetryAt: number | undefined;
+    if (options.shares && !options.shares.includes(SHARE)) return { items };
     for (const item of this.current()) {
+      // The real queue's split: downloads, or everything done on this disk.
+      if (options.actions && (item.action === "fetch") !== (options.actions === "fetch")) continue;
       const state = this.state.get(this.id(item.path, item.target));
       if (state && state.nextAt > now) { if (Number.isFinite(state.nextAt)) nextRetryAt = Math.min(nextRetryAt ?? Number.POSITIVE_INFINITY, state.nextAt); continue; }
       if (busy.has(`${SHARE}\n${item.path}`)) continue;
@@ -572,4 +575,27 @@ test("downloads tell apply where their bytes came from, so apply can re-check th
   assert.equal(existsSync(path.join(s.b.root, "one.txt")), false);
   assert.deepEqual(s.standIn.inputs.map((input) => [input.path, input.source, Boolean(input.tempPath)]), [["one.txt", "a", true]]);
   assert.deepEqual(readdirSync(s.b.root), [], "the stale temp is gone");
+});
+
+// 2026-11-02: 200,000 worktree deletes sorted ahead of a project's downloads filled every batch the transfer loop read,
+// and the downloads waited for hours. Local work that never runs out stands in for that backlog here.
+test("downloads still start behind a local backlog that fills every batch", { skip: STAND_IN_ONLY }, async (t) => {
+  const s = await pair(t);
+  const own = s.standIn.nextNeeds.bind(s.standIn);
+  const folder = (relative: string): TransferItem => ({
+    share: SHARE, path: relative, action: "mkdir", sources: [], localSources: [], size: 0,
+    target: { path: relative, type: 1, size: 0, mtimeMs: 1, mode: 0o755, sha256: null, target: null, deleted: false, version: { a: 1 }, modifiedBy: "a", seq: 0 },
+  });
+  const backlog = Array.from({ length: 2000 }, (_, index) => folder(`backlog/d${index}`));
+  const reads: Array<string | undefined> = [];
+  s.standIn.nextNeeds = (options) => {
+    reads.push(options.actions);
+    const next = own(options);
+    return options.actions === "fetch" ? next : { ...next, items: [...backlog, ...next.items].slice(0, options.limit) };
+  };
+  writeFileSync(path.join(s.a.root, "wanted.txt"), "wanted");
+  await s.a.scan();
+  await s.until(() => existsSync(path.join(s.b.root, "wanted.txt")));
+  assert.equal(readFileSync(path.join(s.b.root, "wanted.txt"), "utf8"), "wanted");
+  assert.ok(reads.includes("fetch") && reads.includes("local"), `reads: ${[...new Set(reads)].join(", ")}`);
 });

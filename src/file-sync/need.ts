@@ -104,6 +104,11 @@ export interface NextNeedsOptions {
   /** `share\npath` keys (or {share, path}) a transfer is working on. */
   inFlight?: Iterable<string | { share: string; path: string }>;
   shares?: readonly string[];
+  /**
+   * Only rows that download ("fetch") or only what is done on this disk ("local": folders, links, renames, metadata,
+   * deletes); both when absent. The transfer loop reads them apart, so a backlog of one never fills the other's batch.
+   */
+  actions?: "fetch" | "local";
 }
 
 /** What the rows say about one path now: apply re-derives with this before it writes (§5.5.1). */
@@ -1109,7 +1114,7 @@ export class NeedEngine {
     // One priority at a time, so no page ever walks a priority's deletes to reach the next one's creates.
     for (let priority = db.nextNeedPriority(Number.MIN_SAFE_INTEGER); priority !== undefined && items.length < limit; priority = db.nextNeedPriority(priority)) {
       for (let offset = 0; items.length < limit; offset += RECOMPUTE_CHUNK) {
-        const rows = db.needCreates(priority, offset, RECOMPUTE_CHUNK);
+        const rows = db.needCreates(priority, offset, RECOMPUTE_CHUNK, options.actions);
         for (const row of rows) {
           if (items.length >= limit) break;
           if (skip(row)) continue;
@@ -1119,7 +1124,7 @@ export class NeedEngine {
         if (rows.length < RECOMPUTE_CHUNK) break;
       }
       // Creates and updates of this priority are all behind us: its deletes go now, a folder's rows before the folder.
-      if (items.length >= limit || !db.hasNeedDeletes(priority)) continue;
+      if (items.length >= limit || options.actions === "fetch" || !db.hasNeedDeletes(priority)) continue;
       for (const key of db.needDeleteKeys(priority, now)) {
         if (items.length >= limit) break;
         if (!active.has(key.share) || inFlight.has(`${key.share}\n${key.path}`)) continue;

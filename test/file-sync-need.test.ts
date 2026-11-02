@@ -281,6 +281,10 @@ test("creates and updates go smallest first, then deletes with a folder's rows b
   // A peer that cannot be reached right now: its content waits, deletes need no peer.
   assert.deepEqual(q.need.nextNeeds({ limit: 10, availablePeers: [] }).items.map((item) => item.path), ["a/z.txt", "a/b/c.txt", "a/b", "a"]);
   assert.deepEqual(q.need.nextNeeds({ limit: 3 }).items.map((item) => item.path), ["small.txt", "big.txt", "a/z.txt"]);
+  // The transfer loop reads downloads and work on this disk apart, and names the shares that can take work now.
+  assert.deepEqual(q.need.nextNeeds({ limit: 10, actions: "fetch" }).items.map((item) => item.path), ["small.txt", "big.txt"]);
+  assert.deepEqual(q.need.nextNeeds({ limit: 2, actions: "local" }).items.map((item) => item.path), ["a/z.txt", "a/b/c.txt"]);
+  assert.deepEqual(q.need.nextNeeds({ limit: 10, shares: [] }).items, []);
 });
 
 test("priorities: worktree metadata and small files, project, tickets, worktree bulk, baselines; prioritize until it expires", async (t) => {

@@ -72,7 +72,7 @@ export interface TransferItem {
 
 export interface TransferQueue {
   /** Due, unblocked rows in transfer order; `inFlight` holds `share\npath` keys the loop is working on. */
-  nextNeeds(options: { limit: number; availablePeers?: readonly string[]; inFlight?: Iterable<string> }): { items: TransferItem[]; nextRetryAt?: number };
+  nextNeeds(options: { limit: number; availablePeers?: readonly string[]; inFlight?: Iterable<string>; shares?: readonly string[]; actions?: "fetch" | "local" }): { items: TransferItem[]; nextRetryAt?: number };
   /** Tried again later with backoff (or after `delayMs`), when the stored target is still `target`. */
   retryLater(share: string, path: string, reason: string, options?: { delayMs?: number; target?: IndexEntry }): void;
   /** A failure the person has to see (an error row); `retryAfterMs` re-offers it later (not enough disk space). */
@@ -1218,7 +1218,14 @@ export class SyncLayer {
     const available = new Set(this.transferPeers());
     let next: ReturnType<TransferQueue["nextNeeds"]>;
     try {
-      next = transfers.queue.nextNeeds({ limit: TRANSFER_SCAN_LIMIT, availablePeers: [...available], inFlight: this.transferring });
+      // A share still pulling a peer's index applies nothing yet, and while a local job runs no other local work starts.
+      // Rows held back like that must not fill the batch: 200,000 worktree deletes once kept every project's downloads
+      // waiting for hours. Shares that can take work are named, and downloads and local work are read apart.
+      const open = [...shares].filter(([key, share]) => share.spec.phase === "builtin" && !this.sharePulling(key)).map(([key]) => key);
+      const base = { availablePeers: [...available], inFlight: this.transferring, shares: open };
+      const downloads = transfers.queue.nextNeeds({ ...base, limit: TRANSFER_SCAN_LIMIT, actions: "fetch" });
+      const onDisk = this.localJob ? [] : transfers.queue.nextNeeds({ ...base, limit: LOCAL_BATCH * 4, actions: "local" }).items;
+      next = { items: [...onDisk, ...downloads.items], ...(downloads.nextRetryAt !== undefined ? { nextRetryAt: downloads.nextRetryAt } : {}) };
     } catch (error) {
       if (!this.closed) this.warn("fileSync:transfers", `File sync could not read what it needs: ${errorText(error)}`);
       return;
