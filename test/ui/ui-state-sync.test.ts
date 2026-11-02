@@ -303,7 +303,7 @@ test("mark-all clears the inbox at once and keeps working after the dialog close
   } finally { await page.context().close(); }
 });
 
-test("an invalidated pending-review response stays hidden until the trailing scan completes", { timeout: 60_000 }, async () => {
+test("a pending-review scan still lands when more refreshes are asked for while it runs", { timeout: 60_000 }, async () => {
   const page = await openPage();
   try {
     await page.evaluate(async () => { const module = "/app/reviews.js"; await (await import(module)).refreshPendingReviews(); });
@@ -315,13 +315,95 @@ test("an invalidated pending-review response stays hidden until the trailing sca
       else void route.fulfill({ json: { projects: [] } });
     });
     await page.evaluate(async () => { const module = "/app/reviews.js"; void (await import(module)).refreshPendingReviews(); });
-    const old = await first.promise;
+    const slow = await first.promise;
+    // Another project's running conversation asks for a refresh every few seconds, faster than
+    // the scan answers. Discarding the scan for each request froze the counts for good.
     await page.evaluate(async () => { const module = "/app/reviews.js"; void (await import(module)).refreshPendingReviews(); });
-    await old.fulfill({ json: { projects: [{ projectId: "stale-project", projectName: "Old snapshot", sessions: [{ id: "old" }] }] } });
-    const fresh = await second.promise;
-    assert.equal(await page.evaluate(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.some(group => group.projectId === "stale-project"); }), false, "the invalidated read must not bring back reviewed entries while the trailing scan is pending");
-    await fresh.fulfill({ json: { projects: [] } });
+    await slow.fulfill({ json: { projects: [{ projectId: "scanned-project", projectName: "Scanned", sessions: [{ id: "scanned", path: "scanned.jsonl" }] }] } });
+    const trailing = await second.promise;
+    assert.equal(await page.evaluate(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.some((group: { projectId: string }) => group.projectId === "scanned-project"); }), true, "the scan's result is applied while the trailing scan runs");
+    await trailing.fulfill({ json: { projects: [] } });
     await page.waitForFunction(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.length === 0; });
+  } finally { await page.context().close(); }
+});
+
+test("opening a conversation clears it from the inbox and a scan begun before the mark cannot bring it back", { timeout: 60_000 }, async () => {
+  const page = await openPage();
+  try {
+    await page.evaluate(async () => { const module = "/app/reviews.js"; await (await import(module)).refreshPendingReviews(); });
+    const fixture = await page.evaluate(async () => {
+      const module = "/app/state.js";
+      const { state } = await import(module);
+      const session = state.sessions[0];
+      session.reviewState = "needs_review";
+      session.running = false;
+      const groups = [{ projectId: state.activeProjectId, projectName: "Internal Assistant", sessions: [{ id: session.id, path: session.path, title: session.title, updatedAt: session.updatedAt }] }];
+      state.pendingReviews = groups;
+      return { path: session.path, groups };
+    });
+    const scan = deferred<Route>(), mark = deferred<Route>(), afterMark = deferred<Route>();
+    let reads = 0;
+    await page.route("**/api/reviews/pending", (route) => {
+      if (++reads === 1) scan.resolve(route);
+      else if (reads === 2) afterMark.resolve(route);
+      else void route.fulfill({ json: { projects: [] } });
+    });
+    await page.route("**/api/projects/*/sessions/reviewed", (route) => mark.resolve(route));
+    await page.evaluate(async () => { const module = "/app/reviews.js"; void (await import(module)).refreshPendingReviews(); });
+    const staleScan = await scan.promise;
+    await page.locator(`#sessionList [data-session-path=${JSON.stringify(fixture.path)}] .session-card`).click();
+    const markRequest = await mark.promise;
+    const listed = () => page.evaluate(async (sessionPath) => {
+      const module = "/app/state.js";
+      return (await import(module)).state.pendingReviews.some((group: { sessions: Array<{ path: string }> }) => group.sessions.some((entry) => entry.path === sessionPath));
+    }, fixture.path);
+    assert.equal(await listed(), false, "the inbox drops the conversation as soon as it opens");
+    await staleScan.fulfill({ json: { projects: fixture.groups } });
+    await markRequest.fulfill({ status: 204 });
+    const freshScan = await afterMark.promise;
+    assert.equal(await listed(), false, "a scan begun before the mark must not bring the conversation back");
+    await freshScan.fulfill({ json: { projects: [] } });
+    await page.waitForFunction(() => document.querySelector("#pendingReviewsBadge")!.hasAttribute("hidden"));
+  } finally { await page.context().close(); }
+});
+
+test("the review badges, the menu count and the inbox dialog list the same conversations", { timeout: 60_000 }, async () => {
+  const page = await openPage();
+  try {
+    const fixture = await page.evaluate(async () => {
+      const module = "/app/state.js";
+      const { state } = await import(module);
+      const session = state.sessions[0];
+      session.reviewState = "needs_review";
+      session.running = false;
+      return {
+        sessions: state.sessions,
+        title: session.title,
+        // The snapshot is behind the open project's live list: it still holds a conversation that
+        // was reviewed since, and not yet the one that now waits.
+        projects: [
+          { projectId: state.activeProjectId, projectName: "Internal Assistant", sessions: [{ id: "reviewed-since", path: "reviewed-since.jsonl", title: "Reviewed since the scan", agentId: "pi", agentLabel: "Pi", updatedAt: session.updatedAt }] },
+          { projectId: "other-project", projectName: "Other project", sessions: [{ id: "other", path: "other.jsonl", title: "Waiting elsewhere", agentId: "pi", agentLabel: "Pi", updatedAt: session.updatedAt }] },
+        ],
+      };
+    });
+    await page.route("**/api/projects/*/sessions", (route) => route.fulfill({ json: { sessions: fixture.sessions } }));
+    await page.route("**/api/reviews/pending", (route) => route.fulfill({ json: { projects: fixture.projects } }));
+    await page.evaluate(async () => { const module = "/app/reviews.js"; await (await import(module)).refreshPendingReviews(); });
+    const surfaces = () => page.evaluate(() => ({
+      badge: document.querySelector("#pendingReviewsBadge")!.textContent,
+      nav: document.querySelector("#navPendingReviewsBadge")!.textContent,
+      fab: document.querySelector("#focusPendingBadge")!.textContent,
+      menu: document.querySelector("#focusReviewCount")!.textContent,
+      rows: [...document.querySelectorAll("[data-testid=pending-review-option]")].map((row) => (row as HTMLElement).title),
+    }));
+    await page.evaluate(async () => { const module = "/app/reviews.js"; (await import(module)).openPendingReviews(); });
+    await page.getByTestId("pending-review-option").first().waitFor();
+    assert.deepEqual(await surfaces(), { badge: "2", nav: "2", fab: "2", menu: "2", rows: [fixture.title, "Waiting elsewhere"] });
+    // A list refresh that clears the open project's conversation updates every surface, the open dialog too.
+    fixture.sessions[0].reviewState = "reviewed";
+    await page.evaluate(async () => { const module = "/app/socket.js"; await (await import(module)).refreshSessionsQuietly(); });
+    assert.deepEqual(await surfaces(), { badge: "1", nav: "1", fab: "1", menu: "1", rows: ["Waiting elsewhere"] });
   } finally { await page.context().close(); }
 });
 

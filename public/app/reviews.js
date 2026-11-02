@@ -4,7 +4,7 @@ import { loadHarnesses, loadSessionNodes } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
-import { shortSessionTitle } from "./layout.js";
+import { selectedProject, shortSessionTitle } from "./layout.js";
 import { changeSessionOptimistically } from "./optimistic-sessions.js";
 import { renderProjects } from "./project-list.js";
 import { selectProject } from "./project-selection.js";
@@ -15,31 +15,40 @@ import { openSession, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
 
 /**
- * The open project's conversations are the live source for its own review count, so every
- * surface that shows one has to be redrawn together: the list, the inbox badge, and the
- * project rows. Leaving the badge until the next background refresh shows a count that
- * disagrees with the list the user is looking at.
+ * The open project's conversations are the live source for its own review count. Redrawing
+ * the list redraws the project rows, and those redraw every other review surface with them.
  */
 function renderReviewCounts() {
   renderSessions();
-  renderPendingReviewsBadge();
-  renderProjects();
 }
 
 function markSessionReviewed(session) {
   if (session.reviewState !== "needs_review" || session.running) return;
   const projectId = state.activeProjectId;
+  // The inbox snapshot answers for this project once another one is open, so it drops the row
+  // too, and a scan begun before the server stored the mark must not bring it back.
+  dropPendingReview(projectId, session.path);
   void changeSessionOptimistically(session, { patch: { reviewState: "reviewed" } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/reviewed`, {
     method: "PUT",
     body: JSON.stringify({ sessionPath: session.path, updatedAt: session.updatedAt }),
   }), renderReviewCounts).catch((error) => toast(error.message)).finally(async () => {
+    pendingReviewsVersion += 1;
+    refreshPendingReviews().catch((error) => console.warn("Could not refresh pending reviews", error));
     await refreshSessionsQuietly();
     renderReviewCounts();
   });
 }
 
+function dropPendingReview(projectId, sessionPath) {
+  pendingReviewsVersion += 1;
+  state.pendingReviews = state.pendingReviews
+    .map((group) => group.projectId === projectId ? { ...group, sessions: group.sessions.filter((entry) => entry.path !== sessionPath) } : group)
+    .filter((group) => group.sessions.length > 0);
+}
+
+/** The same rule the server's inbox uses: without `updatedAt` there is no watermark to mark. */
 export function reviewableSessions() {
-  return state.sessions.filter((session) => session.reviewState === "needs_review" && !session.running);
+  return state.sessions.filter((session) => session.reviewState === "needs_review" && !session.running && session.updatedAt);
 }
 
 async function markAllSessionsReviewed() {
@@ -59,8 +68,11 @@ async function markAllSessionsReviewed() {
 }
 
 /**
- * The review inbox spans every project, so the badge and the dialog read one server snapshot
- * rather than the active project's in-memory conversations.
+ * The review inbox spans every project, so other projects come from one server snapshot; see
+ * pendingReviewGroups for how the open project's live list is laid over it.
+ * The version moves only when this page marks conversations reviewed: a scan begun before
+ * then could still list them. Other refresh requests leave it alone, because the scan takes
+ * longer than the notices that ask for it arrive, and discarding each one froze the counts.
  */
 let pendingReviewsVersion = 0;
 let pendingReviewsRefreshPromise;
@@ -69,7 +81,6 @@ let pendingReviewsRefreshPending = false;
 let markingAllPending = false;
 
 export function refreshPendingReviews() {
-  pendingReviewsVersion += 1;
   pendingReviewsRefreshPending = true;
   // Project-wide scans must not overlap when socket notices outpace responses.
   return pendingReviewsRefreshPromise ??= refreshPendingReviewSnapshots().finally(() => { pendingReviewsRefreshPromise = null; });
@@ -80,10 +91,9 @@ async function refreshPendingReviewSnapshots() {
     pendingReviewsRefreshPending = false;
     const version = pendingReviewsVersion;
     const body = await api("/api/reviews/pending");
-    // A read begun before mark-all must not bring cleared rows back afterwards.
+    // A read begun before a review mark must not bring cleared rows back afterwards.
     if (version !== pendingReviewsVersion || markingAllPending) continue;
     state.pendingReviews = body.projects;
-    renderPendingReviewsBadge();
     renderProjects();
   }
 }
@@ -100,22 +110,32 @@ export function schedulePendingReviewsRefresh() {
 }
 
 /**
- * Reviews pile up in projects you are not looking at, so the row carries the count.
- * The open project's own conversations are live, so they beat the once-a-minute snapshot;
- * mid-switch the list is empty and not yet loaded, so the snapshot still answers for it.
+ * What waits for review, by project. Every count and the inbox dialog read this one list, so
+ * the badges, the menu and the dialog cannot disagree. The open project's own conversations
+ * are live, so they beat the inbox snapshot; mid-switch the list is empty and not yet loaded,
+ * so the snapshot still answers for it.
  */
+function pendingReviewGroups() {
+  const projectId = state.activeProjectId;
+  if (!projectId || state.sessionsLoading) return state.pendingReviews;
+  const others = state.pendingReviews.filter((group) => group.projectId !== projectId);
+  const sessions = reviewableSessions();
+  if (!sessions.length) return others;
+  const projectName = state.pendingReviews.find((group) => group.projectId === projectId)?.projectName ?? selectedProject()?.name;
+  return [{ projectId, projectName, sessions }, ...others];
+}
+
+/** Reviews pile up in projects you are not looking at, so the row carries the count. */
 export function pendingReviewCountForProject(projectId) {
-  if (projectId === state.activeProjectId && !state.sessionsLoading) return reviewableSessions().length;
-  return state.pendingReviews.find((group) => group.projectId === projectId)?.sessions.length ?? 0;
+  return pendingReviewGroups().find((group) => group.projectId === projectId)?.sessions.length ?? 0;
 }
 
 function pendingReviewCount() {
-  const projectIds = new Set(state.pendingReviews.map((group) => group.projectId));
-  if (state.activeProjectId) projectIds.add(state.activeProjectId);
-  return [...projectIds].reduce((total, projectId) => total + pendingReviewCountForProject(projectId), 0);
+  return pendingReviewGroups().reduce((total, group) => total + group.sessions.length, 0);
 }
 
-function renderPendingReviewsBadge() {
+/** Redraws the badges and the menu count, and the inbox dialog when it is open and its rows changed. */
+export function renderPendingReviews() {
   const count = pendingReviewCount();
   for (const badge of [elements.pendingReviewsBadge, elements.navPendingReviewsBadge, document.querySelector("#focusPendingBadge"), document.querySelector("#focusReviewCount")]) {
     badge.textContent = count > 99 ? "99+" : String(count);
@@ -128,22 +148,31 @@ function renderPendingReviewsBadge() {
     ? `Needs review, ${count} conversation${count === 1 ? "" : "s"}`
     : "Needs review");
   elements.markAllPendingReviewedButton.disabled = count === 0 || markingAllPending;
+  // Rows re-render only when they change, so a refresh does not take focus off a row.
+  if (elements.pendingReviewsDialog.open && pendingReviewsDialogKey() !== renderedDialogKey) renderPendingReviewsDialog();
 }
 
 /** Rows 1-10 carry a digit shortcut, the way the recent conversations list does. */
 let pendingReviewShortcuts = [];
+let renderedDialogKey = "";
+
+function pendingReviewsDialogKey() {
+  return JSON.stringify(pendingReviewGroups().map((group) => [group.projectId, group.sessions.map((entry) => [entry.path, entry.updatedAt, entry.title])]));
+}
 
 function renderPendingReviewsDialog() {
   elements.pendingReviewsList.replaceChildren();
   pendingReviewShortcuts = [];
-  if (!pendingReviewCount()) {
+  renderedDialogKey = pendingReviewsDialogKey();
+  const groups = pendingReviewGroups();
+  if (!groups.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
     empty.textContent = "Nothing is waiting for review.";
     elements.pendingReviewsList.append(empty);
     return;
   }
-  for (const group of state.pendingReviews) {
+  for (const group of groups) {
     const heading = document.createElement("div");
     heading.className = "pending-reviews-group";
     heading.dataset.testid = "pending-reviews-group";
@@ -195,7 +224,7 @@ async function openPendingReview(group, entry) {
  * at the end brings back anything newer or anything a failed project did not clear.
  */
 async function markAllPendingReviewed() {
-  const groups = state.pendingReviews;
+  const groups = pendingReviewGroups();
   if (!groups.length || markingAllPending) return;
   markingAllPending = true;
   pendingReviewsVersion += 1;
@@ -211,6 +240,7 @@ async function markAllPendingReviewed() {
     method: "PUT",
     body: JSON.stringify({ sessions: group.sessions.map((entry) => ({ sessionPath: entry.path, updatedAt: entry.updatedAt })) }),
   })));
+  pendingReviewsVersion += 1;
   markingAllPending = false;
   elements.markAllPendingReviewedButton.removeAttribute("aria-busy");
   await refreshSessionsQuietly();

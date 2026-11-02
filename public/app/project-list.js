@@ -3,7 +3,7 @@ import { openScheduledTasks } from "./cron.js";
 import { elements } from "./elements.js";
 import { filteredProjects } from "./layout.js";
 import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-selection.js";
-import { pendingReviewCountForProject } from "./reviews.js";
+import { pendingReviewCountForProject, renderPendingReviews } from "./reviews.js";
 import { runningCountForProject } from "./running.js";
 import { openResources } from "./resources.js";
 import { openProjectGit } from "./project-git.js";
@@ -38,6 +38,9 @@ export function keepListScroll(container) {
 }
 
 export function renderProjects() {
+  // The badges, the menu count and the inbox read the same per-project counts as these rows,
+  // so they redraw with them and never show a different number.
+  renderPendingReviews();
   keepListScroll(elements.projectList);
   // A background refresh must not leave a menu floating over rows that just moved.
   queueMicrotask(refreshRowMenuAnchor);
