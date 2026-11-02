@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.194.1 — 2026-11-02
+
+- Fixed file sync stopping on a machine "after repeated failures" when another machine removed many large worktrees at once. The removals are now worked through a few at a time instead of all being read in one go.
+
 ## 2.194.0 — 2026-11-02
 
 - Changed the focus interface to be the only mode on phones and small screens, so the "Focus interface (experimental)" switch in Settings is gone. Desktops keep the classic layout.
