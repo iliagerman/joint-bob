@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.193.2 — 2026-11-02
+
+- Fixed auto respond failing with "Select your own subscription profile" when it was stopped before it started, so the stop is reported as a cancellation.
+
 ## 2.193.1 — 2026-11-02
 
 - Fixed the mobile menu button losing its round background. The button is round again, and only the Joint Bob logo inside it is drawn without a dark square.
