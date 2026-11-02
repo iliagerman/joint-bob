@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.201.1 — 2026-11-02
+
+- Kept Activity overview mouths still while narration loads and showed when voice clips are preparing, instead of appearing to speak silently.
+
 ## 2.201.0 — 2026-11-02
 
 - Relay groups can now take a subscription pool, like a cluster: projects shared through the relay group use that pool for every member, while each person's own choices keep applying to their other projects.

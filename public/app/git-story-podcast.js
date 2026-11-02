@@ -249,14 +249,11 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     const token = ++player.token;
     audio.pause();
     audio.removeAttribute("src");
-    voiceNote.hidden = true;
     player.silentLeft = Math.max(MIN_LINE_SECONDS, wordCount(player.lines[index].text) * SECONDS_PER_WORD);
     if (!player.voice) return;
     try {
-      voiceNote.hidden = false;
       const url = await clip(index);
       if (token !== player.token) return;
-      voiceNote.hidden = true;
       audio.src = url;
       audio.playbackRate = player.speed;
       audio.muted = player.muted;
@@ -268,7 +265,6 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   }
 
   function dropVoice(error) {
-    voiceNote.hidden = true;
     player.voice = false;
     audio.pause();
     notify(`The narration failed: ${error.message} The podcast plays silently.`);
@@ -317,7 +313,10 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     const fade = 1 - Math.min(1, (now - player.sceneAt) / 700);
     if (fade > 0) { g.fillStyle = `rgba(0,0,0,${fade})`; g.fillRect(0, 0, W, H); }
     const speaker = player.lines[player.index]?.who;
-    for (const [key, actor] of Object.entries(player.actors)) actor.update(now, dt, player.playing && key === speaker, player.playing);
+    const voiceReady = audio.hasAttribute("src") && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+    voiceNote.hidden = !player.voice || voiceReady;
+    const speaking = player.playing && (!player.voice || (voiceReady && !audio.paused && !audio.ended));
+    for (const [key, actor] of Object.entries(player.actors)) actor.update(now, dt, speaking && key === speaker, player.playing);
     if (player.playing && !player.voice && !player.busy) {
       player.silentLeft -= dt / 1000 * player.speed;
       if (player.silentLeft <= 0) advance();
