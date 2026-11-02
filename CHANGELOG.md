@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.197.1 — 2026-11-02
+
+- Fixed Activity overview and reviews stopping after five minutes while the writer was still making progress; stalled runs now report the timeout instead of a generic cancellation error.
+
 ## 2.197.0 — 2026-11-02
 
 - Added MCP server setup and bulk import for Claude, Pi and Kiro, with the required client included in Joint Bob.

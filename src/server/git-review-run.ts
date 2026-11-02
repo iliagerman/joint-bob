@@ -13,9 +13,9 @@ export class GitReviewRunError extends Error {
   }
 }
 
-// A review turn is explanation-only; it must never run for a very long time. If the
-// model has not finished within this window, the run is cancelled and reported.
-const REVIEW_TURN_TIMEOUT_MS = 5 * 60_000;
+// Long reviews and movie scripts may keep producing output past five minutes.
+// Cancel only when the model has made no progress for this long.
+const REVIEW_IDLE_TIMEOUT_MS = 5 * 60_000;
 const REVIEW_ANSWER_LIMIT = 40_000;
 // The diff handed to the model is bounded so a huge change cannot blow the context.
 const REVIEW_DIFF_LIMIT = 120_000;
@@ -136,6 +136,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
     }
   });
   let turnTimer: NodeJS.Timeout | undefined;
+  let timeoutError: GitReviewRunError | undefined;
   try {
     const base = session.settings();
     const settings: HarnessModelSettings = {
@@ -152,12 +153,16 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
 
     const done = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        void session.cancel().catch(() => {});
-        reject(new GitReviewRunError(504, "Review timed out"));
-      }, REVIEW_TURN_TIMEOUT_MS);
+        timeoutError = new GitReviewRunError(504, "Review timed out after five minutes without model progress");
+        stop();
+        reject(timeoutError);
+        void session.cancel(timeoutError.message).catch(() => {});
+      }, REVIEW_IDLE_TIMEOUT_MS);
       timer.unref();
       turnTimer = timer;
       const stop = session.subscribe((event) => {
+        const output = event.type === "textDelta" || event.type === "thinkingDelta" || event.type === "toolUpdate";
+        if ((output && typeof event.text === "string" && event.text.length > 0) || event.type === "toolStart" || event.type === "toolEnd") timer.refresh();
         if (event.type === "agent_end") {
           clearTimeout(timer);
           stop();
@@ -184,6 +189,8 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
       thinkingLevel: status.thinkingLevel ?? settings.reasoning,
     };
   } catch (error) {
+    // Native prompt rejection during cancellation must not hide the stall timeout.
+    if (timeoutError) throw timeoutError;
     if (error instanceof GitReviewRunError) throw error;
     throw new GitReviewRunError(502, error instanceof Error ? error.message : "Review failed");
   } finally {
