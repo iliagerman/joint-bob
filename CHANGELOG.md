@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.194.4 — 2026-11-02
+
+- Fixed a project's files waiting for hours behind a large batch of worktree changes on the same machine. Downloads and changes on the machine itself now take turns, so one big change no longer holds the rest back.
+
 ## 2.194.3 — 2026-11-02
 
 - Fixed the message box so it resizes with larger conversation text and avoids unwanted scrollbars.
