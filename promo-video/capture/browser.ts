@@ -8,7 +8,8 @@ import type { PromoEnvironment, PromoNode } from "./env.js";
 
 export async function openBrowser(environment: PromoEnvironment): Promise<Browser> {
   // HOME points into the scratch root, so Chrome never touches a real profile.
-  return launchChrome({ headless: true, env: { ...process.env, HOME: environment.nodes[0].home } });
+  // The story film's podcast speaks as soon as it opens, as it does for a person who clicked to open it.
+  return launchChrome({ headless: true, args: ["--autoplay-policy=no-user-gesture-required"], env: { ...process.env, HOME: environment.nodes[0].home } });
 }
 
 export interface Stage { context: BrowserContext; page: Page; node: PromoNode }
@@ -145,4 +146,17 @@ export async function record(page: Page, directory: string, name: string): Promi
       return { frames: frames.length, seconds, file, firstFrameAt: frames[0].time, width: Math.round(viewport.width * scale), height: Math.round(viewport.height * scale) };
     },
   };
+}
+
+/**
+ * Opens a conversation from the list and waits for its title. A list that re-renders under the
+ * pointer (a review badge arriving, a sync status) can swallow a click, so it is tried again.
+ */
+export async function openConversation(page: Page, row: string, title: string, options: { phone?: boolean } = {}): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await (options.phone ? tap(page, `${row} .session-card`) : glideClick(page, `${row} .session-card`, { ms: attempt ? 200 : 380 })).catch(() => {});
+    const opened = await page.waitForFunction((wanted) => (document.querySelector("#sessionTitle")?.textContent ?? "").includes(wanted), title, { timeout: 2_500 }).then(() => true, () => false);
+    if (opened) return;
+  }
+  throw new Error(`Could not open the conversation "${title}"`);
 }

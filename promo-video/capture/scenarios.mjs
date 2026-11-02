@@ -18,6 +18,82 @@ const tool = (variable, ...args) => new Promise((resolve) => {
 const browser = (...args) => tool("JOINT_BOB_BROWSER_CLI", ...args);
 
 export const scenarios = [
+  // The release assistant. Each match is a phrase only that message has, because a topic's
+  // prompt also carries the assistant's instructions.
+  {
+    match: /you're the release assistant/i,
+    steps: [{ say: "Got it. I'll keep track of the checkout-api work and the launches, and answer here.", wordMs: 20 }],
+  },
+  {
+    match: /how far along is the payment retry/i,
+    steps: [{
+      say: "Payment retries: 3 of 4 done, on track for tonight's launch.\n\n✓ Retry with backoff, merged in PR #212\n✓ A counter for retried payments, added by Maya\n✓ The checkout health dashboard\n⏳ The move to Vitest, 140 of 212 test files so far\n\nNothing is blocking it.",
+      wordMs: 16,
+    }],
+  },
+  {
+    match: /ready for tonight/i,
+    steps: [{
+      say: "Almost. The retries and Maya's counter are merged, and the test migration is at 140 of 212 files. It should be done by 5:30, well before the 6:00 PM launch.",
+      wordMs: 18,
+    }],
+  },
+  {
+    match: /book 30 minutes with maya/i,
+    steps: [{
+      say: "Booked “Payment retries review” with Maya, tomorrow 10:00 to 10:30, and sent her the invite with PR #212 attached.",
+      wordMs: 18,
+    }],
+  },
+  {
+    match: /run the release checklist/i,
+    steps: [{
+      say: "checkout-api v2.4 is live.\n\n✓ Release checklist: 6 of 6\n✓ Deployed main to production at 6:00 PM\n✓ Smoke tests: 24 of 24 pass\n✓ Release notes posted to #releases",
+      wordMs: 14,
+    }],
+  },
+  {
+    // Guardian: a clean-up that would delete files. The delete is paused for the person; the
+    // blocked branch is what the agent does after a Block.
+    match: /old customer exports/i,
+    title: "Clean up old customer exports",
+    steps: [
+      {
+        say: "The old export job left 1,204 CSV files in `exports/customers`. Removing them.",
+        guard: true,
+        tool: { name: "Bash", input: { command: "rm -rf ./exports/customers", description: "Delete the old customer exports" }, ms: 500, result: "" },
+      },
+      { say: "Removed `exports/customers`. The release folder is clean." },
+    ],
+    blocked: [
+      {
+        say: "Guardian blocked the delete, so nothing was removed. I'll archive the folder instead, which can be undone.",
+        tool: { name: "Bash", input: { command: "mkdir -p archive && mv exports/customers archive/customers-2026-10", description: "Archive the old customer exports" }, ms: 600, result: "" },
+      },
+      { say: "**Archived** 1,204 files to `archive/customers-2026-10`. Nothing was deleted." },
+    ],
+  },
+  {
+    // Guardian: a message with a live key in it reaches the agent with the key removed.
+    match: /deploy status on staging/i,
+    steps: [
+      {
+        say: "Guardian removed the key from your message before it reached me, so it is not in this conversation or in the model's context. I'll use the project's **aws-staging** secret account instead.",
+        tool: { name: "Bash", input: { command: "aws ecs describe-services --cluster staging --services checkout-api", description: "Check the staging deploy" }, ms: 1400, result: "checkout-api  ACTIVE  running 3/3  task definition checkout-api:214" },
+      },
+      { say: "Staging runs **checkout-api:214**, 3 of 3 tasks healthy." },
+    ],
+  },
+  {
+    // The personal assistant, answering from the links saved to it.
+    match: /which (monitor|one) should I (buy|get)/i,
+    steps: [
+      {
+        say: "From the three monitors you saved:\n\n| | Price | Warranty | USB-C power |\n|---|---|---|---|\n| **Dell U2724DE** | $529 | 3 years | 90 W |\n| LG 27UQ850 | $499 | 1 year | 96 W |\n| BenQ PD2706UA | $549 | 3 years | 90 W |\n\n**Get the Dell.** It has the 3-year warranty you asked for, and it is $20 cheaper than the BenQ. The LG is cheapest but has a 1-year warranty.",
+        wordMs: 18,
+      },
+    ],
+  },
   {
     // Laptop: the conversation that is in flight when the lid closes.
     match: /double[- ]charg/i,

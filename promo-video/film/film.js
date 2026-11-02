@@ -4,9 +4,11 @@
 import * as THREE from "three";
 import { films } from "./films.js";
 
-const film = films[new URLSearchParams(location.search).get("film") ?? "teaser"];
+const film = films[new URLSearchParams(location.search).get("film") ?? "monday"];
 const canvas = document.querySelector("#stage");
 const picture = film.create(canvas, document.querySelector("#overlay"));
+// A drawn film measures its lines and loads its handwriting before the first frame.
+await picture.ready;
 
 // `meta.json` is written by the capture; `manifest.json` by the render script, which also
 // extracts the recording frames named in it.
@@ -30,6 +32,7 @@ async function screenTexture({ screen, clip, index }) {
 window.film = {
   duration: film.duration,
   renderer: () => {
+    if (!picture.renderer) return "canvas 2d";
     const context = picture.renderer.getContext();
     const info = context.getExtension("WEBGL_debug_renderer_info");
     return info ? context.getParameter(info.UNMASKED_RENDERER_WEBGL) : "unknown";
@@ -39,7 +42,9 @@ window.film = {
     const frame = film.frameAt(out);
     const sources = film.sources(frame, meta, manifest.frames);
     const textures = await Promise.all(sources.map(screenTexture));
-    picture.draw(frame, Object.fromEntries(sources.map((source, index) => [source.screen, textures[index]])), out);
+    // A screen in the middle of a dissolve also has the picture it is leaving, under "<screen>~".
+    const mixes = Object.fromEntries(sources.filter((source) => source.mix !== undefined).map((source) => [source.screen.slice(0, -1), source.mix]));
+    picture.draw(frame, Object.fromEntries(sources.map((source, index) => [source.screen, textures[index]])), out, mixes);
     const blur = film.blurAt(frame);
     canvas.style.filter = blur > 0 ? `blur(${blur}px)` : "";
   },

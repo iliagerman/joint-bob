@@ -65,11 +65,20 @@ export function mesh(geometry, material, position = [0, 0, 0], rotation = [0, 0,
   return object;
 }
 
-/** A screen surface. Unlit and outside tone mapping, so the app's colours arrive unchanged. */
+/**
+ * A screen surface. Unlit and outside tone mapping, so the app's colours arrive unchanged.
+ * `fading` is the picture the screen is leaving: it lies over the new one and fades out as
+ * `mix` goes from 0 to 1, so a jump in the recording reads as a dissolve.
+ */
 function screenSurface(geometry) {
   const material = new THREE.MeshBasicMaterial({ color: "#0b0d0f", toneMapped: false });
   const surface = new THREE.Mesh(geometry, material);
-  surface.userData.show = (texture, brightness = 1, opacity = 1) => {
+  const veilMaterial = new THREE.MeshBasicMaterial({ toneMapped: false, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const veil = new THREE.Mesh(geometry, veilMaterial);
+  veil.position.z = 0.001;
+  veil.visible = false;
+  surface.add(veil);
+  surface.userData.show = (texture, brightness = 1, opacity = 1, fading = null, mix = 1) => {
     // A material compiled without a picture never samples one added later, so say when that changes.
     if (Boolean(material.map) !== Boolean(texture)) material.needsUpdate = true;
     material.map = texture;
@@ -77,6 +86,11 @@ function screenSurface(geometry) {
     else material.color.set("#0b0d0f");
     material.transparent = opacity < 1;
     material.opacity = opacity;
+    veil.visible = Boolean(fading && texture) && mix < 1;
+    if (!veil.visible) return;
+    if (veilMaterial.map !== fading) { veilMaterial.map = fading; veilMaterial.needsUpdate = true; }
+    veilMaterial.color.setRGB(brightness, brightness, brightness);
+    veilMaterial.opacity = (1 - mix) * opacity;
   };
   return surface;
 }
@@ -247,12 +261,12 @@ export function buildDisplay(width, height, glow) {
   const display = screenSurface(screenGeometry(width, height, 0.06));
   display.position.set(0, 0, 0.004);
   group.add(halo, mesh(slabGeometry(width + 0.14, height + 0.14, 0.11, 0.07), frameMaterial, [0, 0, -0.075]), display);
-  return { group, show(texture, brightness, opacity, tint) {
+  return { group, show(texture, brightness, opacity, tint, fading, mix) {
     halo.material.opacity = 0.36 * opacity;
     halo.material.color.copy(tint);
     frameMaterial.transparent = opacity < 1;
     frameMaterial.opacity = opacity;
-    display.userData.show(texture, brightness, opacity);
+    display.userData.show(texture, brightness, opacity, fading, mix);
   } };
 }
 

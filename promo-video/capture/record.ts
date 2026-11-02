@@ -14,8 +14,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "playwright-core";
 import { api, pairTwins, seed, signIn, startNode, stopNode } from "./env.js";
-import { glideClick, openBrowser, openStage, record, tap, type Recording } from "./browser.js";
-import { takes } from "./takes.js";
+import { glideClick, openBrowser, openConversation, openStage, record, tap, type Recording } from "./browser.js";
+import { takes as useCaseTakes } from "./takes.js";
+import { featureTakes } from "./feature-takes.js";
+import { decisionsPort, startDecisions } from "./decisions.js";
+
+const takes = { ...useCaseTakes, ...featureTakes };
 import { chromeExecutable } from "../../test/ui/launch-chrome.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -69,7 +73,15 @@ async function finish(name: string, recording: Recording, events: Record<string,
 
 async function openProject(page: Page, name: string): Promise<void> {
   await page.waitForFunction((wanted) => [...document.querySelectorAll("#projectList .list-row")].some((row) => row.textContent!.includes(wanted)), name);
-  await page.locator("#projectList .list-row", { hasText: name }).locator(".project-card").click();
+  // The page restores the last project it had open a moment after loading, which can replace the
+  // one just clicked; it is opened again until it stays.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await page.locator("#projectList .list-row", { hasText: name }).locator(".project-card").click();
+    await page.locator("#projectName", { hasText: name }).waitFor();
+    await sleep(1200);
+    if ((await page.locator("#projectName").innerText()).trim() === name) break;
+  }
+  await page.locator("#projectName", { hasText: name }).waitFor();
   await page.locator("#sessionList .list-row").first().waitFor();
 }
 
@@ -86,12 +98,15 @@ async function openProjectOnPhone(page: Page, name: string): Promise<void> {
 
 await mkdir(output, { recursive: true });
 const root = await mkdtemp("/tmp/jb-promo-");
-const environment = await seed(root, only === "cluster" ? ["--with", "retry"] : []);
+const environment = await seed(root, ["cluster", "story"].includes(only) ? ["--with", "retry"] : []);
 const [laptopNode, serverNode, teammateNode] = environment.nodes;
 // The app's own browser, which one film shows, runs the same Chrome the capture does.
 const browserExecutable = await chromeExecutable();
 const nodeLog: string[] = [];
-const nodes = await Promise.all(environment.nodes.map((node) => startNode(node, (line) => { nodeLog.push(line); if (nodeLog.length > 400) nodeLog.shift(); }, { JOINT_BOB_BROWSER_EXECUTABLE: browserExecutable })));
+// The assistant routes each message with a decision model; its take answers those questions locally.
+const decisions = only === "assistant" ? await startDecisions() : undefined;
+const routing: Record<string, string> = decisions ? { JOINT_BOB_TYPESAFE_ENDPOINT: `http://127.0.0.1:${decisionsPort}/v1/systemone` } : {};
+const nodes = await Promise.all(environment.nodes.map((node) => startNode(node, (line) => { nodeLog.push(line); if (nodeLog.length > 400) nodeLog.shift(); }, { JOINT_BOB_BROWSER_EXECUTABLE: browserExecutable, JOINT_BOB_DASHBOARD_AGENT: path.join(here, "dashboard-agent.mjs"), ...routing })));
 let browser: Awaited<ReturnType<typeof openBrowser>> | undefined;
 try {
   // Without Syncthing a twin shows as "Twin · error" on the cluster map, the one place the
@@ -114,6 +129,10 @@ try {
     const shared = laptopNode.projects.find((project) => project.name === "checkout-api")!;
     const sharing = await api(laptopNode, owner, "PUT", `/clusters/${clusterId}/sharing`, { projectIds: [shared.id], workspaceIds: [], confirmOwnedData: true });
     if (sharing.status !== 200) throw new Error(`Sharing failed: ${JSON.stringify(sharing.body)}`);
+    // The conversation runs on the home server, and the teammate's machine may only write into it
+    // once the server lets other machines run work there (Settings → Node).
+    const opened = await api(serverNode, server, "PUT", "/settings", { runnerAccess: { otherNodes: true } });
+    if (opened.status !== 200) throw new Error(`Could not open the server to other machines: ${JSON.stringify(opened.body)}`);
     // Let the teammate's machine receive the project before anything happens in it: a member
     // only hears about what changes after it has caught up.
     for (let attempt = 0; attempt < 80; attempt++) {
@@ -158,13 +177,13 @@ try {
       (async () => {
         await home.page.locator(row).waitFor();
         await sleep(Math.max(0, (events.send + 1.4 - now()) * 1000));
-        await glideClick(home.page, `${row} .session-card`, { ms: 380 });
+        await openConversation(home.page, row, "Payment retry double-charge");
         events.serverOpen = now();
       })(),
       (async () => {
         await mobile.page.locator(row).waitFor();
         await sleep(Math.max(0, (events.send + 7.6 - now()) * 1000));
-        await tap(mobile.page, `${row} .session-card`);
+        await openConversation(mobile.page, row, "Payment retry double-charge", { phone: true });
         events.phoneOpen = now();
         // The first turn ends with its plan; then the same conversation takes the next request.
         await mobile.page.locator("#messages .message.assistant", { hasText: "open a pull request" }).waitFor();
@@ -203,10 +222,24 @@ try {
     console.log(`teammate saw the conversation after ${(now() - asked).toFixed(1)} s`);
     await maya.page.locator(`${row} .session-card`).click();
     await maya.page.locator("#messages .message.assistant", { hasText: "48 of 48 tests pass" }).waitFor();
+    // A fresh page, so the teammate's view knows the turn on the home server has ended.
+    await sleep(3000);
+    await maya.page.reload();
+    await openProject(maya.page, "checkout-api");
+    await openConversation(maya.page, row, "Payment retry double-charge");
+    await maya.page.locator("#messages .message.assistant", { hasText: "48 of 48 tests pass" }).waitFor();
     await maya.page.locator("#collapseChatsButton").click();
     await home.page.locator("#jumpToBottomButton").click({ timeout: 1_500 }).catch(() => {});
     await sleep(1000);
     const teammateRecording = await record(maya.page, root, "teammate");
+    await sleep(700);
+    // She reads where the work is, asks for one more thing in the same conversation, then forks
+    // it to try her own idea on her own machine.
+    await maya.page.mouse.move(700, 520);
+    for (let step = 0; step < 6; step++) { await maya.page.mouse.wheel(0, -90); await sleep(60); }
+    events.teammateRead = now();
+    await sleep(1600);
+    for (let step = 0; step < 6; step++) { await maya.page.mouse.wheel(0, 90); await sleep(60); }
     await sleep(700);
     await glideClick(maya.page, "#messageInput", { ms: 380 });
     await maya.page.locator("#messageInput").pressSequentially(teammateAsk, { delay: 22 });
@@ -271,13 +304,13 @@ try {
     // The form has no agent picker for a project webhook: the node's first agent takes the call.
     // Here only the stand-in for Claude can run, so the webhook is pointed at it through the API.
     const admin = await signIn(environment, serverNode);
-    const pointed = await api(serverNode, admin, "PUT", `/webhooks/${webhook.id}`, { name: webhook.name, target: { kind: "project", projectId: webhook.target.projectId, engine: "claude" }, context: webhook.context, enabled: true });
+    const pointed = await api(serverNode, admin, "PUT", `/webhooks/${webhook.id}`, { name: webhook.name, target: { kind: "project", projectId: webhook.target.projectId, engine: "claude" }, context: webhook.context, enabled: true, markForReview: true });
     if (pointed.status !== 200) throw new Error(`Could not set the webhook's agent: ${JSON.stringify(pointed.body)}`);
     await page.getByTestId("webhooks-reveal").waitFor();
     await sleep(1400);
     await glideClick(page, '[data-testid="webhooks-reveal-done-button"]', { ms: 360 });
     await sleep(400);
-    await glideClick(page, '#settingsDialog button:text-is("Close")', { ms: 380 });
+    await glideClick(page, "#cancelSettingsButton", { ms: 380 });
     await page.locator("#settingsDialog[open]").waitFor({ state: "detached" }).catch(() => {});
     events.closed = now();
     await sleep(1200);
@@ -290,7 +323,7 @@ try {
     await page.locator(row).first().waitFor();
     events.appeared = now();
     await sleep(900);
-    await glideClick(page, `${row} .session-card`, { ms: 380 });
+    await openConversation(page, row, "Production errors");
     events.open = now();
     await page.locator("#messages .message.assistant", { hasText: "Opened PR #213" }).waitFor({ timeout: 60_000 });
     events.reported = now();
@@ -336,7 +369,10 @@ try {
     await page.getByTestId("usage-open").first().click();
     await page.waitForFunction(() => /\$\d/.test(document.querySelector("#usageSummary")?.textContent ?? ""), undefined, { timeout: 90_000 });
     await sleep(4000);
-    await page.locator('#usageDialog button:text-is("Close")').first().click();
+    // The month may have only just begun; the last 30 days always hold the seeded work.
+    await page.locator('[data-testid="usage-period-filter"]:visible').first().selectOption("30d");
+    await sleep(2500);
+    await page.locator('[data-testid="usage-close"]').first().click();
     await sleep(800);
 
     const events: Record<string, number> = {};
@@ -344,10 +380,16 @@ try {
     await sleep(400);
     await glideClick(page, '[data-testid="usage-open"]', { ms: 420 });
     await page.waitForFunction(() => /\$\d/.test(document.querySelector("#usageSummary")?.textContent ?? "") && document.querySelectorAll("#usageBreakdowns tbody tr").length >= 5, undefined, { timeout: 60_000 });
+    // The dialog opens on this month, which may be a day old; the last 30 days hold the seeded work.
+    const before = await page.locator("#usageSummary").innerText();
+    await sleep(600);
+    await glideClick(page, '[data-testid="usage-period-filter"]:visible', { ms: 360, click: false });
+    await page.locator('[data-testid="usage-period-filter"]:visible').first().selectOption("30d");
+    await page.waitForFunction((old) => (document.querySelector("#usageSummary")?.textContent ?? "") !== old && document.querySelectorAll("#usageBreakdowns tbody tr").length >= 5, before, { timeout: 60_000 });
     events.overview = now();
-    await sleep(2000);
+    await sleep(2400);
     await glideClick(page, '[data-testid="usage-tab-compare"]', { ms: 420 });
-    await page.waitForFunction(() => /Cost is (up|down)/.test(document.querySelector("#usageChanges")?.textContent ?? ""), undefined, { timeout: 60_000 });
+    await page.waitForFunction(() => /(Cost is (up|down))|(vs [A-Z])/.test(document.querySelector("#usageChanges")?.textContent ?? ""), undefined, { timeout: 60_000 });
     events.compare = now();
     await sleep(900);
     // Down to "What changed", the way a hand on a trackpad would.
@@ -356,7 +398,11 @@ try {
     events.changes = now();
     await sleep(2600);
     await glideClick(page, '[data-testid="usage-tab-insights"]', { ms: 420 });
-    await page.waitForFunction(() => (document.querySelector("#usageFindings")?.textContent ?? "").trim().length > 20, undefined, { timeout: 60_000 });
+    await sleep(500);
+    await glideClick(page, '[data-testid="usage-period-filter"]:visible', { ms: 360, click: false });
+    await page.locator('[data-testid="usage-period-filter"]:visible').first().selectOption("30d");
+    // The findings fill in once the skill numbers are ready.
+    await page.waitForFunction(() => /fails more/i.test(document.querySelector("#usageFindings")?.textContent ?? ""), undefined, { timeout: 60_000 });
     events.insights = now();
     console.log(`findings: ${(await page.locator("#usageFindings").innerText()).replace(/\n+/g, " | ")}`);
     await sleep(2600);
@@ -371,6 +417,7 @@ try {
   for (const context of browser?.contexts() ?? []) for (const page of context.pages()) await page.screenshot({ path: path.join(output, "..", "..", "out", `failed-${only}-${shot++}.png`) }).catch(() => {});
   throw error;
 } finally {
+  decisions?.close();
   await browser?.close();
   await Promise.all(nodes.map(stopNode));
   if (!process.argv.includes("--keep")) await rm(root, { recursive: true, force: true });

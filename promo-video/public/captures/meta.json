@@ -3,312 +3,460 @@
     "file": "laptop.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 29,
+    "seconds": 27.43,
     "events": {
-      "send": 4.121,
-      "serverOpen": 6.454,
-      "phoneOpen": 11.767,
-      "firstTurnDone": 15.584,
-      "phoneSend": 17.64,
-      "phoneFollow": 19.327,
-      "shipped": 26.903
+      "send": 4.06,
+      "serverOpen": 6.415,
+      "phoneOpen": 11.697,
+      "firstTurnDone": 14.528,
+      "phoneSend": 16.578,
+      "phoneFollow": 18.235,
+      "shipped": 25.56
     }
   },
   "server": {
     "file": "server.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 94.72,
+    "seconds": 82.97,
     "events": {
-      "send": 4.115,
-      "serverOpen": 6.448,
-      "phoneOpen": 11.761,
-      "firstTurnDone": 15.578,
-      "phoneSend": 17.634,
-      "phoneFollow": 19.321,
-      "shipped": 26.897,
-      "teammateSend": 71.231,
-      "teammateAnswered": 74.061,
-      "forkClick": 77.418,
-      "forked": 77.651,
-      "forkSend": 80.946,
-      "forkAnswered": 83.789
-    }
-  },
-  "phone": {
-    "file": "phone.mp4",
-    "width": 1206,
-    "height": 2622,
-    "seconds": 45.04,
-    "events": {
-      "send": 4.12,
-      "serverOpen": 6.453,
-      "phoneOpen": 11.766,
-      "firstTurnDone": 15.583,
-      "phoneSend": 17.639,
-      "phoneFollow": 19.326,
-      "shipped": 26.902
+      "send": 4.062,
+      "serverOpen": 6.417,
+      "phoneOpen": 11.699,
+      "firstTurnDone": 14.53,
+      "phoneSend": 16.58,
+      "phoneFollow": 18.237,
+      "shipped": 25.562,
+      "teammateRead": 57.541,
+      "teammateSend": 62.742,
+      "teammateAnswered": 65.544,
+      "forkClick": 68.609,
+      "forked": 68.781,
+      "forkSend": 71.973,
+      "forkAnswered": 74.776
     }
   },
   "morning": {
     "file": "morning.mp4",
     "width": 1206,
     "height": 2622,
-    "seconds": 4.36,
+    "seconds": 11.95,
     "events": {
-      "inbox": 0.924,
-      "open": 1.877,
-      "report": 2.101
+      "inbox": 1.614,
+      "open": 4.438,
+      "report": 9.624
     }
   },
   "costs": {
     "file": "costs.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 13.89,
+    "seconds": 15.54,
     "events": {
-      "overview": 1.654,
-      "compare": 5.663,
-      "changes": 7.143,
-      "insights": 11.195
+      "overview": 2.436,
+      "compare": 6.106,
+      "changes": 7.517,
+      "insights": 12.364
     }
   },
   "webhook": {
     "file": "webhook.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 31.09,
+    "seconds": 47.04,
     "events": {
-      "tab": 3.91,
-      "form": 5.703,
-      "typed": 9.76,
-      "created": 11.415,
-      "closed": 15.54,
-      "alert": 16.819,
-      "appeared": 17.801,
-      "open": 20.013,
-      "reported": 28.767
+      "tab": 11.746,
+      "form": 14.798,
+      "typed": 20.835,
+      "created": 22.795,
+      "closed": 27.364,
+      "alert": 28.57,
+      "appeared": 32.073,
+      "open": 36.259,
+      "reported": 44.764
     }
   },
   "teammate": {
     "file": "teammate.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 18.1,
+    "seconds": 20.18,
     "events": {
-      "send": -64.647,
-      "serverOpen": -62.314,
-      "phoneOpen": -57.001,
-      "firstTurnDone": -53.184,
-      "phoneSend": -51.128,
-      "phoneFollow": -49.441,
-      "shipped": -41.865,
-      "teammateSend": 2.469,
-      "teammateAnswered": 5.299,
-      "forkClick": 8.656,
-      "forked": 8.889,
-      "forkSend": 12.184,
-      "forkAnswered": 15.027
+      "send": -53.084,
+      "serverOpen": -50.729,
+      "phoneOpen": -45.447,
+      "firstTurnDone": -42.616,
+      "phoneSend": -40.566,
+      "phoneFollow": -38.909,
+      "shipped": -31.584,
+      "teammateRead": 0.395,
+      "teammateSend": 5.596,
+      "teammateAnswered": 8.398,
+      "forkClick": 11.463,
+      "forked": 11.635,
+      "forkSend": 14.827,
+      "forkAnswered": 17.63
     }
   },
   "schedule": {
     "file": "schedule.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 29.86,
+    "seconds": 28.55,
     "events": {
-      "dialog": 3.835,
-      "form": 5.332,
-      "typed": 9.65,
-      "saved": 11.713,
-      "closed": 15.08,
-      "run": 16.403,
-      "appeared": 17.699,
-      "open": 19.665,
-      "reported": 27.205
+      "dialog": 3.507,
+      "form": 4.898,
+      "typed": 8.761,
+      "saved": 11.604,
+      "closed": 14.907,
+      "run": 16.181,
+      "appeared": 16.605,
+      "open": 18.538,
+      "reported": 25.876
     }
   },
   "scheduleInbox": {
     "file": "scheduleInbox.mp4",
     "width": 1206,
     "height": 2622,
-    "seconds": 4.36,
+    "seconds": 4.38,
     "events": {
-      "inbox": -0.016,
-      "open": 0.92,
-      "report": 1.01
+      "inbox": 0.061,
+      "open": 0.998,
+      "report": 1.082
     }
   },
   "moveLaptop": {
     "file": "moveLaptop.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 37.99,
+    "seconds": 62.29,
     "events": {
-      "pick": 2.079,
-      "locked": 2.163,
-      "take": 4.256,
-      "taken": 9.574,
-      "go": 13.092,
-      "serverOpen": 15.571,
-      "phoneOpen": 19.66,
-      "done": 30.012,
-      "phoneSend": 32.589,
-      "merged": 36.127
+      "pick": 3.343,
+      "locked": 5.455,
+      "take": 7.804,
+      "taken": 15.616,
+      "go": 21.805,
+      "serverOpen": 29.68,
+      "phoneOpen": 31.541,
+      "done": 47.991,
+      "phoneSend": 53.311,
+      "merged": 60.4
     }
   },
   "moveServer": {
     "file": "moveServer.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 53.94,
+    "seconds": 78.42,
     "events": {
-      "pick": 2.076,
-      "locked": 2.16,
-      "take": 4.253,
-      "taken": 9.571,
-      "go": 13.089,
-      "serverOpen": 15.568,
-      "phoneOpen": 19.657,
-      "done": 30.009,
-      "phoneSend": 32.586,
-      "merged": 36.124
+      "pick": 3.116,
+      "locked": 5.228,
+      "take": 7.577,
+      "taken": 15.389,
+      "go": 21.578,
+      "serverOpen": 29.453,
+      "phoneOpen": 31.314,
+      "done": 47.764,
+      "phoneSend": 53.084,
+      "merged": 60.173
     }
   },
   "movePhone": {
     "file": "movePhone.mp4",
     "width": 1206,
     "height": 2622,
-    "seconds": 73.09,
+    "seconds": 95.76,
     "events": {
-      "pick": 2.075,
-      "locked": 2.159,
-      "take": 4.252,
-      "taken": 9.57,
-      "go": 13.088,
-      "serverOpen": 15.567,
-      "phoneOpen": 19.656,
-      "done": 30.008,
-      "phoneSend": 32.585,
-      "merged": 36.123
+      "pick": 3.112,
+      "locked": 5.224,
+      "take": 7.573,
+      "taken": 15.385,
+      "go": 21.574,
+      "serverOpen": 29.449,
+      "phoneOpen": 31.31,
+      "done": 47.76,
+      "phoneSend": 53.08,
+      "merged": 60.169
     }
   },
   "clusterOwner": {
     "file": "clusterOwner.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 32.16,
+    "seconds": 60.15,
     "events": {
-      "tab": 2.46,
-      "created": 6.07,
-      "invited": 9.149,
-      "pasted": 14.259,
-      "joined": 15.571,
-      "chosen": 19.024,
-      "shared": 21.574,
-      "received": 28.107,
-      "listed": 30.164
+      "tab": 7.551,
+      "created": 14.493,
+      "invited": 19.16,
+      "pasted": 32.957,
+      "joined": 35.464,
+      "chosen": 40.381,
+      "shared": 43.657,
+      "received": 53.318,
+      "listed": 58.266
     }
   },
   "clusterMate": {
     "file": "clusterMate.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 39.92,
+    "seconds": 75.17,
     "events": {
-      "tab": -5.436,
-      "created": -1.826,
-      "invited": 1.253,
-      "pasted": 6.363,
-      "joined": 7.675,
-      "chosen": 11.128,
-      "shared": 13.678,
-      "received": 20.211,
-      "listed": 22.268
+      "tab": 4.62,
+      "created": 11.562,
+      "invited": 16.229,
+      "pasted": 30.026,
+      "joined": 32.533,
+      "chosen": 37.45,
+      "shared": 40.726,
+      "received": 50.387,
+      "listed": 55.335
     }
   },
   "browser": {
     "file": "browser.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 37.55,
+    "seconds": 33.85,
     "events": {
-      "send": 2.983,
-      "started": 4.977,
-      "panel": 7.499,
-      "live": 9.058,
-      "adding": 12.452,
-      "checkout": 14.765,
-      "applying": 16.563,
-      "reproduced": 19.891,
-      "retry": 21.725,
-      "applies": 26.62,
-      "done": 29.498,
-      "control": 32.526,
-      "resumed": 35.101
+      "send": 2.681,
+      "started": 4.775,
+      "panel": 6.455,
+      "live": 6.743,
+      "adding": 10.55,
+      "checkout": 12.847,
+      "applying": 14.643,
+      "reproduced": 17.443,
+      "retry": 19.236,
+      "applies": 23.551,
+      "done": 25.847,
+      "control": 28.785,
+      "resumed": 31.409
     }
   },
   "secretsOwner": {
     "file": "secretsOwner.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 52.84,
+    "seconds": 46.07,
     "events": {
-      "tab": 4.773,
-      "form": 6.555,
-      "typed": 11.938,
-      "replicate": 13.614,
-      "saved": 15.619,
-      "twin": 21.854,
-      "shareDialog": 24.733,
-      "shared": 28.572,
-      "mate": 32.106,
-      "scope": 37.458,
-      "attached": 39.97,
-      "send": 44.854,
-      "used": 50.176
+      "tab": 3.433,
+      "form": 4.32,
+      "typed": 7.55,
+      "replicate": 8.721,
+      "saved": 10.262,
+      "twin": 14.426,
+      "shareDialog": 17.19,
+      "shared": 21.026,
+      "mate": 25.106,
+      "scope": 30.48,
+      "attached": 33.028,
+      "send": 38.241,
+      "used": 43.587
     }
   },
   "secretsTwin": {
     "file": "secretsTwin.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 71.83,
+    "seconds": 66.12,
     "events": {
-      "tab": 4.772,
-      "form": 6.554,
-      "typed": 11.937,
-      "replicate": 13.613,
-      "saved": 15.618,
-      "twin": 21.853,
-      "shareDialog": 24.732,
-      "shared": 28.571,
-      "mate": 32.105,
-      "scope": 37.457,
-      "attached": 39.969,
-      "send": 44.853,
-      "used": 50.175
+      "tab": 3.442,
+      "form": 4.329,
+      "typed": 7.559,
+      "replicate": 8.73,
+      "saved": 10.271,
+      "twin": 14.435,
+      "shareDialog": 17.199,
+      "shared": 21.035,
+      "mate": 25.115,
+      "scope": 30.489,
+      "attached": 33.037,
+      "send": 38.25,
+      "used": 43.596
     }
   },
   "secretsMate": {
     "file": "secretsMate.mp4",
     "width": 2560,
     "height": 1600,
-    "seconds": 93.21,
+    "seconds": 85.92,
     "events": {
-      "tab": -2.691,
-      "form": -0.909,
-      "typed": 4.474,
-      "replicate": 6.15,
-      "saved": 8.155,
-      "twin": 14.39,
-      "shareDialog": 17.269,
-      "shared": 21.108,
-      "mate": 24.642,
-      "scope": 29.994,
-      "attached": 32.506,
-      "send": 37.39,
-      "used": 42.712
+      "tab": -2.554,
+      "form": -1.667,
+      "typed": 1.563,
+      "replicate": 2.734,
+      "saved": 4.275,
+      "twin": 8.439,
+      "shareDialog": 11.203,
+      "shared": 15.039,
+      "mate": 19.119,
+      "scope": 24.493,
+      "attached": 27.041,
+      "send": 32.254,
+      "used": 37.6
+    }
+  },
+  "pools": {
+    "file": "pools.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 72.08,
+    "events": {
+      "settings": 9.642,
+      "profile": 17.058,
+      "profiles": 28.48,
+      "poolForm": 31.929,
+      "pool": 46.714,
+      "assign": 49.114,
+      "assigned": 55.741,
+      "simulation": 63.497,
+      "failover": 66.078,
+      "secondFailover": 69.39
+    }
+  },
+  "budgets": {
+    "file": "budgets.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 82.44,
+    "events": {
+      "cluster": 18.795,
+      "typed": 25.144,
+      "clusterSaved": 27.985,
+      "project": 34.059,
+      "projectSaved": 37.386,
+      "conversation": 55.009,
+      "warning": 58.969,
+      "over": 69.997,
+      "sent": 77.171
+    }
+  },
+  "dashboards": {
+    "file": "dashboards.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 42.38,
+    "events": {
+      "empty": 10.618,
+      "typed": 15.005,
+      "building": 17.3,
+      "preview": 23.105,
+      "built": 26.858,
+      "tested": 33.329,
+      "saved": 34.494,
+      "refresh": 38.908
+    }
+  },
+  "assistantPhone": {
+    "file": "assistantPhone.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 57.66,
+    "events": {
+      "opened": 1.424,
+      "answered": 10.091,
+      "schedule": 12.695,
+      "scheduled": 52.822
+    }
+  },
+  "assistant": {
+    "file": "assistant.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 168.37,
+    "events": {
+      "dialog": 2.561,
+      "page": 9.078,
+      "instructions": 17.491,
+      "asked": 20.295,
+      "answered": 27.598,
+      "book": 30.799,
+      "booked": 35.594,
+      "synced": 132.866,
+      "tasks": 154.277,
+      "run": 158.22,
+      "launched": 164.893
+    }
+  },
+  "story": {
+    "file": "story.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 86.24,
+    "events": {
+      "story": 5.732,
+      "examples": 11.11,
+      "implementation": 15.499,
+      "overview": 20.937,
+      "podcast": 27.215,
+      "played": 67.299,
+      "asked": 73.369,
+      "answered": 86.15,
+      "line1": 33.836,
+      "line2": 37.79,
+      "line3": 41.706,
+      "line4": 47.813,
+      "line5": 51.55,
+      "line6": 56.796,
+      "line7": 62.924,
+      "line8": 76.595,
+      "line9": 81.419
+    }
+  },
+  "guardian": {
+    "file": "guardian.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 93.54,
+    "events": {
+      "settings": 14.468,
+      "enabled": 17.564,
+      "editor": 21.661,
+      "conversation": 59.653,
+      "review": 68.976,
+      "blocked": 73.507,
+      "archived": 76.738,
+      "secret": 84.413,
+      "secretAnswered": 89.64
+    }
+  },
+  "pocket": {
+    "file": "pocket.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 39.21,
+    "events": {
+      "banner": 0.732,
+      "project": 14.031,
+      "open": 16.732,
+      "send": 24.617,
+      "done": 35.914
+    }
+  },
+  "phone": {
+    "file": "phone.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 35.31,
+    "events": {
+      "send": 3.662,
+      "serverOpen": 6.017,
+      "phoneOpen": 11.299,
+      "firstTurnDone": 14.13,
+      "phoneSend": 16.18,
+      "phoneFollow": 17.837,
+      "shipped": 25.162
+    }
+  },
+  "launchPhone": {
+    "file": "launchPhone.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 9.6,
+    "events": {
+      "report": 5.246
     }
   }
 }

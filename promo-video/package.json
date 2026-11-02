@@ -6,7 +6,7 @@
   "scripts": {
     "capture": "cd .. && for take in handoff webhook costs move cluster schedule browser secrets; do node --import tsx promo-video/capture/record.ts --take $take || exit 1; done",
     "render": "cd .. && node --import tsx promo-video/render.ts",
-    "render:all": "cd .. && for film in teaser hero lid team schedule alerts browser secrets analytics; do node --import tsx promo-video/render.ts --film $film || exit 1; done",
+    "render:all": "cd .. && for film in monday short; do node --import tsx promo-video/render.ts --film $film --scale 2 || exit 1; done && for film in lid team pools budgets guardian dashboards assistant phone story schedule alerts browser secrets analytics; do node --import tsx promo-video/render.ts --film $film || exit 1; done",
     "still": "cd .. && node --import tsx promo-video/render.ts --still",
     "landing": "sh landing/media.sh",
     "landing:publish": "sh landing/publish.sh"

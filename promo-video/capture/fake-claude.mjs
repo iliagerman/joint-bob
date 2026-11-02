@@ -26,7 +26,10 @@ const prompt = await new Promise((resolve) => {
   process.stdin.on("end", () => resolve(input));
 });
 
-const scenario = scenarios.find((candidate) => candidate.match.test(prompt)) ?? fallbackScenario;
+// An assistant's prompt carries its instructions and earlier exchanges before the newest message,
+// so a scenario is matched against that message first.
+const latest = prompt.includes("User question:") ? prompt.slice(prompt.lastIndexOf("User question:")) : prompt.slice(-500);
+const scenario = scenarios.find((candidate) => candidate.match.test(latest)) ?? scenarios.find((candidate) => candidate.match.test(prompt)) ?? fallbackScenario;
 // A line per run in the scratch home, for working out why a take went wrong.
 appendFileSync(path.join(process.env.HOME, "promo-agent.log"), `${JSON.stringify({ at: new Date().toISOString(), sessionId, resumed: args.includes("--resume"), scenario: String(scenario.match), prompt: prompt.slice(0, 400) })}\n`);
 
@@ -49,8 +52,26 @@ if (firstRun && scenario.title) appendFileSync(transcriptFile, `${JSON.stringify
 persist("user", { role: "user", content: prompt });
 await sleep(scenario.thinkMs ?? 500);
 
+/**
+ * What Guardian says about a tool call, asked the way Claude's PreToolUse hook asks it
+ * (bin/joint-bob-guardian.mjs). The node gives the run the address and token only while a rule
+ * checks tool calls. A paused call waits here until the person allows or blocks it.
+ */
+async function guardian(tool) {
+  if (!process.env.JOINT_BOB_GUARDIAN_URL) return { action: "allow" };
+  const response = await fetch(process.env.JOINT_BOB_GUARDIAN_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.JOINT_BOB_GUARDIAN_TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ tool: tool.name, input: tool.input }),
+  });
+  const body = await response.json().catch(() => null);
+  return body?.verdict ?? { action: "block", reason: `Guardian answered HTTP ${response.status}` };
+}
+
 let lastText = "";
-for (const step of scenario.steps) {
+let steps = scenario.steps;
+for (let index = 0; index < steps.length; index++) {
+  const step = steps[index];
   const content = [];
   if (step.say) {
     // Word-sized deltas at a reading pace, like a live model stream.
@@ -67,6 +88,16 @@ for (const step of scenario.steps) {
   const message = { role: "assistant", model, usage: usage(), content };
   out({ type: "assistant", message });
   persist("assistant", message);
+  const verdict = step.tool && step.guard ? await guardian(step.tool) : null;
+  if (verdict?.action === "block") {
+    // Claude reports a denied call as a failed tool result, then the scenario's blocked branch runs.
+    const result = { role: "user", content: [{ type: "tool_result", tool_use_id: toolId, is_error: true, content: verdict.reason || "Blocked by Guardian." }] };
+    out({ type: "user", message: result });
+    persist("user", result);
+    await sleep(180);
+    steps = [...steps.slice(0, index + 1), ...(scenario.blocked ?? [])];
+    continue;
+  }
   if (step.tool) {
     await sleep(step.tool.ms ?? 700);
     // A step may do something real, such as drive the app's browser. What it returns is the tool's result.

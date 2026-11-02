@@ -2,10 +2,13 @@
 // asks it for one frame at a time, photographs each in headless Chrome, and hands the frames
 // and the sound to ffmpeg. The films are listed in film/films.js.
 //
-//   node --import tsx promo-video/render.ts [--film NAME] [--out FILE] [--still FRAME] [--stills A,B,C --out DIR] [--workers N]   (from the repository root)
+//   node --import tsx promo-video/render.ts [--film NAME] [--out FILE] [--still FRAME] [--stills A,B,C --out DIR] [--workers N] [--scale N] [--remix]   (from the repository root)
+//
+// `--scale 2` photographs every frame at twice the size (3840 x 2160); the drawn films draw their
+// lines and screens at that size, and the landing page's copies are scaled down from it.
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -21,13 +24,14 @@ const flag = (name: string): string | undefined => { const index = process.argv.
 const still = flag("--still") === undefined ? undefined : Number(flag("--still"));
 // Several frames at once, for looking over a film without rendering all of it.
 const stills = flag("--stills")?.split(",").map(Number);
-const name = flag("--film") ?? "teaser";
+const name = flag("--film") ?? "monday";
 interface Source { screen: string; clip: string | null; index: number | null }
 interface Cue { audio: string; at: number; volume: number; offset?: number; length?: number; fadeIn?: number; fadeOut?: number; tempo?: number }
 const film = (films as Record<string, { duration: number; frameAt(frame: number): number; sounds: Cue[]; sources(frame: number, meta: unknown, counts: Record<string, number>): Source[] }>)[name];
 if (!film) throw new Error(`No film called ${name}. There are: ${Object.keys(films).join(", ")}`);
 const output = path.resolve(flag("--out") ?? path.join(here, "out", stills ? "stills" : still === undefined ? `${name}.mp4` : `${name}-${String(still).padStart(4, "0")}.jpg`));
 const workers = Number(flag("--workers") ?? 4);
+const scale = Number(flag("--scale") ?? 1);
 
 function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -38,6 +42,41 @@ function run(command: string, args: string[]): Promise<string> {
     child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
     child.on("close", (status) => status === 0 ? resolve(stdout) : reject(new Error(`${command} exited ${status}: ${stderr}`)));
   });
+}
+
+/**
+ * The ffmpeg inputs and filter graph that mix a film's sound, after `video` (the inputs giving the
+ * picture). Each cue is cut to its stretch of the file, slowed to the film's pace with its pitch
+ * kept, faded, and placed at its frame. `length` counts seconds of the file, before slowing.
+ */
+function soundMix(video: string[]): { inputs: string[]; graph: string } {
+  const seconds = film.duration / FPS;
+  const cues = film.sounds;
+  const inputs = [...video, ...cues.flatMap((cue) => ["-i", path.join(here, "public", cue.audio)])];
+  const graph = [
+    ...cues.map((cue, index) => [
+      `[${index + 1}:a]atrim=start=${cue.offset ?? 0}${cue.length === undefined ? "" : `:duration=${cue.length}`}`,
+      "asetpts=PTS-STARTPTS",
+      ...(cue.tempo && cue.tempo !== 1 ? [`atempo=${cue.tempo}`] : []),
+      `volume=${cue.volume}`,
+      ...(cue.fadeIn ? [`afade=t=in:d=${cue.fadeIn}`] : []),
+      ...(cue.fadeOut && cue.length !== undefined ? [`afade=t=out:st=${Math.max(0, cue.length / (cue.tempo ?? 1) - cue.fadeOut)}:d=${cue.fadeOut}`] : []),
+      `adelay=${Math.round((cue.at / FPS) * 1000)}:all=1[s${index}]`,
+    ].join(",")),
+    `${cues.map((_, index) => `[s${index}]`).join("")}amix=inputs=${cues.length}:normalize=0:duration=longest,alimiter=limit=0.9,atrim=0:${seconds}[a]`,
+  ].join(";");
+  return { inputs, graph };
+}
+
+// `--remix` mixes the sound again into a film already rendered, keeping its picture, for a change that only touches sound.
+if (process.argv.includes("--remix")) {
+  const rendered = path.join(here, "out", `${name}.mp4`);
+  const mixed = path.join(path.dirname(rendered), `.${name}-remix.mp4`);
+  const { inputs, graph } = soundMix(["-i", rendered]);
+  await run("ffmpeg", ["-y", "-v", "error", ...inputs, "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", String(film.duration / FPS), "-movflags", "+faststart", mixed]);
+  await rename(mixed, rendered);
+  console.log(rendered);
+  process.exit(0);
 }
 
 const meta = JSON.parse(await readFile(path.join(here, "public/captures/meta.json"), "utf8")) as Record<string, { file: string }>;
@@ -84,7 +123,7 @@ try {
 
   // 2. Serve the page, its modules and the extracted frames on a loopback port.
   const roots: Array<[string, string]> = [["/film/", path.join(here, "film")], ["/public/", path.join(here, "public")], ["/three/", path.join(here, "node_modules/three/build")], ["/work/", work]];
-  const types: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".jpg": "image/jpeg", ".svg": "image/svg+xml" };
+  const types: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".ttf": "font/ttf" };
   server.on("request", async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost").pathname;
     const root = roots.find(([prefix]) => url.startsWith(prefix));
@@ -105,7 +144,7 @@ try {
   const pages = [];
   for (let worker = 0; worker < Math.min(workers, wanted.length); worker++) {
     // A window of its own for each page, so none of them is a background tab with its drawing slowed down.
-    const page = await (await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 })).newPage();
+    const page = await (await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: scale })).newPage();
     const state: { failure?: Error } = {};
     page.on("pageerror", (error) => { state.failure = error; });
     await page.goto(`${origin}/?film=${name}`, { timeout: 60_000 });
@@ -132,23 +171,9 @@ try {
   } else if (still !== undefined) {
     await writeFile(output, await readFile(path.join(work, "out", "00000.jpg")));
   } else {
-    // 4. Encode the frames and mix the sound. Each cue is cut to its stretch of the file, slowed to the film's pace
-    //    with its pitch kept, faded, and placed at its frame. `length` counts seconds of the file, before slowing.
+    // 4. Encode the frames and mix the sound.
     const seconds = film.duration / FPS;
-    const cues = film.sounds;
-    const inputs = ["-framerate", String(FPS), "-i", path.join(work, "out", "%05d.jpg"), ...cues.flatMap((cue) => ["-i", path.join(here, "public", cue.audio)])];
-    const graph = [
-      ...cues.map((cue, index) => [
-        `[${index + 1}:a]atrim=start=${cue.offset ?? 0}${cue.length === undefined ? "" : `:duration=${cue.length}`}`,
-        "asetpts=PTS-STARTPTS",
-        ...(cue.tempo && cue.tempo !== 1 ? [`atempo=${cue.tempo}`] : []),
-        `volume=${cue.volume}`,
-        ...(cue.fadeIn ? [`afade=t=in:d=${cue.fadeIn}`] : []),
-        ...(cue.fadeOut && cue.length !== undefined ? [`afade=t=out:st=${Math.max(0, cue.length / (cue.tempo ?? 1) - cue.fadeOut)}:d=${cue.fadeOut}`] : []),
-        `adelay=${Math.round((cue.at / FPS) * 1000)}:all=1[s${index}]`,
-      ].join(",")),
-      `${cues.map((_, index) => `[s${index}]`).join("")}amix=inputs=${cues.length}:normalize=0:duration=longest,alimiter=limit=0.9,atrim=0:${seconds}[a]`,
-    ].join(";");
+    const { inputs, graph } = soundMix(["-framerate", String(FPS), "-i", path.join(work, "out", "%05d.jpg")]);
     await run("ffmpeg", ["-y", "-v", "error", ...inputs, "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-t", String(seconds), "-movflags", "+faststart", output]);
   }
   console.log(output);

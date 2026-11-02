@@ -3,7 +3,13 @@
 // over the picture. The use-case films in films/ are such descriptions; `defineFeature` turns
 // one into a film the page can draw and the render script can read.
 import * as THREE from "three";
-import { colors, easeIn, easeOut, facing, facingLaptop, fonts, FOV, FPS, HEIGHT, laptop as laptopSize, laptopScreenPoint, linear, panelPoint, phone as phoneSize, pop, progress, WIDTH } from "./timeline.js";
+import { colors, easeIn, easeInOut, easeOut, facing, facingLaptop, fonts, FOV, FPS, HEIGHT, laptop as laptopSize, laptopScreenPoint, linear, panelPoint, phone as phoneSize, pop, progress, WIDTH } from "./timeline.js";
+import voiceLengths from "./voice-lengths.js";
+// The capture's notes on every recording: its length and the second each step happened.
+import meta from "../public/captures/meta.json" with { type: "json" };
+
+/** The seconds at which things happened in a recording, as the capture noted them. */
+export const events = (clip) => meta[clip].events;
 import { buildDisplay, buildLaptopParts, buildLink, buildMotes, buildPhoneParts, buildRoom } from "./stage.js";
 import { captionWords, clamp, element, fade, fill, paints, sequence } from "./overlay.js";
 
@@ -20,6 +26,38 @@ export const look = (device, u, v, distance, side = 0, rise = 0) => device.kind 
 /** The two corners of a ring around part of a device's screen. */
 export const around = (device, u1, v1, u2, v2) => ({ a: on(device, u1, v1), b: on(device, u2, v2) });
 
+/**
+ * Lays a film's narration end to end, so each line gets the time it needs. An entry is a line's
+ * name in narration.json, or { name, hold, min }: `hold` keeps the picture going that many frames
+ * after the line, `min` is the shortest the beat may be. A beat starts `lead` frames before its
+ * line and ends `gap` frames after it. Returns { name, audio, from, to, at, length } per beat.
+ */
+export function beats(entries, { lead = 10, gap = 20, start = 0 } = {}) {
+  let from = start;
+  return entries.map((entry) => {
+    // { pause: frames } is a stretch with no narration, for the recording's own sound or a held moment.
+    if (entry.pause) { const beat = { name: null, from, to: from + entry.pause, at: from, length: 0 }; from = beat.to; return beat; }
+    const { name, hold = 0, min = 0 } = typeof entry === "string" ? { name: entry } : entry;
+    if (!(name in voiceLengths)) throw new Error(`No narration called ${name}; run narrate.ts`);
+    const length = Math.ceil(voiceLengths[name] * FPS);
+    const to = from + Math.max(min, lead + length + gap + hold);
+    const beat = { name, audio: `audio/${name}.mp3`, from, to, at: from + lead, length };
+    from = to;
+    return beat;
+  });
+}
+
+/** A beat's narration line, with its caption. The caption stays until just before the next beat. */
+export const say = (beat, text, options = {}) => ({ audio: beat.audio, at: beat.at, until: beat.to - 4, length: beat.length, text, ...options });
+
+/**
+ * A stretch of a recording that fills frames `from` to `to`, starting at second `start` of the
+ * clip and reaching second `end` when the stretch is over.
+ */
+export const fit = (clip, from, to, start, end, options = {}) => ({ clip, from, to, start, rate: (end - start) / ((to - from) / FPS), ...options });
+/** The film frame at which a stretch reaches second `seconds` of its recording, to time a ring or a note to what happens on screen. */
+export const frameOf = (segment, seconds) => Math.round(segment.from + ((seconds - segment.start) / (segment.rate ?? 1)) * FPS);
+
 const moods = {
   calm: { background: "#0a1216", glow: "#37cfab" },
   night: { background: "#070b1f", glow: "#5b7cff" },
@@ -29,12 +67,24 @@ const moods = {
 
 function createCamera(shots) {
   const projector = new THREE.PerspectiveCamera(FOV, WIDTH / HEIGHT, 0.1, 200);
-  const at = (frame) => {
-    const shot = shots.find((candidate) => frame >= candidate.from && frame < candidate.to) ?? shots[shots.length - 1];
+  const pose = (shot, frame) => {
     const t = (shot.ease ?? easeOut)(progress(frame, shot.from, shot.to));
     const end = shot.end ?? shot.start;
-    const position = new THREE.Vector3(...shot.start.position).lerp(new THREE.Vector3(...end.position), t);
-    const target = new THREE.Vector3(...shot.start.target).lerp(new THREE.Vector3(...end.target), t);
+    return { position: new THREE.Vector3(...shot.start.position).lerp(new THREE.Vector3(...end.position), t), target: new THREE.Vector3(...shot.start.target).lerp(new THREE.Vector3(...end.target), t) };
+  };
+  const at = (frame) => {
+    let index = shots.findIndex((candidate) => frame >= candidate.from && frame < candidate.to);
+    if (index === -1) index = shots.length - 1;
+    const shot = shots[index];
+    const { position, target } = pose(shot, frame);
+    // A new shot never jumps: the camera glides from where the last one left it.
+    const glide = shot.glide ?? 26;
+    if (index > 0 && glide > 0 && frame < shot.from + glide) {
+      const before = pose(shots[index - 1], shots[index - 1].to);
+      const k = easeInOut(progress(frame, shot.from, shot.from + glide));
+      position.copy(before.position.lerp(position, k));
+      target.copy(before.target.lerp(target, k));
+    }
     // A slight float, so a held shot never looks frozen.
     position.x += Math.sin(frame / 31) * 0.035;
     position.y += Math.sin(frame / 23) * 0.025;
@@ -89,10 +139,10 @@ function createStage(spec, canvas, camera) {
     if (device.kind === "laptop") {
       const parts = buildLaptopParts();
       world.add(parts.group);
-      return { id, place(frame, texture) {
+      return { id, place(frame, texture, tint, fading, mix) {
         const open = lidOpen(device.lid, frame);
         parts.lid.rotation.x = -laptopSize.openAngle * open;
-        parts.display.userData.show(texture, 0.25 + 0.75 * Math.min(1, open));
+        parts.display.userData.show(texture, 0.25 + 0.75 * Math.min(1, open), 1, fading, mix);
         parts.light.intensity = 11 * Math.min(1, open);
       } };
     }
@@ -101,19 +151,19 @@ function createStage(spec, canvas, camera) {
     if (device.kind === "phone") {
       const parts = buildPhoneParts(glow);
       world.add(parts.group);
-      return { id, place(frame, texture, tint) {
+      return { id, place(frame, texture, tint, fading, mix) {
         const up = easeOut(arriving(frame, 22)) * (1 - leaving(frame));
         parts.group.visible = up > 0;
         parts.group.position.set(device.center.x, device.center.y - 3.4 * (1 - up) + Math.sin(frame / 33 + order) * 0.02, device.center.z);
         parts.group.rotation.set(-0.5 * (1 - up), device.turn + 1.5 * (1 - up) + Math.sin(frame / 40 + order) * 0.04, 0);
         parts.halo.material.opacity = 0.4 * up;
         parts.halo.material.color.copy(tint);
-        parts.display.userData.show(texture);
+        parts.display.userData.show(texture, 1, 1, fading, mix);
       } };
     }
     const built = buildDisplay(device.width, device.height, glow);
     world.add(built.group);
-    return { id, place(frame, texture, tint) {
+    return { id, place(frame, texture, tint, fading, mix) {
       const arrive = pop(arriving(frame, 26));
       const shown = Math.min(1, arrive) * (1 - leaving(frame));
       // A screen steps back while another has the floor.
@@ -122,13 +172,13 @@ function createStage(spec, canvas, camera) {
       built.group.position.set(device.center.x + 1.6 * (1 - Math.min(1, arrive)), device.center.y + Math.sin(frame / 45 + order * 2) * 0.03, device.center.z - 5 * (1 - Math.min(1, arrive)));
       built.group.scale.setScalar(0.86 + 0.14 * arrive);
       built.group.rotation.y = device.turn;
-      built.show(texture, 1 - 0.55 * dim, shown, tint);
+      built.show(texture, 1 - 0.55 * dim, shown, tint, fading, mix);
     } };
   });
   const links = (spec.links ?? []).map((link) => buildLink(link.from, link.via, link.to, link.drawFrom, link.drawTo, link.gone));
   world.add(...links.map((link) => link.group));
 
-  return { renderer, draw(frame, textures) {
+  return { renderer, draw(frame, textures, mixes = {}) {
     const view = camera.at(frame);
     lens.position.copy(view.position);
     lens.lookAt(view.target);
@@ -139,7 +189,7 @@ function createStage(spec, canvas, camera) {
     wash.material.opacity = 0.3;
     wash.position.x = view.target.x + 1;
     motes.draw(frame, mood.glow);
-    for (const device of devices) device.place(frame, textures[device.id] ?? null, mood.glow);
+    for (const device of devices) device.place(frame, textures[device.id] ?? null, mood.glow, textures[`${device.id}~`] ?? null, mixes[device.id] ?? 1);
     for (const link of links) link.draw(frame);
     renderer.render(world, lens);
   } };
@@ -173,9 +223,9 @@ function createOverlay(spec, root, camera) {
     angle: -Math.PI / 2 + (random() - 0.5) * 2.4, speed: 16 + random() * 26, spin: (random() - 0.5) * 40, drift: (random() - 0.5) * 3,
   }));
 
-  const captionArea = element("div", { ...fill, display: "flex", justifyContent: "center", alignItems: "flex-end", paddingBottom: "66px" }, root);
+  const captionArea = element("div", { ...fill, display: "flex", justifyContent: "center", alignItems: "flex-end", paddingBottom: "58px" }, root);
   const captions = spec.lines.filter((line) => line.text).map((line) => {
-    const row = element("div", { display: "none", flexWrap: "wrap", justifyContent: "center", gap: "0 0.26em", maxWidth: "1620px", fontFamily: fonts.sans, fontSize: "72px", fontWeight: "780", letterSpacing: "-0.025em", color: "#ffffff", textShadow: "0 4px 26px rgba(0,0,0,0.85), 0 1px 2px rgba(0,0,0,0.9)" }, captionArea);
+    const row = element("div", { display: "none", flexWrap: "wrap", justifyContent: "center", gap: "0 0.24em", maxWidth: "1500px", fontFamily: fonts.sans, fontSize: "52px", lineHeight: "1.22", fontWeight: "720", letterSpacing: "-0.015em", color: "#ffffff", textShadow: "0 4px 26px rgba(0,0,0,0.85), 0 1px 2px rgba(0,0,0,0.9)" }, captionArea);
     const marked = line.tone === "danger" ? "#ff8a84" : line.tone === "sun" ? colors.sun : colors.accent;
     return { line, row, words: captionWords(line.text).map((word) => element("span", { display: "inline-block", color: word.marked ? marked : "#ffffff" }, row, word.text)) };
   });
@@ -230,15 +280,18 @@ function createOverlay(spec, root, camera) {
     }
 
     for (const { line, row, words } of captions) {
-      const shown = frame >= line.at - 2 && frame < line.until;
+      const shown = frame >= line.at - 6 && frame < line.until;
       row.style.display = shown ? "flex" : "none";
       if (!shown) continue;
-      row.style.opacity = String(clamp((line.until - frame) / 6));
+      // The whole sentence rises in at once and fades out at the end of its beat.
+      const rise = easeOut(progress(frame, line.at - 6, line.at + 6));
+      row.style.opacity = String(clamp(rise) * clamp((line.until - frame) / 8));
+      row.style.transform = `translateY(${(1 - rise) * 16}px)`;
+      // Each word brightens as it is spoken, spread over the length of the line.
+      const speaking = line.length ?? words.length * 9;
       words.forEach((word, index) => {
-        // Each word lands a beat after the one before it, and bounces.
-        const landed = pop(progress(frame, line.at - 2 + index * 2.2, line.at + 7 + index * 2.2));
-        word.style.opacity = String(clamp(landed * 1.6));
-        word.style.transform = `translateY(${(1 - landed) * 34}px) scale(${0.8 + 0.2 * landed})`;
+        const spoken = progress(frame, line.at + (index / words.length) * speaking * 0.94 - 3, line.at + (index / words.length) * speaking * 0.94 + 3);
+        word.style.opacity = String(0.42 + 0.58 * spoken);
       });
     }
 
@@ -259,10 +312,34 @@ function createOverlay(spec, root, camera) {
 }
 
 /** The music bed for a film of `duration` frames, starting `offset` seconds into the track. */
-export const bed = (duration, offset = 0) => ({ audio: "audio/music.mp3", at: 0, volume: 0.1, offset, length: duration / FPS, fadeIn: 0.3, fadeOut: 1.3 });
+export const bed = (duration, offset = 0) => ({ audio: "audio/music.mp3", at: 0, volume: 0.1, offset, length: duration / FPS, fadeIn: 0.3, fadeOut: 1.3, bed: true });
+/** A film's own score, made by score.mjs, started `start` seconds in so its landing meets the film's high point. */
+export const score = (name, duration, start = 0) => ({ audio: `audio/score-${name}.mp3`, at: Math.round(start * FPS), volume: 0.16, length: duration / FPS - start, fadeIn: 0.2, fadeOut: 1.5, bed: true });
 /** The narration cues for a film's lines. */
 export const spoken = (lines) => lines.filter((line) => line.audio).map((line) => ({ audio: line.audio, at: line.at, volume: 1.7 }));
 export const sfx = (name, at, volume) => ({ audio: `audio/sfx-${name}.mp3`, at, volume: volume ?? { pop: 2.5, whoosh: 0.4, chime: 1.5, lid: 0.85, party: 25, alarm: 0.35 }[name] ?? 1 });
+
+/** The recording frame each screen shows at a frame; `clip` is null while a screen is off. */
+export function screenSources(screens, frame, counts) {
+  const time = (segment, at) => segment.start + ((at - segment.from) / FPS) * (segment.rate ?? 1);
+  const index = (segment, at) => Math.min(counts[segment.clip] - 1, Math.max(0, Math.round(time(segment, at) * FPS)));
+  return Object.entries(screens).flatMap(([screen, segments]) => {
+    const at = segments.findIndex((candidate) => frame >= candidate.from && frame < candidate.to);
+    // After its last stretch a screen holds where it got to, drifting on slowly, through the end card.
+    const last = segments.at(-1);
+    if (at === -1 && last && frame >= last.to) return [{ screen, clip: last.clip, index: index({ ...last, start: time(last, last.to), from: last.to, rate: 0.15 }, frame) }];
+    if (at === -1) return [{ screen, clip: null, index: null }];
+    const segment = segments[at];
+    const shown = { screen, clip: segment.clip, index: index(segment, frame) };
+    // The stretch before carries on underneath for a moment and fades out, unless the recording
+    // simply goes on from where it was.
+    const before = segments[at - 1];
+    const fade = segment.fade ?? 16;
+    const jumps = before && before.to === segment.from && (before.clip !== segment.clip || Math.abs(time(before, before.to) - segment.start) > 0.25);
+    if (!jumps || fade <= 0 || frame >= segment.from + fade) return [shown];
+    return [shown, { screen: `${screen}~`, clip: before.clip, index: index(before, frame), mix: easeInOut(progress(frame, segment.from, segment.from + fade)) }];
+  });
+}
 
 export function defineFeature(spec) {
   const camera = createCamera(spec.shots);
@@ -275,21 +352,16 @@ export function defineFeature(spec) {
     /** The recording frame each device shows at a frame; `clip` is null while a device is off. */
     sources(frame, meta, counts) {
       screens ??= spec.screens(meta);
-      return Object.entries(screens).map(([screen, segments]) => {
-        const segment = segments.find((candidate) => frame >= candidate.from && frame < candidate.to);
-        if (!segment) return { screen, clip: null, index: null };
-        const time = segment.start + ((frame - segment.from) / FPS) * (segment.rate ?? 1);
-        return { screen, clip: segment.clip, index: Math.min(counts[segment.clip] - 1, Math.max(0, Math.round(time * FPS))) };
-      });
+      return screenSources(screens, frame, counts);
     },
     create(canvas, root) {
       const stage = createStage(spec, canvas, camera);
       const overlay = createOverlay(spec, root, camera);
-      return { renderer: stage.renderer, draw(frame, textures) { stage.draw(frame, textures); overlay.draw(frame); } };
+      return { renderer: stage.renderer, draw(frame, textures, out, mixes) { stage.draw(frame, textures, mixes); overlay.draw(frame); } };
     },
     // The scene softens behind the end card, so the name is the only sharp thing left.
     blurAt: (frame) => clamp((frame - (spec.end + 4)) / 22) * 7,
   };
 }
 
-export { easeIn, easeOut, linear };
+export { easeIn, easeInOut, easeOut, linear };

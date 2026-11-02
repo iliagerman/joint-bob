@@ -22,15 +22,15 @@ export interface Kit {
   openProjectOnPhone(page: Page, name: string): Promise<void>;
 }
 
-const desktop = { width: 1280, height: 800 };
-const phone = { width: 402, height: 874 };
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-const now = (): number => Date.now() / 1000;
-const answer = (page: Page, text: string) => page.locator("#messages .message.assistant", { hasText: text });
-const closeSettings = '#settingsDialog button:text-is("Close")';
+export const desktop = { width: 1280, height: 800 };
+export const phone = { width: 402, height: 874 };
+export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+export const now = (): number => Date.now() / 1000;
+export const answer = (page: Page, text: string) => page.locator("#messages .message.assistant", { hasText: text });
+export const closeSettings = "#cancelSettingsButton";
 
 /** Starts a Claude conversation through the wizard; `node` picks the machine it runs on. */
-async function newConversation(page: Page, name: string, node?: string): Promise<void> {
+export async function newConversation(page: Page, name: string, node?: string): Promise<void> {
   await page.getByTestId("session-create-claude-button").click();
   await page.locator("#newSessionNameInput").fill(name);
   await page.getByTestId("new-session-next-button").click();
@@ -41,7 +41,7 @@ async function newConversation(page: Page, name: string, node?: string): Promise
 }
 
 /** Types a message the way a person does, and sends it. */
-async function ask(page: Page, text: string, delay = 16): Promise<void> {
+export async function ask(page: Page, text: string, delay = 16): Promise<void> {
   await glideClick(page, "#messageInput", { ms: 350 });
   await page.locator("#messageInput").pressSequentially(text, { delay });
   await sleep(250);
@@ -49,13 +49,13 @@ async function ask(page: Page, text: string, delay = 16): Promise<void> {
 }
 
 /** Types into a field after gliding to it. */
-async function type(page: Page, selector: string, text: string, delay = 24): Promise<void> {
+export async function type(page: Page, selector: string, text: string, delay = 24): Promise<void> {
   await glideClick(page, selector, { ms: 320 });
   await page.locator(selector).first().pressSequentially(text, { delay });
 }
 
 /** One cluster holding the given machines, with one of the laptop's projects shared, made through the API. */
-async function formTeam(environment: PromoEnvironment, members: PromoNode[], projectName: string): Promise<{ clusterId: string; owner: Session; projectId: string }> {
+export async function formTeam(environment: PromoEnvironment, members: PromoNode[], projectName: string): Promise<{ clusterId: string; owner: Session; projectId: string }> {
   const laptopNode = environment.nodes[0];
   const owner = await signIn(environment, laptopNode);
   const created = await api<{ snapshot: { body: { clusterId: string } } }>(laptopNode, owner, "POST", "/clusters", { name: "Northwind team" });
@@ -250,6 +250,8 @@ async function schedule({ environment, browser, root, finish, openProject }: Kit
   // It runs on this machine, the one that is always on. Only the stand-in for Claude can run here.
   await page.getByTestId("cron-owner").selectOption(serverNode.nodeId);
   await page.getByTestId("cron-engine").selectOption("claude");
+  // Each run's report waits in the review inbox, which the film shows at the end.
+  await glideClick(page, '[data-testid="cron-mark-for-review"]', { ms: 340 });
   await sleep(500);
   const created = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/cron" && response.request().method() === "POST");
   await glideClick(page, '[data-testid="cron-save"]', { ms: 380 });
