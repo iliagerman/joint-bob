@@ -1882,6 +1882,8 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .overview-progress-time { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .activity-mode[aria-busy="true"] svg, .mobile-nav button[aria-busy="true"] .nav-icon { animation: task-state-pulse 1.2s ease-in-out infinite; }
 @media (max-width: 1023px) { .overview-progress { left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); max-width: none; } }
+/* On a wide screen the card sits over the bottom-right of the conversation's banners, so they keep their button clear of it: 16px inset + 420px card + 16px gap. */
+@media (min-width: 1024px) { body:has(.overview-progress) :is(.conversation-lock, .done-conversation-notice) { padding-right: 452px; } }
 .activity-body[hidden], .conversation-chat[hidden], .conversation-chat-selectors[hidden] { display: none; }
 .conversation-chat { display: flex; flex: 1 1 0; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 8px 12px; }
 .conversation-chat > p { margin: 0; }

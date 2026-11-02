@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the conversation lock and finished-conversation notices hiding their button behind the progress card on wide screens; they now stop short of the card.
+
 ## 2.195.1 — 2026-11-02
 
 - Fixed podcast creation and follow-up answers failing when the writer's draft broke a rule, such as a code line that was too long; the writer now corrects its draft automatically.
