@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.195.2 — 2026-11-02
 
-- Fixed the conversation lock and finished-conversation notices hiding their button behind the progress card on wide screens; they now stop short of the card.
+- Fixed the Take ownership and finished-conversation banners hiding their buttons behind the activity progress card on wide screens; the banners now stop short of the card.
 
 ## 2.195.1 — 2026-11-02
 
