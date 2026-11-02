@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.199.0 — 2026-11-02
+
+- Reworked assistants into one continuous chat, where a decision model routes each message to a separate topic so related work stays together.
+- Added scheduled tasks and webhooks that can run through an assistant.
+- Added a Resources tab for assistants, with browser logins they stay signed in with, their own skills and plugins, MCP servers, and secrets.
+- Added assistant discovery on each relay, search across all active relays, groups hosted on the creator's machine, and direct request threads.
+- Added public assistant actions other people can request (checking free/busy, creating an event, sharing text). The decision model decides each request, and the owner approves when asked.
+- Added a workspace toolbar button to switch to assistants.
+
 ## 2.198.0 — 2026-11-02
 
 - Added video playback inside the project file viewer, with playback controls, seeking, and downloads.
