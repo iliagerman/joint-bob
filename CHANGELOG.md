@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.193.3 — 2026-11-02
+
+- Fixed file copying between machines crawling on projects with very large worktrees, which left taking over a conversation stuck on "Copying files".
+
 ## 2.193.2 — 2026-11-02
 
 - Fixed auto respond failing with "Select your own subscription profile" when it was stopped before it started, so the stop is reported as a cancellation.
