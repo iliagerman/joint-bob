@@ -3,13 +3,24 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.201.2 — 2026-11-02
 
 - Fixed settings sections spilling sideways on phones: the user list now shows each person as a card with labelled fields, and relay headings stack so their buttons stay inside the panel.
 
 ## 2.201.1 — 2026-11-02
 
 - Kept Activity overview mouths still while narration loads and showed when voice clips are preparing, instead of appearing to speak silently.
+
+## 2.201.0 — 2026-11-02
+
+- Relay groups can now take a subscription pool, like a cluster: projects shared through the relay group use that pool for every member, while each person's own choices keep applying to their other projects.
+- While a pool is attached to a relay group, only machines that support pools can join it.
+
+## 2.200.0 — 2026-11-02
+
+- When nothing is chosen and you have exactly one profile for a provider, that profile is now used automatically, and Assignments shows it as Automatic. A single Pi profile is used for the providers it holds.
+- Assignments now names each cluster whose pool is used in its projects, so it is clear that the pool wins there while your own choices cover every other project at the same time.
+- Cluster pools no longer offer relay groups, which cannot take a pool, and explain how to attach a single profile.
 
 ## 2.199.0 — 2026-11-02
 
