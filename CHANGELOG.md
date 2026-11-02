@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed podcasts failing to save when the writer returned a code line that was too long or a malformed draft. The writer now corrects its draft automatically before the podcast is saved, and a story's existing podcast is kept if a follow-up question cannot be answered.
+
 ## 2.195.0 — 2026-11-02
 
 - Reorganized the subscription profiles page into Profiles, Pools, and Where they're used tabs, so each part has its own screen.
