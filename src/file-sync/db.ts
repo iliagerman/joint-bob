@@ -267,6 +267,8 @@ export const HOT_QUERIES = {
   unpairedFetch: "SELECT path FROM need INDEXED BY need_sha WHERE t_sha256 = ? AND share = ? AND action = 'fetch' AND from_path IS NULL AND blocked = 0 AND t_deleted = 0 AND path <> ?",
   /** A prefix and everything below it: one key range (the prefix's string siblings in it are dropped by the caller). */
   needsUnder: `SELECT ${NEED_COLUMNS} FROM need WHERE share = ? AND path >= ? AND path < ?`,
+  /** `+since` keeps diffs_since out: it holds every peer's rows and looks each one up again, 15 times slower with 550,000 differences. */
+  diffCount: `SELECT COUNT(*) AS n FROM diffs WHERE share = ? AND peer = ? AND +since <= ? AND kind <> '${HIDDEN_DIFF}'`,
 } as const;
 
 export class FileSyncDb {
@@ -599,7 +601,7 @@ export class FileSyncDb {
 
   /** Differences that started at or before `settledAt` (all of them by default); hidden rows (HIDDEN_DIFF) are no difference. */
   diffCount(share: string, peer: string, settledAt = Number.MAX_SAFE_INTEGER): number {
-    return (this.statement(`SELECT COUNT(*) AS n FROM diffs WHERE share = ? AND peer = ? AND since <= ? AND kind <> '${HIDDEN_DIFF}'`).get(share, peer, settledAt) as Row).n as number;
+    return (this.statement(HOT_QUERIES.diffCount).get(share, peer, settledAt) as Row).n as number;
   }
 
   /** Every diffs row of the pair, hidden ones included: anything at all that keeps the two indexes from agreeing. */

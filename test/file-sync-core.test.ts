@@ -308,6 +308,7 @@ test("the per-directory, per-path and per-need queries seek instead of reading t
     movesFrom: /^SEARCH need USING INDEX need_from \(share=\? AND from_path=\?\)$/,
     unpairedFetch: /^SEARCH need USING INDEX need_sha \(t_sha256=\?\)$/,
     needsUnder: /^SEARCH need USING INDEX sqlite_autoindex_need_1 \(share=\? AND path>\? AND path<\?\)$/,
+    diffCount: /^SEARCH diffs USING PRIMARY KEY \(share=\? AND peer=\?\)$/,
   };
   for (const [name, sql] of Object.entries(HOT_QUERIES) as Array<[keyof typeof HOT_QUERIES, string]>) {
     const detail = plan(sql);

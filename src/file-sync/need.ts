@@ -432,6 +432,8 @@ export class NeedEngine {
     const { db } = this.deps;
     const members = share.peers();
     const peers = new Set(only !== undefined ? [only] : [...members, ...db.comparedPeers(key)]);
+    // After a scan: a restart lost the settle timer, and the kept counts wait for this look.
+    if (only === undefined) this.queueRefresh(key);
     for (const peer of peers) {
       const id = `${key}\n${peer}`;
       const tracked = db.shadowClean(key, peer) !== undefined;
@@ -566,11 +568,11 @@ export class NeedEngine {
     });
   }
 
-  /** The settled difference count and clean-since for one peer; undefined while it is not compared. */
+  /** The settled difference count refresh keeps and clean-since for one peer; undefined while it is not compared. Every status reads this, so it never counts. */
   comparison(key: string, peer: string): { differences: number; cleanSince: number | null } | undefined {
     const row = this.deps.db.shadowClean(key, peer);
     if (!row) return undefined;
-    return { differences: this.deps.db.diffCount(key, peer, this.now() - this.deps.settleMs), cleanSince: row.cleanSince };
+    return { differences: row.differences, cleanSince: row.cleanSince };
   }
 
   /** Settled differences in path order, with both sides' entries. */

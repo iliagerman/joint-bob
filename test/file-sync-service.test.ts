@@ -684,6 +684,36 @@ test("a real difference found while the comparison is still being computed is no
   }
 });
 
+test("a status reads the kept count of differences instead of counting them again", async (t) => {
+  const s = setup(t);
+  const a = s.node("node-a", ["node-b"]);
+  const b = s.node("node-b", ["node-a"]);
+  files(a.root, { "only-a.txt": "not copied yet" });
+  for (const node of [a, b]) { await node.configure(); await node.scan(); }
+  await s.quiesce();
+  let counted = 0;
+  const diffCount = a.core.db.diffCount.bind(a.core.db);
+  a.core.db.diffCount = (...args) => { counted++; return diffCount(...args); };
+  const [status] = await a.core.call("status", {});
+  assert.equal(status.peers[0].differences, 1);
+  assert.equal(counted, 0);
+});
+
+test("a scan brings the kept count of differences up to date after a restart lost the settle timer", async (t) => {
+  const s = setup(t);
+  const a = s.node("node-a", ["node-b"]);
+  const b = s.node("node-b", ["node-a"]);
+  files(a.root, { "only-a.txt": "not copied yet" });
+  for (const node of [a, b]) { await node.configure(); await node.scan(); }
+  await s.quiesce();
+  // What a worker stopped inside the settle window leaves behind: the difference is stored, the count does not hold it yet.
+  a.core.db.writeTx(() => a.core.db.putShadowClean(SHARE, "node-b", null, 0, s.clock.now()));
+  assert.equal((await a.core.call("status", {}))[0].peers[0].differences, 0);
+  await a.scan();
+  await s.quiesce();
+  assert.equal((await a.core.call("status", {}))[0].peers[0].differences, 1);
+});
+
 test("a digest mismatch error left from before a restart is cleared by the next contact that finds the digests equal", async (t) => {
   const s = setup(t);
   const a = s.node("node-a", ["node-b"]);
