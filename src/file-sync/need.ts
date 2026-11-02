@@ -16,6 +16,8 @@ import { WireError, type IndexPage } from "./wire.js";
 
 /** Rows read per recompute query; how many of them one slice evaluates is up to its time budget. */
 const RECOMPUTE_CHUNK = 500;
+/** Rows per write transaction when an expired priority is put back. */
+const PRIORITY_CHUNK = 2000;
 /** Rows between two looks at the clock inside a slice. */
 const CLOCK_EVERY = 32;
 /** The slice budget without a core to ask (§5.1: 10 ms while requests wait). */
@@ -68,12 +70,6 @@ export function needPriority(kind: ShareKind | undefined, path: string, size: nu
   if (hasSegment(path, (segment) => segment === ".joint-bob-worktree")) return 1;
   if (kind === "worktrees") return size < SMALL_WORKTREE_FILE ? 1 : 4;
   return kind === "tickets" ? 3 : 2;
-}
-
-function depthOf(path: string): number {
-  let count = 0;
-  for (let at = path.indexOf("/"); at >= 0; at = path.indexOf("/", at + 1)) count++;
-  return count;
 }
 
 /** One version, exactly: vector, content, mode, and the mtime and producer conflict copies are named after. */
@@ -991,12 +987,13 @@ export class NeedEngine {
     const trimmed = (prefix ?? "").replace(/\/+$/, "");
     const normalized = trimmed === "" ? "" : normalizeRelativePath(trimmed);
     const list = this.prioritized.get(key) ?? [];
-    list.push({ prefix: normalized, until });
+    // Every peer status asks again: one entry per prefix, or each expiry would walk the share once per ask.
+    const same = list.find((entry) => entry.prefix === normalized);
+    if (same) same.until = Math.max(same.until, until);
+    else list.push({ prefix: normalized, until });
     this.prioritized.set(key, list);
     const { db } = this.deps;
-    db.writeTx(() => {
-      for (const row of db.needsUnder(key, normalized)) if (row.priority !== 0) db.updateNeed(key, row.path, { priority: 0 });
-    });
+    db.writeTx(() => db.prioritizeNeeds(key, normalized));
     this.touchNeed(key);
     this.armPriorityTimer();
   }
@@ -1023,16 +1020,27 @@ export class NeedEngine {
       if (active.length) this.prioritized.set(key, active); else this.prioritized.delete(key);
       if (!expired.length) continue;
       const share = this.deps.share(key);
+      // The whole share covers every other prefix.
+      const prefixes = expired.some((entry) => entry.prefix === "") ? [""] : [...new Set(expired.map((entry) => entry.prefix))];
       try {
-        db.writeTx(() => {
-          for (const entry of expired) {
-            for (const row of db.needsUnder(key, entry.prefix)) {
-              if (active.some((other) => isSameOrInside(row.path, other.prefix))) continue;
-              const priority = needPriority(share?.kind, row.path, row.target.deleted ? 0 : row.target.size);
-              if (row.priority !== priority) db.updateNeed(key, row.path, { priority });
-            }
+        for (const prefix of prefixes) {
+          const low = `${prefix}/`;
+          // In pages of the few columns a priority needs: the share can hold hundreds of thousands of rows.
+          for (let after = ""; ;) {
+            const rows = db.needPriorityPage(key, prefix, after, PRIORITY_CHUNK);
+            if (!rows.length) break;
+            after = rows[rows.length - 1]!.path;
+            db.writeTx(() => {
+              for (const row of rows) {
+                if (prefix !== "" && row.path !== prefix && row.path < low) continue;
+                if (active.some((other) => isSameOrInside(row.path, other.prefix))) continue;
+                const priority = needPriority(share?.kind, row.path, row.deleted ? 0 : row.size);
+                if (row.priority !== priority) db.updateNeed(key, row.path, { priority });
+              }
+            });
+            if (rows.length < PRIORITY_CHUNK) break;
           }
-        });
+        }
         this.touchNeed(key);
       } catch { /* the share went away meanwhile */ }
     }
@@ -1068,7 +1076,7 @@ export class NeedEngine {
 
   /**
    * The next items to transfer or apply (§5.4, §6.2), in order: priority, then within it creates and updates
-   * smallest first, then deletes deepest first. Blocked rows, rows in backoff, rows in flight, a delete whose
+   * smallest first, then deletes with a folder's rows before the folder. Blocked rows, rows in backoff, rows in flight, a delete whose
    * local content a pending create still wants, and content no available peer or local copy has are left out.
    */
   nextNeeds(options: NextNeedsOptions): { items: NeedItem[]; nextRetryAt?: number } {
@@ -1098,30 +1106,29 @@ export class NeedEngine {
     const result = () => nextRetryAt === undefined ? { items } : { items, nextRetryAt };
     if (!limit || !active.size) return result();
     const skip = (row: NeedRow & { share: string }) => !active.has(row.share) || row.nextAt > now || inFlight.has(`${row.share}\n${row.path}`);
-    const deletesTaken = new Set<number>();
-    for (let offset = 0; items.length < limit; offset += RECOMPUTE_CHUNK) {
-      const rows = db.needCandidates(offset, RECOMPUTE_CHUNK);
-      if (!rows.length) break;
-      for (const row of rows) {
-        if (items.length >= limit) break;
-        if (row.action !== "delete") {
+    // One priority at a time, so no page ever walks a priority's deletes to reach the next one's creates.
+    for (let priority = db.nextNeedPriority(Number.MIN_SAFE_INTEGER); priority !== undefined && items.length < limit; priority = db.nextNeedPriority(priority)) {
+      for (let offset = 0; items.length < limit; offset += RECOMPUTE_CHUNK) {
+        const rows = db.needCreates(priority, offset, RECOMPUTE_CHUNK);
+        for (const row of rows) {
+          if (items.length >= limit) break;
           if (skip(row)) continue;
           const item = this.contentItem(row, active.get(row.share)!, available);
           if (item) items.push(item);
-          continue;
         }
-        // Creates and updates of this priority are all behind us: its deletes go now, deepest first.
-        if (deletesTaken.has(row.priority)) continue;
-        deletesTaken.add(row.priority);
-        const deletes = db.needDeletes(row.priority).filter((candidate) => !skip(candidate))
-          .sort((a, b) => depthOf(b.path) - depthOf(a.path) || (a.share < b.share ? -1 : a.share > b.share ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-        for (const candidate of deletes) {
-          if (items.length >= limit) break;
-          const local = db.entry(candidate.share, candidate.path);
-          // The other half of a rename (or a copy elsewhere) still wants these bytes: deleting them first would cost a transfer.
-          if (local && !local.deleted && local.type === FILE && local.sha256 && db.sharesWanting(local.sha256).some((share) => active.has(share))) continue;
-          items.push(this.itemOf(candidate, "delete", [], []));
-        }
+        if (rows.length < RECOMPUTE_CHUNK) break;
+      }
+      // Creates and updates of this priority are all behind us: its deletes go now, a folder's rows before the folder.
+      if (items.length >= limit || !db.hasNeedDeletes(priority)) continue;
+      for (const key of db.needDeleteKeys(priority, now)) {
+        if (items.length >= limit) break;
+        if (!active.has(key.share) || inFlight.has(`${key.share}\n${key.path}`)) continue;
+        const candidate = db.needRow(key.share, key.path);
+        if (!candidate) continue;
+        const local = db.entry(key.share, key.path);
+        // The other half of a rename (or a copy elsewhere) still wants these bytes: deleting them first would cost a transfer.
+        if (local && !local.deleted && local.type === FILE && local.sha256 && db.sharesWanting(local.sha256).some((share) => active.has(share))) continue;
+        items.push(this.itemOf({ ...candidate, share: key.share }, "delete", [], []));
       }
     }
     return result();

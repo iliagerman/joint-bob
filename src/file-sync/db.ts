@@ -738,14 +738,48 @@ export class FileSyncDb {
       .filter((row) => row.path === prefix || row.path >= low);
   }
 
-  /** Unblocked rows of every share in transfer order: priority, creates and updates before deletes, smallest first (need_order). */
-  needCandidates(offset: number, limit: number): SharedNeedRow[] {
-    return (this.statement(`SELECT share, ${NEED_COLUMNS} FROM need WHERE blocked = 0 ORDER BY priority, action = 'delete', t_size, share, path LIMIT ? OFFSET ?`).all(limit, offset) as Row[]).map(toSharedNeed);
+  /** Rows at `prefix` and below go first (priority 0): one statement, no rows decoded. A share losing whole trees holds 300,000 of them. */
+  prioritizeNeeds(share: string, prefix: string): number {
+    this.requireTx();
+    if (prefix === "") return Number(this.statement("UPDATE need SET priority = 0 WHERE share = ? AND priority <> 0").run(share).changes);
+    const [low, high] = below(prefix);
+    return Number(this.statement("UPDATE need SET priority = 0 WHERE share = ? AND path >= ? AND path < ? AND (path = ? OR path >= ?) AND priority <> 0")
+      .run(share, prefix, high, prefix, low).changes);
   }
 
-  /** Unblocked deletes of one priority, every share; the caller orders them deepest first. */
-  needDeletes(priority: number): SharedNeedRow[] {
-    return (this.statement(`SELECT share, ${NEED_COLUMNS} FROM need WHERE blocked = 0 AND action = 'delete' AND priority = ?`).all(priority) as Row[]).map(toSharedNeed);
+  /** What a priority depends on, for rows at `prefix` and below ("" = the whole share) in path order after `after`: a chunked walk that decodes no targets. */
+  needPriorityPage(share: string, prefix: string, after: string, limit: number): Array<{ path: string; priority: number; deleted: boolean; size: number }> {
+    const rows = (prefix === ""
+      ? this.statement("SELECT path, priority, t_deleted, t_size FROM need WHERE share = ? AND path > ? ORDER BY path LIMIT ?").all(share, after, limit)
+      : this.statement("SELECT path, priority, t_deleted, t_size FROM need WHERE share = ? AND path >= ? AND path < ? AND path > ? ORDER BY path LIMIT ?").all(share, prefix, below(prefix)[1], after, limit)) as Row[];
+    return rows.map((row) => ({ path: row.path as string, priority: row.priority as number, deleted: row.t_deleted === 1, size: row.t_size as number }));
+  }
+
+  /** The lowest priority above `after` with unblocked rows (a need_order seek). */
+  nextNeedPriority(after: number): number | undefined {
+    const row = this.statement("SELECT MIN(priority) AS p FROM need WHERE blocked = 0 AND priority > ?").get(after) as Row;
+    return row.p === null ? undefined : row.p as number;
+  }
+
+  /** Unblocked creates and updates of one priority, every share, in transfer order: smallest first (need_order). */
+  needCreates(priority: number, offset: number, limit: number): SharedNeedRow[] {
+    return (this.statement(`SELECT share, ${NEED_COLUMNS} FROM need WHERE blocked = 0 AND priority = ? AND (action = 'delete') = 0 ORDER BY t_size, share, path LIMIT ? OFFSET ?`)
+      .all(priority, limit, offset) as Row[]).map(toSharedNeed);
+  }
+
+  hasNeedDeletes(priority: number): boolean {
+    return this.statement("SELECT 1 FROM need WHERE blocked = 0 AND priority = ? AND (action = 'delete') = 1 LIMIT 1").get(priority) !== undefined;
+  }
+
+  /**
+   * Keys of the unblocked deletes of one priority that are due, every share, a folder's rows before the folder: reverse
+   * key order (a folder's path is a prefix of every path below it), which the primary key yields without sorting.
+   * Read lazily and without the targets: decoding a 300,000-row backlog at once took 470 MB and ended the worker.
+   */
+  needDeleteKeys(priority: number, now: number): IterableIterator<{ share: string; path: string }> {
+    // The unary + keeps need_order out: it would sort every delete of the priority before the first one is read.
+    return this.statement("SELECT share, path FROM need WHERE +blocked = 0 AND +priority = ? AND action = 'delete' AND next_at <= ? ORDER BY share DESC, path DESC")
+      .iterate(priority, now) as unknown as IterableIterator<{ share: string; path: string }>;
   }
 
   blockedNeeds(share: string): NeedRow[] {

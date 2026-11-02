@@ -338,14 +338,16 @@ test("a folder delete refuses local-only content, removes regenerable content wi
   await n.pull([dir("d"), n.over("d/a.txt", { deleted: true, size: 1, sha256: sha("a") }), dir("e"), n.over("e/b.txt", { deleted: true, size: 1, sha256: sha("b") }), dir("f"), dir("g")]);
   // f/new-here.txt is newer here than the peer's delete of f: it stays, and so does f. g also holds local-only content, which
   // alone would block it; its synced file nobody deleted keeps it all the same (blocked here, the peer would wait under a file forever).
-  assert.deepEqual(n.next().map((item) => item.path), ["d/a.txt", "e/b.txt", "d", "e", "f", "g"]);
+  // Reverse key order: each folder right after what is in it.
+  assert.deepEqual(n.next().map((item) => item.path), ["g", "f", "e/b.txt", "e", "d/a.txt", "d"]);
   const result = await n.apply(n.next().map((item) => ({ path: item.path })));
   assert.deepEqual(result.items.map((item) => [item.path, item.outcome, item.reason]), [
-    ["d/a.txt", "applied", undefined], ["e/b.txt", "applied", undefined],
-    ["d", "blocked", "A folder with local-only files is in the way"],
-    ["e", "applied", undefined],
-    ["f", "stale", "The folder holds files changed here: it stays"],
     ["g", "stale", "The folder holds files changed here: it stays"],
+    ["f", "stale", "The folder holds files changed here: it stays"],
+    ["e/b.txt", "applied", undefined],
+    ["e", "applied", undefined],
+    ["d/a.txt", "applied", undefined],
+    ["d", "blocked", "A folder with local-only files is in the way"],
   ]);
   assert.equal(compareVectors(n.core.db.entry(n.key, "g")!.version, n.core.db.remote(n.key, PEER, "g")!.version), "greater");
   // A modification beats a delete: f now has a version above the peer's delete, so the peer gets it back.

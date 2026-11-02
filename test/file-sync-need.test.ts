@@ -261,7 +261,7 @@ test("a delete and a create of the same content pair into one move, whichever ar
   assert.deepEqual([q.db.needRow(KEY, "dir/kept.txt")?.action, q.db.needRow(KEY, "dir/kept.txt")?.fromPath], ["fetch", null]);
 });
 
-test("creates and updates go smallest first, then deletes deepest first", async (t) => {
+test("creates and updates go smallest first, then deletes with a folder's rows before the folder", async (t) => {
   const q = queue(t, { peers: ["p1"] });
   for (const [where, type] of [["a", DIRECTORY], ["a/b", DIRECTORY], ["a/b/c.txt", FILE], ["a/z.txt", FILE]] as const) {
     q.local({ path: where, type, sha256: type === FILE ? SHA_X : null, size: type === FILE ? 1 : 0, version: { "node-b": 1 }, modifiedBy: "node-b" });
@@ -275,11 +275,12 @@ test("creates and updates go smallest first, then deletes deepest first", async 
     { path: "small.txt", size: 5, sha256: SHA_Z, version: { p1: 3 }, modifiedBy: "p1" },
   ]);
   const { items } = q.need.nextNeeds({ limit: 10 });
-  assert.deepEqual(items.map((item) => item.path), ["small.txt", "big.txt", "a/b/c.txt", "a/b", "a/z.txt", "a"]);
+  // Reverse key order: a folder's path is a prefix of every path below it, so they all come first.
+  assert.deepEqual(items.map((item) => item.path), ["small.txt", "big.txt", "a/z.txt", "a/b/c.txt", "a/b", "a"]);
   assert.deepEqual(items.map((item) => item.action), ["fetch", "fetch", "delete", "delete", "delete", "delete"]);
   // A peer that cannot be reached right now: its content waits, deletes need no peer.
-  assert.deepEqual(q.need.nextNeeds({ limit: 10, availablePeers: [] }).items.map((item) => item.path), ["a/b/c.txt", "a/b", "a/z.txt", "a"]);
-  assert.deepEqual(q.need.nextNeeds({ limit: 3 }).items.map((item) => item.path), ["small.txt", "big.txt", "a/b/c.txt"]);
+  assert.deepEqual(q.need.nextNeeds({ limit: 10, availablePeers: [] }).items.map((item) => item.path), ["a/z.txt", "a/b/c.txt", "a/b", "a"]);
+  assert.deepEqual(q.need.nextNeeds({ limit: 3 }).items.map((item) => item.path), ["small.txt", "big.txt", "a/z.txt"]);
 });
 
 test("priorities: worktree metadata and small files, project, tickets, worktree bulk, baselines; prioritize until it expires", async (t) => {
