@@ -8,6 +8,7 @@ import {
   accessibleProviderProfile,
   ensureProviderProfileSchema,
   listSubscriptionSelections,
+  onlyPrivateProfile,
   profileProviderSchema,
   profileSelectionSchema,
   providerProfile,
@@ -190,7 +191,8 @@ export function resolveSubscriptionChoice(owner: string, provider: ProfileProvid
     if (match?.poolId) return { kind: "pool", pool: getSubscriptionPool(owner, match.poolId), source };
     if (match?.profileId) return { kind: "profile", profile: accessibleProviderProfile(owner, match.profileId, usage), source };
   }
-  return undefined;
+  const only = onlyPrivateProfile(owner, profileProviderSchema.parse(provider));
+  return only ? { kind: "profile", profile: only, source: "default" } : undefined;
 }
 export function poolCandidates(pool: SubscriptionPool, preferredProvider: ProfileProvider): ProviderProfile[] {
   const current = getSubscriptionPool(pool.owner, pool.id);

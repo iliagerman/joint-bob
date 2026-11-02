@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.200.0 — 2026-11-02
+
+- When nothing is chosen and you have exactly one profile for a provider, that profile is now used automatically, and Assignments shows it as Automatic. A single Pi profile is used for the providers it holds.
+- Assignments now names each cluster whose pool is used in its projects, so it is clear that the pool wins there while your own choices cover every other project at the same time.
+- Cluster pools no longer offer relay groups, which cannot take a pool, and explain how to attach a single profile.
+
 ## 2.199.0 — 2026-11-02
 
 - Reworked assistants into one continuous chat, where a decision model routes each message to a separate topic so related work stays together.

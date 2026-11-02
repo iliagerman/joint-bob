@@ -88,3 +88,25 @@ test("profile selection schema accepts a pool choice without a profile choice", 
   assert.equal(parsed.success, true);
   if (parsed.success) assert.equal(parsed.data.poolId, poolId);
 });
+
+test("with nothing chosen, a provider's only private profile is used, and two or more are never guessed", async () => {
+  const { resolveSubscriptionChoice } = await import("../src/provider-profiles/pools.js");
+  const { setProviderProfileShared } = await import("../src/provider-profiles/store.js");
+  const owner = "only-profile-owner", scope = { projectId: "p", workspaceId: "w" };
+  const only = createProviderProfile(owner, { label: "Only", provider: "openai-codex" });
+  assert.equal(resolveProviderProfile(owner, "openai-codex", scope)?.profile.id, only.id);
+  const choice = resolveSubscriptionChoice(owner, "openai-codex", scope);
+  assert.equal(choice?.kind === "profile" && choice.profile.id, only.id);
+  // Clearing a default leaves nothing chosen, so the only profile is still the one used.
+  setProviderProfileSelection(owner, { provider: "openai-codex", scope: "default", scopeId: "", profileId: only.id });
+  setProviderProfileSelection(owner, { provider: "openai-codex", scope: "default", scopeId: "", profileId: null });
+  assert.equal(resolveProviderProfile(owner, "openai-codex", scope)?.profile.id, only.id);
+  assert.equal(resolveProviderProfile("only-profile-other", "openai-codex", scope), undefined, "never another user's profile");
+  assert.equal(resolveProviderProfile(owner, "claude", scope), undefined, "never another provider's profile");
+  const second = createProviderProfile(owner, { label: "Second", provider: "openai-codex" });
+  assert.equal(resolveProviderProfile(owner, "openai-codex", scope), undefined, "two profiles: the user chooses");
+  setProviderProfileShared(owner, second.id, true);
+  assert.equal(resolveProviderProfile(owner, "openai-codex", scope)?.profile.id, only.id, "a profile shared for automation does not count");
+  createProviderProfile(owner, { label: "Pi", provider: "pi" });
+  assert.equal(resolveProviderProfile(owner, "pi", scope), undefined, "a Pi profile is never picked without a choice here");
+});

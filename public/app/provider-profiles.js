@@ -399,10 +399,11 @@ function clustersSection() {
   if (!clusters.length) return section;
   const list = el("div", { className: "cluster-pool-list" });
   for (const cluster of clusters) list.append(clusterPoolRow(cluster));
-  section.append(sectionHeader("Cluster pools", "A pool assigned to a cluster overrides everyone's choices, but only for projects shared through that cluster. Every current member must support pools."), list);
+  section.append(sectionHeader("Cluster pools", "A pool assigned to a cluster is used by every member, whatever their own choices, but only in projects shared through that cluster; everyone's choices keep applying to their other projects. Every current member must support pools. To attach one profile, make a pool with just that profile."), list);
   return section;
 }
 function clusterPoolRow(cluster) {
+  if (cluster.relayGroup) return relayGroupRow(cluster);
   const assignment = cluster.subscriptionPool;
   const ownPool = assignment && poolNamed(assignment.poolId);
   const row = el("div", { testid: "cluster-pool-row", className: "cluster-pool-row" }); row.dataset.clusterId = cluster.id;
@@ -428,6 +429,12 @@ function clusterPoolRow(cluster) {
   picker.onChange(updateSaveState); updateSaveState();
   row.append(el("strong", { text: cluster.name }), picker.root, save);
   if (assignment) row.append(el("span", { className: "profile-status-detail", text: ownPool ? `Assigned pool: ${ownPool.name}` : "This pool must be changed by its owner." }));
+  return row;
+}
+/** The relay manages its groups, and the server refuses pool assignments to them. */
+function relayGroupRow(cluster) {
+  const row = el("div", { testid: "cluster-pool-row", className: "cluster-pool-row relay-group" }); row.dataset.clusterId = cluster.id;
+  row.append(el("strong", { text: cluster.name }), el("span", { testid: "cluster-pool-relay", className: "profile-status-detail", text: "A relay group: the relay manages it, so a pool cannot be attached to it." }));
   return row;
 }
 /** A dry run on the page only: marking a card unavailable never touches a real sign-in. */
@@ -593,8 +600,23 @@ function assignmentsSection() {
   const section = el("section", { testid: "provider-assignments", className: "profile-section" });
   const tabs = providerTabs(assignmentProvider, (id) => { assignmentProvider = id; exceptionDraft = null; pages.exceptions = 0; rerender("assignments"); }, "provider-assignment-provider",
     (id) => selections.filter((item) => item.provider === id).length);
-  section.append(tabs, defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
+  section.append(tabs, ...clusterOverrideNote(assignmentProvider), defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
   return section;
+}
+/** A cluster's pool wins in projects shared through that cluster; these choices keep applying everywhere else. */
+function clusterOverrideNote(provider) {
+  const assigned = clusters.filter((cluster) => cluster.subscriptionPool);
+  if (provider === "kiro" || !assigned.length) return [];
+  const uses = assigned.map((cluster) => `${cluster.name} uses ${poolNamed(cluster.subscriptionPool.poolId)?.name ?? cluster.subscriptionPool.manifest?.name ?? "another member's pool"}`);
+  return [el("p", { testid: "provider-assignment-cluster-note", className: "assignment-cluster-note",
+    text: `In projects shared through a cluster with a pool, that pool is used whatever you choose here: ${uses.join("; ")}. Your choices below apply to every other project at the same time.` })];
+}
+/** What a turn uses when nothing is chosen at any level, as the server resolves it. */
+function automaticDefault(provider) {
+  const own = privateProfiles(provider);
+  if (own.length !== 1) return undefined;
+  return provider === "pi" ? { label: `Automatic: ${own[0].label}`, hint: `With none chosen, your only Pi profile, ${own[0].label}, is used for the providers it holds.` }
+    : { label: `Automatic: ${own[0].label}`, hint: `With none chosen, your only ${providerOf(provider).name} profile, ${own[0].label}, is used. Once you add another, choose one here.` };
 }
 function choiceOptions(provider) {
   return [
@@ -616,14 +638,17 @@ function defaultChoice(provider) {
   const name = providerOf(provider).name;
   const block = el("div", { testid: "provider-assignment-default", className: "assignment-block" });
   const current = saved(provider, "default", "");
-  const options = [{ value: "", label: "None", detail: "No profile chosen" }, ...choiceOptions(provider)];
+  const automatic = automaticDefault(provider);
+  const none = automatic ? { value: "", label: automatic.label, detail: "Nothing chosen" } : { value: "", label: "None", detail: "No profile chosen" };
+  const options = [none, ...choiceOptions(provider)];
   const usable = !current || usableChoice(provider, current);
   if (!usable) options.push({ value: current, label: `${choiceLabel(current)} — unavailable, choose another` });
-  const picker = createSearchableSelect({ id: `providerDefault${provider}`, testid: "provider-assignment-default-select", label: `Default for ${name} conversations`, prompt: "None", placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
+  const picker = createSearchableSelect({ id: `providerDefault${provider}`, testid: "provider-assignment-default-select", label: `Default for ${name} conversations`, prompt: none.label, placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
   picker.setOptions(options); picker.setValue(current ?? ""); picker.trigger.classList.toggle("invalid", !usable);
-  picker.onChange((value) => void changeChoice(selectionPayload(provider, "default", "", value || null), `Use ${value ? choiceLabel(value) : "no profile"} for ${name} conversations?`)
+  picker.onChange((value) => void changeChoice(selectionPayload(provider, "default", "", value || null), `Use ${value ? choiceLabel(value) : automatic ? none.label.toLowerCase() : "no profile"} for ${name} conversations?`)
     .catch((error) => { toast(error.message); rerender("assignments"); }));
-  block.append(sectionHeader(`Every ${name} conversation uses`, "Unless an exception below matches. With none chosen, only the node administrator falls back to this node's own sign-in."), picker.root);
+  const hint = automatic?.hint ?? "With none chosen, only the node administrator falls back to this node's own sign-in.";
+  block.append(sectionHeader(`Every ${name} conversation uses`, `Unless an exception below matches. ${hint}`), picker.root);
   return block;
 }
 async function changeChoice(payload, title) {

@@ -103,6 +103,9 @@ test("subscription pools are built in their own tab, editable, testable, and clu
 
   await page.getByTestId("provider-profiles-tab-assignments").click();
   const defaultChoice = page.getByTestId("provider-assignment-default-select");
+  // Nothing is chosen yet, and Claude work is the only Claude profile, so it is used automatically.
+  assert.equal((await defaultChoice.innerText()).trim(), "Automatic: Claude work");
+  assert.match(await page.getByTestId("provider-assignment-default").innerText(), /your only Claude profile, Claude work, is used/);
   await choose(page, "provider-assignment-default-select", "Team pool edited", "Team pool edited");
   await page.getByTestId("confirm-accept-button").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Team pool edited");
@@ -136,6 +139,10 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   const assignmentStatus = clusterRow.locator(".profile-status-detail");
   await assignmentStatus.waitFor();
   assert.match(await assignmentStatus.innerText(), /Assigned pool: Team pool edited/);
+  // Assignments says the cluster's pool wins in its projects while personal choices cover the rest.
+  await page.getByTestId("provider-profiles-tab-assignments").click();
+  assert.match(await page.getByTestId("provider-assignment-cluster-note").innerText(), /Pool test cluster uses Team pool edited[\s\S]*every other project at the same time/);
+  await page.getByTestId("provider-profiles-tab-pools").click();
 
   const clusterPicker = clusterRow.getByTestId("cluster-pool-select");
   await clusterPicker.click();
@@ -153,12 +160,12 @@ test("subscription pools are built in their own tab, editable, testable, and clu
 
   await page.getByTestId("provider-profiles-tab-assignments").click();
   const personalChoiceResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/selection" && response.request().method() === "PUT");
-  await choose(page, "provider-assignment-default-select", "None", "None");
+  await choose(page, "provider-assignment-default-select", "Automatic", "Automatic: Claude work");
   await page.getByTestId("confirm-accept-button").click();
   const personalChoice = await personalChoiceResponse;
   assert.equal(personalChoice.status(), 200, await personalChoice.text());
-  await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "None");
-  assert.equal((await defaultChoice.innerText()).trim(), "None");
+  await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Automatic: Claude work");
+  assert.equal(await page.getByTestId("provider-assignment-cluster-note").count(), 0, "no note once no cluster has a pool");
   const savedSelections = await (await page.request.get(`${node.url}/api/provider-profiles`)).json();
   assert.equal(savedSelections.selections.some((selection: { poolId?: string }) => selection.poolId === poolId), false);
   const savedClusters = await (await page.request.get(`${node.url}/api/clusters`)).json();

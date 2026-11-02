@@ -79,3 +79,23 @@ test("selected Pi runtime switches providers without using ambient auth or anoth
     await assert.rejects(localProfileCredential(one), /stay on this node/);
   } finally { if (old === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = old; }
 });
+
+test("with nothing chosen, a member's only Pi profile serves the providers it holds and no others", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-only-profile-"));
+  try {
+    const member = { ...actor, accountId: "pi-only-profile-owner" };
+    const project = await addProject("Pi only profile", root);
+    setResourceOwner("project", project.id, member.accountId);
+    const only = createProviderProfile(member.accountId, { provider: "pi", label: "Only" });
+    await mkdir(path.dirname(openAIAuthPath(only)), { recursive: true, mode: 0o700 });
+    await writeFile(openAIAuthPath(only), JSON.stringify({ zai: { type: "api_key", key: "fixture-only" } }), { mode: 0o600 });
+    const resolve = (provider: string) => runAsAccount(member, () => projectProviderProfile(project.id, "c1", provider, "pi"));
+    assert.equal((await resolve("zai"))?.id, only.id);
+    assert.equal(await resolve("openai"), undefined, "not for a provider the profile does not hold");
+    await assert.rejects(resolve("openai-codex"), /Select your own/, "a subscription it lacks still needs the member's own profile");
+    const chatgpt = createProviderProfile(member.accountId, { provider: "openai-codex", label: "ChatGPT" });
+    assert.equal((await resolve("openai-codex"))?.id, chatgpt.id, "the only ChatGPT profile is used automatically");
+    createProviderProfile(member.accountId, { provider: "pi", label: "Second" });
+    assert.equal(await resolve("zai"), undefined, "two Pi profiles: none is guessed");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

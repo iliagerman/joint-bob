@@ -35,7 +35,7 @@ The most specific saved choice wins:
 3. Workspace
 4. Your default
 
-Choose **None** as the default, or remove an exception, to clear a choice at that level. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work. A choice that points at a profile shared for automation is marked in red as unavailable and must be changed before your next turn.
+Choose the first option as the default, or remove an exception, to clear a choice at that level. When nothing is chosen at any level and you have exactly one private profile for the provider, that profile is used; the default picker shows it as **Automatic**. With two or more, none is guessed. A Pi profile holds several providers, so a single Pi profile is used only for turns whose provider it holds. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work. A choice that points at a profile shared for automation is marked in red as unavailable and must be changed before your next turn.
 
 The selection takes effect on the next turn. An already-running turn keeps its existing account. Switching a conversation can send its prior transcript to a different provider account, so Joint Bob asks for confirmation before saving the selection.
 
@@ -49,7 +49,7 @@ A retry is allowed only for a recognized subscription quota, authentication, or 
 
 ## Cluster assignments and relay
 
-A pool owner can assign their pool to a cluster, under **Cluster pools** on the **Pools** tab, after every current member confirms pool-protocol support. That assignment overrides personal choices only for work shared through that cluster; other work continues to use each person's normal scope precedence. Only the pool owner can change or clear the assignment. New members must support pools while an assignment is active.
+A pool owner can assign their pool to a cluster, under **Cluster pools** on the **Pools** tab, after every current member confirms pool-protocol support. That assignment overrides personal choices, including an automatic single profile, only for work shared through that cluster; other work continues to use each person's normal scope precedence at the same time. The **Assignments** tab names each cluster whose pool wins this way. To attach a single profile, make a pool with just that profile. Relay groups are managed by their relay and cannot take a pool. Only the pool owner can change or clear the assignment. New members must support pools while an assignment is active.
 
 Cluster members receive a signed, non-secret pool manifest, not provider credentials. When a turn needs a profile held on another node, the manager revalidates the current cluster assignment and membership before the holder lends a short-lived access token over the signed peer channel. The refresh credential stays on the profile holder; the borrowed token is kept in memory and never becomes a cluster manifest.
 

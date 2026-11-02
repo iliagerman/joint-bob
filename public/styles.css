@@ -4113,6 +4113,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .profile-brand { flex: none; width: 16px; height: 16px; }
 .profile-brand.claude { color: var(--claude); }
 .profile-brand.openai-codex { color: #10a37f; }
+.profile-brand.kiro { color: var(--kiro); }
 .profile-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .profile-add input { flex: 1 1 200px; min-width: 0; }
 .profile-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 11px; font-size: 12.5px; }
@@ -4120,11 +4121,11 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .profile-action .row-menu-icon { width: 14px; height: 14px; opacity: 0.85; }
 .profile-actions .ghost, .profile-pager .ghost, .assignment-exception-row .ghost, .assignment-exception-form .ghost { border-color: var(--line-strong); background: var(--field); }
 .provider-profiles .ghost.danger { border-color: color-mix(in srgb, var(--danger) 40%, transparent); color: var(--danger); }
-.profile-brand.kiro { color: var(--kiro); }
 .profile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
 .profile-card { --brand: var(--accent); display: grid; align-content: start; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--brand); border-radius: var(--radius-ctl); background: var(--panel); }
 .profile-card.claude { --brand: var(--claude); }
 .profile-card.openai-codex { --brand: #10a37f; }
+.profile-card.kiro { --brand: var(--kiro); }
 .profile-card-head { display: flex; align-items: center; gap: 10px; }
 .profile-tile { display: inline-grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: color-mix(in srgb, var(--brand) 15%, transparent); }
 .profile-tile .profile-brand { width: 18px; height: 18px; }
@@ -4135,7 +4136,6 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .profile-pill { --pill: var(--muted); display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; background: color-mix(in srgb, var(--pill) 14%, transparent); color: var(--pill); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .profile-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .profile-pill.ok { --pill: var(--live); }
-.profile-card.kiro { --brand: var(--kiro); }
 .profile-pill.twin { --pill: #3b82f6; }
 .profile-pill.warn { --pill: var(--amber); }
 .profile-pill.error { --pill: var(--danger); }
@@ -4173,6 +4173,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .assignment-exception-choice { margin-right: auto; }
 .assignment-exception-choice.invalid { color: var(--danger); }
 .assignment-uses { color: var(--muted); }
+.assignment-cluster-note { margin: 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--text); font-size: 12.5px; }
 .assignment-exception-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 10px; border: 1px dashed var(--line-strong); border-radius: var(--radius-ctl); }
 .assignment-exception-form > label { display: grid; gap: 4px; min-width: 0; font-size: 12px; }
 .assignment-exception-form .searchable-select { min-width: 220px; }

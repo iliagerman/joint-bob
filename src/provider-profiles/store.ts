@@ -221,7 +221,18 @@ export function resolveProviderProfile(owner: string, provider: ProfileProvider,
     if (match?.poolId) throw new Error("Selected subscription pool requires pool-aware execution");
     if (match?.profileId) return { profile: accessibleProviderProfile(owner, match.profileId, usage), source };
   }
-  return undefined;
+  const only = onlyPrivateProfile(owner, provider);
+  return only ? { profile: only, source: "default" } : undefined;
+}
+/**
+ * With no choice at any level, a provider's only private profile is the one meant; with two or more
+ * none is guessed. A Pi profile holds several providers, so the Pi engine instead checks whether a
+ * single Pi profile holds the turn's provider (projectProviderProfile).
+ */
+export function onlyPrivateProfile(owner: string, provider: ProfileProvider): ProviderProfile | undefined {
+  if (provider === "pi") return undefined;
+  const candidates = listProviderProfiles(owner).filter((profile) => profile.provider === provider && !profile.shared);
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 const stampSchema = { username: z.string().regex(/^[0-9a-f]{32}$/), updatedAt: z.string().datetime(), originNodeId: z.string().min(1).max(100) };

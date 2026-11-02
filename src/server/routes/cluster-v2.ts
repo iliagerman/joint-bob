@@ -180,7 +180,9 @@ app.get("/api/clusters", handler(async (_request, response) => {
     });
     return { ...getSharingCluster(db, membership.clusterId), members,
       autoShareProjects: membership.autoShareProjects, pendingDeliveries: pending.get(membership.clusterId) ?? 0,
-      subscriptionPool: getClusterSubscriptionPool(db, membership.clusterId) ?? null };
+      subscriptionPool: getClusterSubscriptionPool(db, membership.clusterId) ?? null,
+      // The relay manages these groups; the subscription pool routes refuse them (manualCluster).
+      relayGroup: Boolean(db.prepare("SELECT 1 FROM relay_sharing_groups WHERE cluster_id=?").get(membership.clusterId)) };
   });
   response.json({ clusters });
 }));

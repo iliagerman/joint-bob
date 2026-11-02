@@ -11,7 +11,7 @@ import { claudeOAuthIdentity } from "./claude-identity.js";
 import { prepareClaudeProfile, readLegacyClaudeCredential, removeLegacyClaudeCredential } from "./claude.js";
 import { withProfileAuthority } from "./broker.js";
 import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
-import { accessibleProviderProfile, providerProfile, resolveProviderProfile, type ProfileProvider, type ProviderProfile } from "./store.js";
+import { accessibleProviderProfile, listProviderProfiles, providerProfile, resolveProviderProfile, type ProfileProvider, type ProviderProfile } from "./store.js";
 
 export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolSelection, updateSubscriptionPool } from "./pools.js";
 
@@ -93,10 +93,17 @@ export async function projectProviderProfile(projectId: string, conversationId: 
     const selected = resolveProviderProfile(accountId, "pi", { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive");
     if (selected) return selected.profile;
   }
-  if (targetProvider !== "claude" && targetProvider !== "openai-codex" && !(engine === "kiro" && targetProvider === "kiro")) return undefined;
-  const profile = resolveProviderProfile(accountId, targetProvider, { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive")?.profile;
+  const subscription = targetProvider === "claude" || targetProvider === "openai-codex" || (engine === "kiro" && targetProvider === "kiro");
+  const profile = (subscription ? resolveProviderProfile(accountId, targetProvider, { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive")?.profile : undefined)
+    ?? (engine === "pi" ? onlyPiProfileHolding(accountId, provider) : undefined);
+  if (!subscription) return profile;
   if (!profile && accountId !== adminAccountId()) throw new Error("Select your own subscription profile on this node. No other user's account was used.");
   return profile;
+}
+/** A single Pi profile serves a Pi turn whose provider it holds; it is never guessed for a provider it lacks. */
+function onlyPiProfileHolding(owner: string, provider: string): ProviderProfile | undefined {
+  const candidates = listProviderProfiles(owner).filter((profile) => profile.provider === "pi" && !profile.shared);
+  return candidates.length === 1 && readStoredCredential(provider, openAIAuthPath(candidates[0])) ? candidates[0] : undefined;
 }
 
 export async function persistOpenAIProfileCredential(profile: ProviderProfile, credential: Extract<ProfileCredential, { type: "oauth" }>): Promise<void> {
