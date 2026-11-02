@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.191.2 — 2026-11-02
+
+- Fixed the review counter not going down after opening a conversation that needs review. Refreshes no longer discard the inbox scan that is already running while other projects keep updating, and opening a conversation removes it from the counts at once.
+- Changed the review counts on the logo button, its Review menu, the header and nav badges, the project rows and the Review dialog to read one list, so they always show the same number.
+
 ## 2.191.1 — 2026-11-01
 
 - Changed the Joint Bob logo in the header, the Activity and story screens, the install banner and the startup screen to draw without its dark square, so it sits on the page background. The app icon and browser tab icon keep the square.
