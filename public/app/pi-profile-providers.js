@@ -17,11 +17,16 @@ function button(text, testid, work) {
   return node;
 }
 
-/** Credential inputs stay in the existing write-only login prompt, never in status. */
-export function createPiProfileProviderEditor(profile, showLogin, changed) {
-  const root = element("details", "pi-profile-providers");
-  root.append(element("summary", "pi-profile-providers-toggle", "Manage providers"));
-  const content = element("div", "pi-profile-provider-content"); root.append(content);
+/**
+ * Credential inputs stay in the existing write-only login prompt, never in status. The prompt sits
+ * under the provider list, outside the fold so a sign-in in progress shows even when it is closed.
+ */
+export function createPiProfileProviderEditor(profile, loginBox, showLogin, changed) {
+  const details = element("details", "pi-profile-providers");
+  details.append(element("summary", "pi-profile-providers-toggle", "Manage providers"));
+  const content = element("div", "pi-profile-provider-content"); details.append(content);
+  const root = element("div"); root.className = "pi-profile-editor"; root.append(details, loginBox);
+  const signingIn = () => Boolean(loginBox.querySelector('[data-testid="provider-profile-login-cancel"]'));
   let page = 0, providers = [], selected = "";
   async function refresh() {
     const body = await api(`/api/provider-profiles/${profile.id}/providers`);
@@ -54,6 +59,8 @@ export function createPiProfileProviderEditor(profile, showLogin, changed) {
     const connect = button("Connect provider", "pi-profile-provider-connect", async () => {
       const { login } = await api(`/api/provider-profiles/${profile.id}/providers/${encodeURIComponent(selected)}/login`, { method: "POST", body: JSON.stringify({ methodId: method.value }) });
       showLogin(login, async () => { await refresh(); await changed(); });
+      // One way forward at a time: the prompt's Continue, not a second Connect.
+      form.hidden = signingIn();
     });
     function updateMethods() {
       method.replaceChildren(...(providers.find((provider) => provider.id === selected)?.methods ?? []).map((item) => new Option(item.label, item.id)));
@@ -61,8 +68,9 @@ export function createPiProfileProviderEditor(profile, showLogin, changed) {
     }
     picker.onChange((value) => { selected = value; updateMethods(); }); updateMethods();
     const form = element("div"); form.className = "profile-actions"; form.append(picker.root, method, connect);
+    form.hidden = signingIn();
     content.replaceChildren(list, form);
   }
-  root.addEventListener("toggle", () => { if (root.open) void refresh().catch((error) => toast(error.message)); });
+  details.addEventListener("toggle", () => { if (details.open) void refresh().catch((error) => toast(error.message)); });
   return { root, refresh };
 }

@@ -3,6 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.195.0 — 2026-11-02
+
+- Reorganized the subscription profiles page into Profiles, Pools, and Where they're used tabs, so each part has its own screen.
+- Pools are built in a step-by-step editor, and each profile's place in the failover order is numbered.
+- Added a Test failover button to each pool. It shows which profile the next turn would use and changes nothing.
+- Pool cards say which conversations, workspaces, or clusters use them, and a pool in use cannot be deleted.
+- The model to use after switching provider is asked only for providers the pool contains.
+- Claude models in the pool's switching choices list newest first, each once, without the "(latest)" label.
+- Fixed a duplicated Continue sign-in button when connecting a provider key. The key prompt replaces the starting message, and Enter submits it.
+
 ## 2.194.4 — 2026-11-02
 
 - Fixed a project's files waiting for hours behind a large batch of worktree changes on the same machine. Downloads and changes on the machine itself now take turns, so one big change no longer holds the rest back.

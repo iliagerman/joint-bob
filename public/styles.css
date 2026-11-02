@@ -4155,7 +4155,19 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .pool-form > label { min-width: 0; }
 .pool-form input { min-width: 0; }
 .pool-member-editors { display: grid; gap: 7px; }
-.pool-member-editor { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto auto; align-items: center; gap: 6px; }
+.pool-member-editor { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto auto auto; align-items: center; gap: 6px; }
+.pool-member-position, .pool-step-number, .pool-card-member::before { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-size: 11px; font-weight: 700; }
+.pool-step h4 { display: flex; align-items: center; gap: 8px; }
+.pool-step + input { max-width: 420px; }
+.profile-action.icon-only { justify-content: center; width: 32px; padding: 0; font-size: 14px; }
+.profile-actions[hidden] { display: none; }
+.profile-view { display: grid; gap: 14px; min-width: 0; }
+.profile-view-tabs { justify-self: start; }
+.profile-view-tabs .settings-subtab { display: inline-flex; align-items: center; gap: 7px; }
+.profile-tab-count { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: 10.5px; line-height: 18px; text-align: center; }
+.provider-profiles .profile-section:empty { display: none; }
+.profile-section-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; }
+.profile-section-toolbar > .profile-section-head { flex: 1 1 320px; }
 .pool-fallback-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
 .pool-fallback-field { display: grid; gap: 6px; min-width: 0; }
 .pool-fallback-field .searchable-select, .pool-fallback-field input { width: 100%; min-width: 0; }
@@ -4163,8 +4175,10 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .subscription-pool-card { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .pool-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pool-card-head h4 { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 13px; }
-.pool-card-members { display: grid; gap: 6px; }
-.pool-card-member { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; }
+.pool-card-members { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: pool-member; }
+.pool-card-member { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; counter-increment: pool-member; }
+.pool-card-member::before { content: counter(pool-member); width: 18px; height: 18px; font-size: 10px; }
+.pool-card-uses { color: var(--text); }
 .pool-card-member strong { overflow-wrap: anywhere; font-size: 12px; }
 .pool-card-member .profile-pill { margin-left: auto; }
 .cluster-pool-list { display: grid; gap: 8px; }
@@ -4172,12 +4186,14 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .cluster-pool-row .searchable-select { min-width: 0; }
 .cluster-pool-row > .profile-status-detail { grid-column: 2 / -1; }
 .pool-simulation-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
-.pool-simulation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.pool-simulation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.pool-simulation-grid > li { display: grid; min-width: 0; }
+.pool-simulation-card.next { border-color: color-mix(in srgb, var(--live) 60%, var(--line)); }
+.pool-simulation-result { margin: 0; color: var(--text); font-size: 13px; font-weight: 600; }
 .pool-simulation-card { display: grid; justify-items: start; gap: 7px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); color: var(--text); text-align: left; cursor: pointer; }
 .pool-simulation-card.unavailable { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); background: color-mix(in srgb, var(--amber) 8%, var(--panel)); }
 @media (max-width: 700px) {
-  .pool-member-editor { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .pool-member-editor .searchable-select { grid-column: 1 / -1; }
+  .pool-member-editor { grid-template-columns: auto minmax(0, 1fr) auto auto auto; }
   .cluster-pool-row { grid-template-columns: minmax(0, 1fr); }
   .cluster-pool-row > .profile-status-detail { grid-column: auto; }
 }

@@ -50,6 +50,9 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   assert.equal(await first.locator(".profile-pill").innerText(), "Not signed in");
   assert.equal(await first.getByTestId("provider-profile-signout").isVisible(), false);
 
+  assert.equal(await page.getByTestId("provider-assignment-row").count(), 0, "choices live on their own tab");
+  await page.getByTestId("provider-profiles-tab-usage").click();
+  assert.equal(await page.getByTestId("provider-profile-row").count(), 0, "profile cards stay on the Profiles tab");
   const defaultRow = page.locator('[data-testid="provider-assignment-row"][data-scope="default"]');
   const workspaceRows = page.locator('[data-testid="provider-assignment-row"][data-scope="workspace"]');
   assert.ok(await workspaceRows.count() >= 2, "the seeded workspaces each have a row");
@@ -89,12 +92,14 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   await page.getByTestId("confirm-accept-button").click();
   await override.waitFor({ state: "detached" });
 
+  await page.getByTestId("provider-profiles-tab-profiles").click();
   const sharing = page.getByTestId("provider-profile-row").filter({ hasText: "Account 2" });
   await sharing.getByTestId("provider-profile-sharing").click();
   await page.locator("#confirmDialog[open]").waitFor();
   assert.match(await page.locator("#confirmDialog").innerText(), /Every user on this node/);
   await page.getByTestId("confirm-accept-button").click();
   await page.getByTestId("provider-profile-row").filter({ hasText: "Account 2" }).filter({ hasText: "Shared for automation" }).waitFor();
+  await page.getByTestId("provider-profiles-tab-usage").click();
   assert.match(await workspaceCell(0).innerText(), /Account 2 — unavailable, choose another/);
   assert.match(await workspaceCell(0).getAttribute("class") ?? "", /invalid/);
   await defaultRow.getByTestId("provider-assignment-openai-codex").click();

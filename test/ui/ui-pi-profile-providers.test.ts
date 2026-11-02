@@ -10,12 +10,18 @@ async function configure(card: Locator, provider: string, key: string) {
   await card.getByTestId("pi-profile-provider-method").selectOption("api_key");
   await card.getByTestId("pi-profile-provider-connect").click();
   await card.getByTestId("provider-profile-login-answer").fill(key);
-  await card.getByTestId("provider-profile-login-continue").click();
+  // While the key is asked for, Continue is the only way forward and the starting message is gone.
+  assert.equal(await card.getByTestId("pi-profile-provider-connect").isVisible(), false);
+  assert.equal(await card.getByTestId("provider-profile-login-continue").count(), 1);
+  assert.doesNotMatch(await card.getByTestId("provider-profile-login").innerText(), /Starting sign-in/);
+  await card.getByTestId("provider-profile-login-answer").press("Enter");
   try {
     await card.getByTestId("pi-profile-connected-provider").filter({ hasText: provider === "zai" ? "Z.AI" : "OpenAI" }).waitFor();
   } catch (error) {
     throw new Error(`Provider setup did not render: ${await card.innerText()}`, { cause: error });
   }
+  await card.getByTestId("pi-profile-provider-connect").waitFor();
+  assert.equal(await card.getByTestId("provider-profile-login-continue").count(), 0, "an answered prompt does not come back");
 }
 
 test("Pi profiles configure multiple providers together or keep single-provider accounts separate", { timeout: 120_000 }, async (t) => {

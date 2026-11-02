@@ -11,7 +11,7 @@ async function choose(page: Page | Locator, testid: string, search: string, labe
   await page.getByTestId(`${testid}-option`).filter({ hasText: label }).first().click();
 }
 
-test("subscription pools are searchable, selectable, editable, and cluster-scoped", { timeout: 180_000 }, async (t) => {
+test("subscription pools are built in their own tab, editable, testable, and cluster-scoped", { timeout: 180_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -41,14 +41,28 @@ test("subscription pools are searchable, selectable, editable, and cluster-scope
   await page.reload();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-engines").click();
-  await page.getByTestId("subscription-pool-fallback-claude").click();
-  await page.getByTestId("subscription-pool-fallback-claude-search").fill("claude-");
-  await page.getByTestId("subscription-pool-fallback-claude-option").filter({ hasText: /claude-/ }).first().waitFor();
-  await page.keyboard.press("Escape");
-
-  assert.equal(await page.getByTestId("subscription-pool-save").count(), 1, "pool controls should be in Settings → Harnesses");
+  await page.getByTestId("provider-profiles-tab-pools").click();
+  assert.equal(await page.getByTestId("subscription-pool-form").count(), 0, "the editor stays closed until New pool");
+  assert.equal(await page.getByTestId("provider-profile-row").count(), 0, "profile cards live on the Profiles tab");
+  await page.getByTestId("subscription-pool-new").click();
+  assert.equal(await page.getByTestId("subscription-pool-fallback-claude").count(), 0, "no switching model before a Claude member is chosen");
   await page.getByTestId("subscription-pool-name").fill("Team pool");
   await choose(page, "subscription-pool-member-0", "Claude work", "Claude work");
+  assert.equal(await page.getByTestId("subscription-pool-fallback-openai-codex").count(), 0, "only providers in the pool get a switching model");
+  assert.equal(await page.getByTestId("subscription-pool-name").inputValue(), "Team pool", "choosing a member keeps the typed name");
+
+  // Pi's Claude models (provider "anthropic"), newest first, each listed once.
+  await page.getByTestId("subscription-pool-fallback-claude").click();
+  await page.getByTestId("subscription-pool-fallback-claude-option").filter({ hasText: /claude-/ }).first().waitFor();
+  const listed = await page.getByTestId("subscription-pool-fallback-claude-option").evaluateAll((options) => options.map((option) => option.textContent ?? ""));
+  await page.keyboard.press("Escape");
+  const ids = listed.map((text) => text.match(/claude-[a-z0-9-]+/)?.[0]).filter((id): id is string => Boolean(id));
+  assert.ok(ids.length > 3, `Claude models listed: ${listed.join(" | ")}`);
+  assert.equal(listed.some((text) => text.includes("(latest)")), false, "alias labels drop Pi's (latest) suffix");
+  assert.equal(ids.some((id) => /-\d{8}$/.test(id) && ids.includes(id.replace(/-\d{8}$/, ""))), false, "a dated snapshot is hidden when its alias is listed");
+  const versions = ids.map((id) => (id.match(/\d+/g) ?? []).slice(0, 2).map(Number)).map(([major = 0, minor = 0]) => major * 100 + minor);
+  assert.deepEqual(versions, [...versions].sort((left, right) => right - left), `newest first: ${ids.join(", ")}`);
+
   await page.getByTestId("subscription-pool-member-add").click();
   await choose(page, "subscription-pool-member-1", "ChatGPT work", "ChatGPT work");
   for (const provider of ["claude", "openai-codex"]) {
@@ -69,6 +83,15 @@ test("subscription pools are searchable, selectable, editable, and cluster-scope
   assert.match(await pool.innerText(), /Claude work[\s\S]*ChatGPT work/);
   assert.match(await pool.innerText(), /claude-fallback-test-model/);
   assert.match(await pool.innerText(), /openai-codex-fallback-test-model/);
+  assert.match(await pool.innerText(), /Not used yet/);
+
+  await pool.getByTestId("subscription-pool-test").click();
+  const simulated = page.getByTestId("subscription-pool-simulation-result");
+  await choose(page, "subscription-pool-simulation-model", "Claude", "Claude");
+  assert.equal(await simulated.innerText(), "The next turn uses Claude work.");
+  await page.getByTestId("subscription-pool-simulation-cards").locator("button").first().click();
+  assert.equal(await simulated.innerText(), "The next turn uses ChatGPT work.");
+  await page.getByTestId("subscription-pool-simulation-back").click();
 
   await pool.getByTestId("subscription-pool-edit").click();
   await page.getByTestId("subscription-pool-name").fill("Team pool edited");
@@ -79,6 +102,7 @@ test("subscription pools are searchable, selectable, editable, and cluster-scope
   assert.ok(poolId);
 
   const defaultRow = page.locator('[data-testid="provider-assignment-row"][data-scope="default"]');
+  await page.getByTestId("provider-profiles-tab-usage").click();
   await choose(defaultRow, "provider-assignment-claude", "Team pool edited", "Team pool edited");
   await page.getByTestId("provider-assignments-save").click();
   await page.getByTestId("confirm-accept-button").click();
@@ -95,6 +119,10 @@ test("subscription pools are searchable, selectable, editable, and cluster-scope
   assert.ok(cluster);
   await page.getByTestId("settings-tab-account").click();
   await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("provider-profiles-tab-pools").click();
+  assert.match(await editedPool.innerText(), /Used for My default \(Claude\)/);
+  assert.equal(await editedPool.getByTestId("subscription-pool-delete").isDisabled(), true, "a pool in use cannot be deleted");
+  await page.getByTestId("provider-profiles-tab-usage").click();
   const clusterRow = page.locator('[data-testid="cluster-pool-row"]').filter({ hasText: "Pool test cluster" });
   await clusterRow.waitFor();
   const assignmentPath = `/api/clusters/${cluster.id}/subscription-pool`;
@@ -138,6 +166,7 @@ test("subscription pools are searchable, selectable, editable, and cluster-scope
   assert.equal(savedSelections.selections.some((selection: { poolId?: string }) => selection.poolId === poolId), false);
   const savedClusters = await (await page.request.get(`${node.url}/api/clusters`)).json();
   assert.equal(savedClusters.clusters.some((item: { subscriptionPool?: { poolId: string } }) => item.subscriptionPool?.poolId === poolId), false);
+  await page.getByTestId("provider-profiles-tab-pools").click();
   await page.waitForFunction(() => {
     const button = document.querySelector('[data-testid="subscription-pool-card"] [data-testid="subscription-pool-delete"]');
     return button instanceof HTMLButtonElement && !button.disabled;
