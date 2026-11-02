@@ -2536,6 +2536,7 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
    `align-content: start` stops the grid stretching rows to fill it. */
 .settings-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-content: start;
   height: 100%;
@@ -5119,6 +5120,14 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .users-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .users-table th, .users-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .users-table td:last-child { display: flex; gap: 6px; flex-wrap: wrap; }
+/* A phone has no width for six columns: each person becomes a card of labelled fields and their actions. */
+@media (max-width: 720px) {
+  .users-table, .users-table tbody { display: block; }
+  .users-table thead { display: none; }
+  .users-table tr { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .users-table td { display: block; min-width: 0; padding: 0; border: 0; overflow-wrap: anywhere; }
+  .users-table td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); }
+}
 .users-one-time { font-family: var(--mono, monospace); padding: 8px; border: 1px dashed var(--line); border-radius: var(--radius-ctl); user-select: all; }
 .users-self-test { margin: 0 0 8px; padding-left: 18px; font-size: 13px; color: var(--muted); }
 .users-self-test[hidden], #usersModeActions[hidden], .users-enable-confirm[hidden], #usersModeActions button[hidden] { display: none; }
@@ -5281,6 +5290,8 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
   .relays-add-choices, .relay-token-form { grid-template-columns: minmax(0, 1fr); }
   .relay-row { flex-wrap: wrap; }
   .relay-row-actions { justify-content: flex-start; }
+  /* The heading's text and its action buttons stack, so the actions never run past the panel. */
+  .relay-head { flex-direction: column; align-items: stretch; }
 }
 
 /* ---- File sync: Settings → File sync (settings-page, P4) ---- */

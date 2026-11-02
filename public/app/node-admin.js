@@ -197,7 +197,7 @@ const usersMode = document.querySelector("#usersMultiUserStatus");
 const usersAdd = document.querySelector("#usersAddButton");
 const usersOneTime = document.querySelector("#usersOneTime");
 
-function cell(text) { const td = document.createElement("td"); td.textContent = text; return td; }
+function cell(label, text) { const td = document.createElement("td"); td.dataset.label = label; td.textContent = text; return td; }
 function actionButton(label, testid, onClick) {
   const button = document.createElement("button");
   button.type = "button"; button.className = "ghost compact"; button.textContent = label; button.dataset.testid = testid;
@@ -320,7 +320,7 @@ export async function loadUsers() {
         }),
       );
     }
-    row.append(cell(user.email || "—"), cell(user.username), cell(user.role === "admin" ? "Admin" : "Member"), cell(user.disabled ? "Disabled" : "Active"), cell(new Date(user.createdAt).toLocaleDateString()), actions);
+    row.append(cell("Email", user.email || "—"), cell("Username", user.username), cell("Role", user.role === "admin" ? "Admin" : "Member"), cell("Status", user.disabled ? "Disabled" : "Active"), cell("Added", new Date(user.createdAt).toLocaleDateString()), actions);
     return row;
   }));
 }
