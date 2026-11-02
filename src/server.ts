@@ -99,6 +99,7 @@ import "./file-sync/routes.js";
 import "./server/routes/webhooks.js";
 import "./server/routes/updates.js";
 import "./server/routes/not-found.js";
+import { closeManagedMcpClients } from "./server/routes/managed-mcp.js";
 export { app, createApp, server } from "./server/state.js";
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -115,7 +116,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     stopRelay();
     const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
     const stopFileSync = fileSync?.then((module) => module.stopFileSync()).catch(error => console.warn("File sync shutdown failed", error));
-    void Promise.allSettled([closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)), stopFileSync]).finally(() => process.exit(0));
+    void Promise.allSettled([closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)), stopFileSync, closeManagedMcpClients().catch(() => console.warn("MCP shutdown failed"))]).finally(() => process.exit(0));
   });
   flags.startupReady = false;
   flags.startupError = undefined;

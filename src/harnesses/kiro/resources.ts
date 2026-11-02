@@ -15,6 +15,7 @@ import { builtinCommands, type CommandDiscoveryOptions, type HarnessCommand } fr
 import { defaultSkillRoots, parseResourceFrontmatter, readConfiguredSkillPath, readSkillDirectory, type SkillRoots, type SkillSummary } from "../../skills.js";
 import type { HarnessResources } from "../resource-contract.js";
 import type { HarnessOpenOptions } from "../runtime.js";
+import { managedMcpBridgeConfigs } from "../../mcp/agent.js";
 import { configuredRuntime } from "../runtime-configuration.js";
 
 function defaults(home: string) {
@@ -223,6 +224,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     mcpServers: activeMcpServers("kiro", {
       ...(nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(activeMcpConfig("kiro", resources.mcpConfig)) : {}),
       ...(strict ? await readMcpConfig(path.join(options.cwd, ".kiro/settings/mcp.json")) : {}),
+      ...managedMcpBridgeConfigs(),
     }),
     includeMcpJson: !strict,
   };

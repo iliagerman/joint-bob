@@ -243,7 +243,7 @@ test("the inventory merges harnesses per skill and lists MCP servers without arg
     assert.deepEqual([byName.personal.source, byName.personal.target, byName.personal.enabled], ["user", "personal-mcp", false]);
     assert.deepEqual([byName.approved.enabled, byName.pending.enabled, byName.rejected.enabled], [true, false, false]);
     assert.doesNotMatch(JSON.stringify(inventory), /secret/);
-    assert.equal(inventory.harnesses.find((harness) => harness.id === "pi")?.mcp, false);
+    assert.equal(inventory.harnesses.find((harness) => harness.id === "pi")?.mcp, true);
 
     assert.deepEqual(await shareMcpServers(claudeUserConfig, ["personal", "missing"], { projectPath: project, resourceRoot: managed }), { added: ["personal"], skipped: ["missing"] });
     const shared = JSON.parse(await readFile(paths.mcpConfig, "utf8"));

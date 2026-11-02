@@ -10,9 +10,10 @@ import { openSettings } from "./settings.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 import { renderTwinSkillSync } from "./twin-skill-sync.js";
+import { managedMcpSetup, managedMcpControls } from "./managed-mcp.js";
 
 const ORIGIN_LABELS = { shared: "managed", scoped: "shared here", user: "agent", project: "project" };
-const MCP_SOURCE_LABELS = { shared: "shared", user: "agent", local: "project-local", project: "project", plugin: "plugin" };
+const MCP_SOURCE_LABELS = { account: "Joint Bob · your account", shared: "shared", user: "agent", local: "project-local", project: "project", plugin: "plugin" };
 const SCAN_STATUS_LABELS = { new: "New", changed: "Changed", installed: "Installed", linked: "Linked" };
 
 const view = {
@@ -778,10 +779,11 @@ function serverRow(server, local, inventory) {
   const harnessDisabled = view.scope === "conversation" && view.engine && server.activation?.[view.engine]?.enabled === false;
   if (harnessDisabled || !server.enabled) head.append(badge(!harnessDisabled && server.source === "project" ? "not approved" : "disabled", "off"));
   else if (view.scope === "conversation" && view.engine && server.harnesses.includes(view.engine)) head.append(badge("active", "active"));
-  const activation = ["shared", "project", "plugin"].includes(server.source) ? activationControl("mcp", server, local, server.harnesses) : null;
+  const activation = ["shared", "project", "plugin", "account"].includes(server.source) ? activationControl("mcp", server, local, server.harnesses) : null;
   head.append(...(activation ? [activation] : harnessIcons(server.harnesses)));
   if (!activation && local) head.append(badge(server.source === "enterprise" ? "organization managed" : "agent configured", "off"));
-  if (signInApplies(server, local)) head.append(...mcpAuthControls(server));
+  if (server.source === "account" && local) head.append(...managedMcpControls(server, async () => { await loadInventory(); render(); }));
+  else if (signInApplies(server, local)) head.append(...mcpAuthControls(server));
   const target = document.createElement("span");
   target.className = "skill-option-description";
   target.textContent = `${server.transport} · ${server.target}`;
@@ -886,7 +888,7 @@ function selectedServers() {
 function bulkChoices(inventory, kind) {
   const rows = kind === "skill" ? filteredSkills(inventory) : kind === "mcp" ? filteredServers(inventory) : filteredPlugins(inventory);
   const eligible = kind === "skill" ? () => true : kind === "mcp"
-    ? (row) => ["shared", "project", "plugin"].includes(row.source)
+    ? (row) => ["shared", "project", "plugin", "account"].includes(row.source)
     : (row) => ["managed", "global", "project"].includes(row.source);
   const filter = harnessFilter();
   const all = kind === "skill" ? inventory.skills : kind === "mcp" ? inventory.mcpServers : inventory.plugins ?? [];
@@ -928,6 +930,7 @@ function renderShareBar() {
   const local = entry?.inventory;
   bar.hidden = !view.ready || !(entry?.node.local || entry?.node.manageable) || !["skills", "mcp", "tools", "plugins"].includes(view.tab) || !local;
   if (bar.hidden) return;
+  if (view.tab === "mcp" && !view.nodeId) bar.append(managedMcpSetup(async () => { await loadInventory(); render(); }));
   const line = document.createElement("div");
   line.className = "resources-share-line";
   if (view.tab === "tools") {

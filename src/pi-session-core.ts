@@ -5,6 +5,7 @@ import type { AgentSession, Skill } from "@earendil-works/pi-coding-agent";
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, createBashTool, loadSkills } from "./pi-sdk.js";
 
 import { createPiResourceLoader } from "./harnesses/pi/resource-loader.js";
+import { managedMcpPiExtension } from "./mcp/pi-extension.js";
 import type { GuardianVerdict } from "./guardian/check.js";
 import { guardianPiExtension } from "./guardian/pi-extension.js";
 import type { GuardianRequest } from "./guardian/rules.js";
@@ -33,6 +34,7 @@ export interface PiCredentials {
 }
 
 export interface PiResources {
+  managedMcpServers?: string[];
   strictResourceIsolation: boolean;
   packagesFile: string;
   extensions: string[];
@@ -172,7 +174,10 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     additionalPromptTemplatePaths: promptPaths,
     additionalThemePaths: resources.themes,
     agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, ...resources.agentsFiles] }),
-    extensionFactories: hooks.guardian ? [guardianPiExtension((request) => hooks.guardian!(conversationId, request))] : [],
+    extensionFactories: [
+      managedMcpPiExtension(() => resources.managedMcpServers ?? [], () => credentials.capabilityEnvironment),
+      ...(hooks.guardian ? [guardianPiExtension((request) => hooks.guardian!(conversationId, request))] : []),
+    ],
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
   }, resources.strictResourceIsolation, resources.packagesFile);
   await resourceLoader.reload();

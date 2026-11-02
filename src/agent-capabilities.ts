@@ -13,6 +13,7 @@ import { multiUserEnabled } from "./account-runtime.js";
 import { revokeWebhookTitleAgentTokens, webhookTitleAgentEnvironment, webhookTitleInstructions } from "./webhook-title.js";
 import { webhookMemoryAgentEnvironmentForConversation, webhookMemoryAgentInstructions } from "./webhook-agent.js";
 import { revokeGuardianAgentTokens } from "./guardian/agent-token.js";
+import { mcpAgentEnvironment, revokeMcpAgentTokens } from "./mcp/agent.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -155,6 +156,11 @@ Attachments can change during a turn. New shell commands use current attached en
     environment: () => agentGitPolicyEnvironment(),
   },
   {
+    id: "mcp",
+    instructions: { path: "/virtual/JOINT_BOB_MCP.md", content: "# Joint Bob MCP\n\nJoint Bob supplies configured MCP tools automatically. MCP sign-ins belong to the current user on this machine and work across Claude, Pi and Kiro. If a server requires sign-in, ask the user to open Settings → Resources → MCP servers on the execution machine. Never read or print MCP capability tokens or OAuth credentials. Do not retry an uncertain mutation." },
+    environment: ({ projectId, engine, conversationId }) => mcpAgentEnvironment(projectId, engine, conversationId),
+  },
+  {
     id: "background-tasks",
     instructions: { path: "/virtual/JOINT_BOB_TASKS.md", content: taskInstructions },
     environment: taskEnvironment,
@@ -179,6 +185,7 @@ export function revokeAgentCapabilities(projectId: string, conversationId?: stri
   revokeNtfyAgentTokens(projectId, conversationId);
   revokeWebhookTitleAgentTokens(projectId, conversationId);
   revokeGuardianAgentTokens(projectId, conversationId);
+  revokeMcpAgentTokens(projectId, conversationId);
 }
 
 export function agentCapabilityInstructionFiles(): Array<{ path: string; content: string }> {

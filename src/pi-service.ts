@@ -26,6 +26,8 @@ import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSum
 import { toolTarget } from "./tool-target.js";
 import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";
 import { currentRuntime, runInRuntime, serviceRuntime } from "./account-runtime.js";
+import { managedMcpBridgeConfigs } from "./mcp/agent.js";
+import { activeMcpServers } from "./resource-activation.js";
 
 export type { PiSessionHandle } from "./pi-session-core.js";
 
@@ -682,6 +684,7 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
       const blocked = blockedSkillNames("pi", scope);
       return {
         strictResourceIsolation: strict,
+        managedMcpServers: Object.keys(activeMcpServers("pi", managedMcpBridgeConfigs())),
         packagesFile: agentResourcePaths().piPackages,
         extensions: resources.extensions,
         prompts: resources.prompts,

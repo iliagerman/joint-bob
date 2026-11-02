@@ -13,6 +13,7 @@ import { agentResourcePaths, managedMarkdownFiles } from "../../agent-resources.
 import { activeMcpServers, assertNoBlockedNativeResources } from "../../resource-activation.js";
 import { projectFolderResources } from "../../project-folder-resources.js";
 import type { HarnessResources } from "../resource-contract.js";
+import { managedMcpBridgeConfigs } from "../../mcp/agent.js";
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -164,7 +165,9 @@ export function claudeIsolationEnvironment(): NodeJS.ProcessEnv {
 export function claudeResourceIsolationArgs(cwd: string, resources: string[], memoryDirectory?: string, hooks: Record<string, unknown[]> = {}): string[] {
   if (!getSettings().strictResourceIsolation) {
     assertNoBlockedNativeResources("claude", "mcp");
-    return Object.keys(hooks).length ? [...resources, "--settings", settingsFile(JSON.stringify({ hooks }))] : resources;
+    const managed = activeMcpServers("claude", managedMcpBridgeConfigs());
+    const combined = Object.keys(managed).length ? [...resources, "--mcp-config", isolatedMcpConfig(managed)] : resources;
+    return Object.keys(hooks).length ? [...combined, "--settings", settingsFile(JSON.stringify({ hooks }))] : combined;
   }
   // No setting source at all: the CLI then discovers no CLAUDE.md, rules, skills, agents, commands or
   // hooks in the project or its parents, and the app passes what the agent should have.
@@ -201,7 +204,9 @@ export function claudeResourceIsolationArgs(cwd: string, resources: string[], me
       servers[name] = server;
     }
     for (const name of Object.keys(servers)) if (decisions.disabled(name)) delete servers[name];
-    const active = activeMcpServers("claude", servers);
+    const managed = managedMcpBridgeConfigs();
+    for (const name of Object.keys(managed)) if (Object.hasOwn(servers, name)) throw new Error(`MCP server ${name} is configured both natively and in Joint Bob. Remove one copy.`);
+    const active = activeMcpServers("claude", { ...servers, ...managed });
     if (Object.keys(active).length) args.push("--mcp-config", isolatedMcpConfig(active));
   }
   return args;

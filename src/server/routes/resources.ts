@@ -31,6 +31,8 @@ import { peerSnapshot, staleSnapshotReason } from "../peer-snapshots.js";
 import { registerGitResourceRoutes } from "../git-resources.js";
 import { registerSkillSharingRoutes } from "../skill-sharing.js";
 
+import "./managed-mcp.js";
+
 registerSkillSharingRoutes();
 registerGitResourceRoutes();
 
@@ -43,7 +45,7 @@ function activationError(inventory: ResourceInventory, kind: "skill" | "plugin" 
   if (restricted) return { status: 409, message: restricted.activationRestrictions![harness]! };
   if (matching.some((item) => kind === "skill" ? Boolean(item.activation?.[harness])
     : kind === "plugin" ? ["managed", "global", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(projectId))
-      : ["shared", "project", "plugin"].includes((item as { source?: string }).source ?? ""))) return null;
+      : ["shared", "project", "plugin", "account"].includes((item as { source?: string }).source ?? ""))) return null;
   return { status: 404, message: "Resource is not installed for that agent" };
 }
 // Only an explicitly selected trusted twin can be administered. Ordinary peer
@@ -93,7 +95,7 @@ app.put(["/api/resources/activation/item", "/api/cluster/resources/activation/it
     const refreshed = await localInventory(body.projectId, body.conversationId);
     const decision = (plugin ? refreshed.plugins.find((item) => item.name === body.name && item.source === plugin.source)?.activation[body.harness]
       : body.kind === "skill" ? refreshed.skills.find((item) => item.name === body.name && item.harnesses.includes(body.harness))?.activation?.[body.harness]
-        : refreshed.mcpServers.find((item) => item.name === body.name && item.harnesses.includes(body.harness) && ["shared", "project", "plugin"].includes(item.source))?.activation?.[body.harness])
+        : refreshed.mcpServers.find((item) => item.name === body.name && item.harnesses.includes(body.harness) && ["shared", "project", "plugin", "account"].includes(item.source))?.activation?.[body.harness])
       ?? activationDecision(body.kind, body.name, body.harness, body.kind === "skill" ? receivedSkill(body.name) : receivedResource(body.kind, body.name));
     response.json({ ...body, decision });
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choice"); else next(error); }

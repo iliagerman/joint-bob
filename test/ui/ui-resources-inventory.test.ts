@@ -61,8 +61,9 @@ test("Settings → Resources shows a conversation's skills and MCP servers, keep
 
     await page.getByTestId("resources-search-input").fill("");
     await page.getByTestId("resources-tab-mcp").click();
-    // The seeded conversation runs on Pi, which has no MCP client; the project view shows what others load.
-    await page.getByTestId("resources-list").getByText(/Pi does not load MCP servers/).waitFor();
+    // Pi supports Joint Bob-managed servers; legacy native configs still belong to their harnesses.
+    await page.getByTestId("managed-mcp-add").waitFor();
+    await page.getByTestId("resources-list").getByText(/No MCP servers match/).waitFor();
     await page.getByTestId("resources-scope-select").selectOption("project");
     const mcp = page.getByTestId("resources-mcp-row").filter({ hasText: "docs-search" });
     await mcp.getByText("http · https://docs.example.com").waitFor();

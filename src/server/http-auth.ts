@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from "express";
 import { type AuthSession, sessionCookieNameFor, sessionForId } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { browserAgentIdentity } from "../browser-agent.js";
+import { mcpAgentIdentity } from "../mcp/agent.js";
 import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
 import { ntfyAgentIdentity } from "../ntfy-agent.js";
 import { guardianAgentIdentity } from "../guardian/agent-token.js";
@@ -161,6 +162,10 @@ export async function requireHttpAuth(request: Request, response: Response, next
   }
   // Agent capability tokens are for agents on this machine; they are never accepted through a relay.
   const token = relayTransportOf(request.socket) ? undefined : bearerToken(request);
+  if (request.path === "/mcp/agent" && request.method === "POST" && token) {
+    const identity = mcpAgentIdentity(token);
+    if (identity) { response.locals.mcpAgent = identity; next(); return; }
+  }
   if (request.path === "/browser/agent" && request.method === "POST" && token) {
     const identity = browserAgentIdentity(token);
     if (identity) { response.locals.browserAgent = identity; response.locals.browserAgentToken = token; next(); return; }
@@ -205,7 +210,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent || response.locals.webhookTitleAgent || response.locals.guardianAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent || response.locals.webhookTitleAgent || response.locals.guardianAgent || response.locals.mcpAgent) {
     next();
     return;
   }

@@ -12,8 +12,10 @@ import { defaultSkillRoots, listSkills } from "./skills.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { scopedSkillsRoot, type SkillScopeContext } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
+import { actingAccount } from "./account-context.js";
+import { managedMcpStore } from "./mcp/agent.js";
 
-/** Harnesses whose runs load MCP servers; Pi has no MCP client. */
+/** Harnesses that also load legacy native MCP configuration. Pi uses the managed client. */
 const MCP_HARNESSES: HarnessId[] = ["claude", "kiro"];
 
 export type SkillOrigin = "shared" | "scoped" | "user" | "project";
@@ -28,7 +30,7 @@ export interface InventorySkill {
   activationRestrictions?: Partial<Record<HarnessId, string>>;
 }
 
-export type McpSource = "shared" | "user" | "local" | "project" | "plugin" | "enterprise";
+export type McpSource = "shared" | "user" | "local" | "project" | "plugin" | "enterprise" | "account";
 
 export interface InventoryMcpServer {
   name: string;
@@ -229,7 +231,9 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
     discovered.has("kiro") ? kiroServers(projectPath) : [],
   ]);
   const decisions = projectPath ? claudeProjectMcpDecisions(projectPath) : undefined;
-  const entries = [...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })]
+  const account = actingAccount();
+  const managed = account ? servers(managedMcpStore(account.accountId).servers(), { source: "account", file: "", harnesses: [...discovered] }) : [];
+  const entries = [...managed, ...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })]
     .map((server) => {
       const activation = Object.fromEntries(server.harnesses.map((harness) => {
         const own = activationDecision("mcp", server.name, harness, receivedResource("mcp", server.name));
@@ -299,7 +303,7 @@ export async function resourceInventory(options: { projectPath?: string; project
     inventorySkills(options.projectPath, options.projectId, paths.sharedSkills, options.conversationId),
     listMcpServers(options.projectPath, options.resourceRoot, configuredPlugins, options),
   ]);
-  const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: MCP_HARNESSES.includes(adapter.id) }));
+  const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: adapter.id === "pi" || MCP_HARNESSES.includes(adapter.id) }));
   const plugins: InventoryPlugin[] = [];
   try {
     const seenManaged = new Set<string>();

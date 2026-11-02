@@ -1,6 +1,6 @@
 {
   "name": "joint-bob",
-  "version": "2.196.0",
+  "version": "2.197.0",
   "description": "Private multi-node workspace for Pi and Claude coding agents",
   "private": false,
   "license": "MIT",
@@ -65,6 +65,7 @@
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.239",
     "@earendil-works/pi-coding-agent": "0.87.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "codemirror": "5.65.16",
     "express": "^4.19.2",
     "nanoid": "^5.0.7",
