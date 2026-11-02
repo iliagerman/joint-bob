@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.198.0 — 2026-11-02
+
+- Added video playback inside the project file viewer, with playback controls, seeking, and downloads.
+
 ## 2.197.2 — 2026-11-02
 
 - Fixed switched Claude/Pi conversations opening slowly, and older ones opening without their earlier part: opening one now reads just its own transcripts instead of listing every conversation in the project.

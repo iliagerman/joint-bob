@@ -4,7 +4,7 @@ import { copyFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
-test("View previews images, PDFs and both Word formats without editing binary data", async (t) => {
+test("View previews images, videos, PDFs and both Word formats without editing binary data", async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const project = node.projects.find((entry) => entry.name === "Internal Assistant")!;
   await writeFile(path.join(project.path, "preview.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/W3sAAAAASUVORK5CYII=", "base64"));
@@ -22,7 +22,7 @@ test("View previews images, PDFs and both Word formats without editing binary da
   const xref = Buffer.byteLength(parts.join(""));
   parts.push(`xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Root 1 0 R /Size 6 >>\nstartxref\n${xref}\n%%EOF`);
   await writeFile(path.join(project.path, "preview.pdf"), parts.join(""));
-  for (const extension of ["doc", "docx"]) await copyFile(new URL(`../fixtures/preview.${extension}`, import.meta.url), path.join(project.path, `preview.${extension}`));
+  for (const extension of ["mp4", "doc", "docx"]) await copyFile(new URL(`../fixtures/preview.${extension}`, import.meta.url), path.join(project.path, `preview.${extension}`));
 
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -31,7 +31,7 @@ test("View previews images, PDFs and both Word formats without editing binary da
   await page.getByText("Internal Assistant", { exact: true }).click();
   await page.waitForFunction(() => import("/app/state.js").then(({ state }) => Boolean(state.activeProjectId)));
 
-  for (const extension of ["png", "pdf", "doc", "docx"]) {
+  for (const extension of ["mp4", "png", "pdf", "doc", "docx"]) {
     await page.evaluate((name) => import("/app/project-files.js").then(({ openFileAction }) => openFileAction(name)), `preview.${extension}`);
     const dialog = page.getByTestId("file-action-dialog");
     await dialog.getByTestId("file-action-view-button").waitFor();
@@ -39,7 +39,22 @@ test("View previews images, PDFs and both Word formats without editing binary da
     assert.equal(await dialog.getByTestId("file-action-edit-button").isDisabled(), true);
     await dialog.getByTestId("file-action-view-button").click();
     await page.locator("#fileBinaryView:not([hidden])").waitFor();
-    if (extension === "png") {
+    if (extension === "mp4") {
+      const video = dialog.getByTestId("file-video-preview");
+      assert.equal(await video.isVisible(), true);
+      await page.waitForFunction(() => (document.querySelector("#fileVideoPreview") as HTMLVideoElement).readyState >= 2);
+      assert.equal(await video.evaluate((element: HTMLVideoElement) => element.controls && element.playsInline), true);
+      const url = new URL((await video.getAttribute("src"))!, node.url).href;
+      const range = await page.request.get(url, { headers: { Range: "bytes=0-99" } });
+      assert.equal(range.status(), 206);
+      assert.equal(range.headers()["content-type"], "video/mp4");
+      assert.match(range.headers()["content-range"], /^bytes 0-99\//);
+      assert.equal((await range.body()).length, 100);
+      await video.evaluate(async (element: HTMLVideoElement) => { await element.play(); });
+      await page.waitForFunction(() => (document.querySelector("#fileVideoPreview") as HTMLVideoElement).currentTime > 0);
+      await video.evaluate((element: HTMLVideoElement) => { element.pause(); element.currentTime = 1; });
+      await page.waitForFunction(() => { const video = document.querySelector("#fileVideoPreview") as HTMLVideoElement; return !video.seeking && video.currentTime >= 1; });
+    } else if (extension === "png") {
       await page.waitForFunction(() => (document.querySelector("#fileImagePreview") as HTMLImageElement).naturalWidth === 1);
       assert.equal(await dialog.getByTestId("file-image-preview").isVisible(), true);
     } else {
@@ -61,6 +76,10 @@ test("View previews images, PDFs and both Word formats without editing binary da
     }
     await dialog.getByTestId("file-binary-close-button").click();
     await page.locator("#fileActionDialog[open]").waitFor({ state: "detached" });
+    if (extension === "mp4") {
+      assert.equal(await page.locator("#fileVideoPreview").getAttribute("src"), null);
+      assert.equal(await page.locator("#fileVideoPreview").evaluate((element: HTMLVideoElement) => element.paused), true);
+    }
   }
 
   await writeFile(path.join(project.path, "invalid.docx"), "not a Word document");

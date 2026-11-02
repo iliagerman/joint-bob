@@ -521,6 +521,8 @@ export const elements = {
   fileActionCancelButton: document.querySelector("#fileActionCancelButton"),
   fileActionEditButton: document.querySelector("#fileActionEditButton"),
   fileBinaryView: document.querySelector("#fileBinaryView"),
+  fileVideoPreview: document.querySelector("#fileVideoPreview"),
+  fileVideoStatus: document.querySelector("#fileVideoStatus"),
   fileImagePreview: document.querySelector("#fileImagePreview"),
   fileDocumentPreview: document.querySelector("#fileDocumentPreview"),
   fileBinaryCloseButton: document.querySelector("#fileBinaryCloseButton"),

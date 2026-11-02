@@ -100,6 +100,26 @@ test("viewing a project file serves a content type the browser renders", async (
     assert.equal(image.status, 200);
     assert.equal(image.headers.get("content-type"), "image/png");
 
+    const videoBytes = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]);
+    for (const [extension, type] of [["mp4", "video/mp4"], ["m4v", "video/mp4"], ["webm", "video/webm"], ["ogv", "video/ogg"], ["mov", "video/quicktime"]]) {
+      await writeFile(path.join(projectPath, `clip.${extension}`), videoBytes);
+      const video = await view(`clip.${extension}`);
+      assert.equal(video.status, 200);
+      assert.equal(video.headers.get("content-type"), type);
+      assert.deepEqual(Buffer.from(await video.arrayBuffer()), videoBytes);
+      const url = `${baseUrl}/api/projects/${project.id}/file?path=clip.${extension}`;
+      const range = await fetch(url, { headers: { ...headers, Range: "bytes=2-4" } });
+      assert.equal(range.status, 206);
+      assert.equal(range.headers.get("content-range"), "bytes 2-4/8");
+      assert.deepEqual(Buffer.from(await range.arrayBuffer()), videoBytes.subarray(2, 5));
+      const invalid = await fetch(url, { headers: { ...headers, Range: "bytes=100-" } });
+      assert.equal(invalid.status, 416);
+      await invalid.arrayBuffer();
+      const downloaded = await fetch(`${url}&download=1`, { headers });
+      assert.match(downloaded.headers.get("content-disposition")!, /^attachment;/);
+      assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), videoBytes);
+    }
+
     const download = await fetch(`${baseUrl}/api/projects/${project.id}/file?path=${encodeURIComponent("src/config.ts")}&download=1`, { headers });
     assert.equal(download.headers.get("content-disposition"), 'attachment; filename="config.ts"');
   } finally {

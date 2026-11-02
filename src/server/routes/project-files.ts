@@ -192,6 +192,11 @@ const INLINE_PROJECT_FILE_TYPES: Record<string, string> = {
   ".bmp": "image/bmp",
   ".ico": "image/x-icon",
   ".pdf": "application/pdf",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".ogv": "video/ogg",
+  ".mov": "video/quicktime",
 };
 
 function projectFileContentType(resolved: string): string {
@@ -301,6 +306,12 @@ async function sendProjectFile(response: Response, projectId: string, requestedP
     }
     response.setHeader("Content-Type", projectFileContentType(resolved));
     response.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${fileName}"`);
+    if (!download && projectFileContentType(resolved).startsWith("video/")) {
+      await new Promise<void>((resolve, reject) => {
+        response.sendFile(resolved, { dotfiles: "allow" }, (error) => error ? reject(error) : resolve());
+      });
+      return;
+    }
     response.setHeader("Content-Length", String(info.size));
     createReadStream(resolved).pipe(response);
   } catch (error) {
@@ -363,16 +374,16 @@ async function proxyProjectFileResolution(peer: ClusterPeer, projectId: string, 
   return { path: body.path };
 }
 
-async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, mode: ProjectFileMode, taskId?: string): Promise<void> {
+async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, mode: ProjectFileMode, taskId?: string, range?: string): Promise<void> {
   const url = new URL("/api/cluster/project-file", peer.url);
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("path", requestedPath);
   if (taskId) url.searchParams.set("taskId", taskId);
   if (mode !== "view") url.searchParams.set(mode, "1");
-  const routed = await runtimeFetch(url, { signal: AbortSignal.timeout(30_000) });
+  const routed = await runtimeFetch(url, { headers: range ? { Range: range } : {}, signal: AbortSignal.timeout(30_000) });
   // The peer's sandbox policy must replace this node's own CSP, or the page is held
   // to the app's script-src 'self'.
-  const headers = ["content-type", "content-disposition", "content-length", ...(mode === "browser" ? ["content-security-policy"] as const : [])];
+  const headers = ["content-type", "content-disposition", "content-length", "accept-ranges", "content-range", ...(mode === "browser" ? ["content-security-policy"] as const : [])];
   for (const header of headers) {
     const value = routed.headers.get(header);
     if (value) response.setHeader(header, value);
@@ -444,7 +455,7 @@ app.get("/api/projects/:projectId/file", async (request, response, next) => {
     if (requestedNodeId && requestedNodeId !== local.id) {
       const peer = await getRuntimePeer(requestedNodeId);
       if (!peer) { sendError(response, 404, "File node not found"); return; }
-      await proxyProjectFile(response, peer, request.params.projectId, requestedPath, projectFileMode(request.query), taskId);
+      await proxyProjectFile(response, peer, request.params.projectId, requestedPath, projectFileMode(request.query), taskId, request.headers.range);
       return;
     }
     await sendProjectFile(response, request.params.projectId, requestedPath, projectFileMode(request.query), taskId);

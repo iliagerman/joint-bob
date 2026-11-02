@@ -2219,6 +2219,8 @@
           </div>
         </div>
         <div id="fileBinaryView" hidden>
+          <video id="fileVideoPreview" controls playsinline preload="metadata" aria-label="Video preview" data-testid="file-video-preview" hidden></video>
+          <p id="fileVideoStatus" role="status" data-testid="file-video-status"></p>
           <img id="fileImagePreview" alt="" data-testid="file-image-preview" hidden>
           <iframe id="fileDocumentPreview" title="Document preview" data-testid="file-document-preview" hidden></iframe>
           <div class="dialog-actions"><button class="ghost" id="fileBinaryCloseButton" type="button" data-testid="file-binary-close-button">Close</button></div>

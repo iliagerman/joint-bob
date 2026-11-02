@@ -37,6 +37,11 @@ function resetFileEditor() {
   state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, preview: false, readOnly: false };
   elements.fileActionView.hidden = false;
   elements.fileBinaryView.hidden = true;
+  elements.fileVideoPreview.pause();
+  elements.fileVideoPreview.removeAttribute("src");
+  elements.fileVideoPreview.load();
+  elements.fileVideoPreview.hidden = true;
+  elements.fileVideoStatus.textContent = "";
   elements.fileImagePreview.removeAttribute("src");
   elements.fileDocumentPreview.removeAttribute("src");
   elements.fileImagePreview.hidden = true;
@@ -74,7 +79,7 @@ export async function openFileAction(path, taskId) {
       elements.fileActionBrowserLink.hidden = false;
     }
     elements.fileActionViewButton.disabled = false;
-    elements.fileActionEditButton.disabled = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|pdf|docx?)$/i.test(body.path);
+    elements.fileActionEditButton.disabled = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|pdf|docx?|mp4|m4v|webm|ogv|mov)$/i.test(body.path);
     elements.fileActionStatus.textContent = "";
   } catch (error) {
     if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
@@ -116,6 +121,13 @@ function applyFileEditorView(markdown, preview) {
 async function openProjectFile(readOnly) {
   const { contentUrl, viewUrl, path } = state.fileEditor;
   if (!contentUrl) return;
+  if (readOnly && /\.(?:mp4|m4v|webm|ogv|mov)$/i.test(path)) {
+    elements.fileVideoPreview.src = viewUrl;
+    elements.fileVideoPreview.hidden = false;
+    elements.fileActionView.hidden = true;
+    elements.fileBinaryView.hidden = false;
+    return;
+  }
   if (readOnly && /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|pdf|docx?)$/i.test(path)) {
     const image = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(path);
     elements.fileImagePreview.hidden = !image;
@@ -215,6 +227,9 @@ elements.fileActionCancelButton.addEventListener("click", attemptCloseFileEditor
 elements.fileEditorSaveButton.addEventListener("click", () => saveProjectFile());
 elements.fileEditorCancelButton.addEventListener("click", attemptCloseFileEditor);
 elements.fileBinaryCloseButton.addEventListener("click", attemptCloseFileEditor);
+elements.fileVideoPreview.addEventListener("error", () => {
+  elements.fileVideoStatus.textContent = "Cannot play this video. The file may be damaged or use a format this browser does not support. Download it to play in another app.";
+});
 elements.fileActionDialog.addEventListener("cancel", (event) => { event.preventDefault(); attemptCloseFileEditor(); });
 for (const link of [elements.fileActionDownloadLink, elements.fileActionBrowserLink]) {
   link.addEventListener("click", () => setTimeout(() => {
