@@ -17,7 +17,7 @@ import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSoc
 import { clusterPeerMayAccessProject, peerMayOpenTerminal, peerMayRunHere } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath, setConversationWorktree } from "../conversation-records.js";
-import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
+import { findConversation, findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getProjectLock } from "../project-locks.js";
 import { ensureWorktreeLocalFiles, getProjectWorktree, markWorktreeConversation, worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
@@ -65,9 +65,12 @@ async function directSessionForOpen(project: ProjectRecord, sessionPath: string,
   const request = describeSessionRequest(sessionPath);
   if (!request.sessionPath || request.draft) return undefined;
   const record = await getConversationRecord(project.id, request.engine, sessionId);
-  // A single recorded segment is still a direct open. Only switched conversations
-  // need the full catalog to resolve the latest segment and its earlier history.
-  if (record && (await listConversationSegments(project.id, record.conversationId ?? sessionId)).length > 1) return undefined;
+  // A switched conversation is found from its segment records too, grouped as the list
+  // shows it, so its newest segment and earlier history resolve without listing the project.
+  const conversationId = record?.conversationId ?? sessionId;
+  if (record && (await listConversationSegments(project.id, conversationId)).length > 1) {
+    return findConversation(project, { engine: request.engine, sessionPath, sessionId }, conversationId);
+  }
   return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 

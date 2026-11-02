@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { isInternalSession } from "./internal-sessions.js";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionTitleOverrides } from "./names.js";
-import { conversationDraftPath, listConversationRecords, parseConversationDraftPath } from "./conversation-records.js";
+import { conversationDraftPath, listConversationRecords, listConversationSegments, parseConversationDraftPath, type ConversationRecord } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
 import type { HarnessModel, HarnessRuntime } from "./harnesses/runtime.js";
@@ -271,17 +271,144 @@ export function orderSessionFamilies(sessions: SessionSummary[], rootLimit = Inf
   return ordered;
 }
 
+function adapterFor(engine: HarnessId): HarnessAdapter {
+  const adapter = adapters.find((candidate) => candidate.id === engine);
+  if (!adapter) throw new Error(`No harness registered for conversation engine: ${engine}`);
+  return adapter;
+}
+
+/** A project's transcripts of one harness by session id, from directory listings alone. */
+async function transcriptFilesById(project: HarnessProject, engine: HarnessId): Promise<Map<string, string>> {
+  const adapter = adapterFor(engine);
+  const filesBySessionId = new Map<string, string>();
+  for (const filePath of await adapter.sessions.files(project)) {
+    const sessionId = adapter.paths.sessionId(filePath) ?? adapter.paths.sessionId(`${adapter.id}:${filePath}`);
+    if (sessionId) filesBySessionId.set(sessionId, filePath);
+  }
+  return filesBySessionId;
+}
+
+/** Joint Bob's own fields for a transcript, kept on its conversation record. */
+function applyConversationRecord(session: SessionSummary, record: ConversationRecord | undefined): void {
+  if (record?.taskId && !session.taskId) session.taskId = record.taskId;
+  if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
+  if (record?.webhookHistory) session.webhookHistory = record.webhookHistory;
+  if (record?.silentReviewFrom) session.silentReviewFrom = record.silentReviewFrom;
+  if (record?.silentReviewUntil) session.silentReviewUntil = record.silentReviewUntil;
+}
+
+/** A recorded conversation with no transcript on this node lists as a draft. */
+function recordedDraft(record: ConversationRecord, overrides: Record<string, string>): SessionSummary {
+  const adapter = adapterFor(record.engine);
+  return {
+    id: record.sessionId,
+    path: conversationDraftPath(record.engine, record.sessionId),
+    harnessId: record.engine,
+    agentId: record.engine,
+    agentLabel: adapter.label,
+    title: overrides[record.sessionId] ?? `New ${adapter.label} conversation`,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    draft: true,
+    ...(record.taskId ? { taskId: record.taskId } : {}),
+    ...(record.cronTaskId ? { cronTaskId: record.cronTaskId } : {}),
+    ...(record.webhookHistory ? { webhookHistory: record.webhookHistory } : {}),
+    ...(record.silentReviewFrom ? { silentReviewFrom: record.silentReviewFrom } : {}),
+    ...(record.silentReviewUntil ? { silentReviewUntil: record.silentReviewUntil } : {}),
+  };
+}
+
+interface ConversationLabels {
+  overrides: Record<string, string>;
+  colors: Awaited<ReturnType<typeof sessionColorOverrides>>;
+  classifications: Record<string, string>;
+  doneMarks: Record<string, string>;
+  autoResponders: Awaited<ReturnType<typeof autoRespondListing>>;
+}
+
+function conversationLabels(projectId: string): Promise<ConversationLabels> {
+  return Promise.all([sessionTitleOverrides(), sessionColorOverrides(), sessionClassificationOverrides(), sessionDoneOverrides(), autoRespondListing(projectId)])
+    .then(([overrides, colors, classifications, doneMarks, autoResponders]) => ({ overrides, colors, classifications, doneMarks, autoResponders }));
+}
+
+/**
+ * A harness switch continues one logical conversation: its segments group into one row,
+ * faced by the newest segment. A single session groups as itself.
+ */
+function groupConversation(conversationId: string, segments: Array<{ session: SessionSummary; segmentIndex: number }>, labels: ConversationLabels): SessionSummary {
+  const { overrides, colors, classifications, doneMarks, autoResponders } = labels;
+  segments.sort((left, right) => left.segmentIndex - right.segmentIndex || (left.session.updatedAt ?? "").localeCompare(right.session.updatedAt ?? ""));
+  const face = segments.at(-1)!.session;
+  const webhookHistory = segments.map(({ session }) => session.webhookHistory).filter(item => item !== undefined)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  const firstLive = segments.map((segment) => segment.session).find((session) => !session.draft);
+  const createdAt = segments.map((segment) => segment.session.createdAt).filter(Boolean).sort().at(0);
+  const segmentViews = segments.length > 1
+    ? segments.map((segment) => ({ engine: segment.session.harnessId, sessionId: segment.session.id, path: segment.session.path, ...(segment.session.draft ? { draft: true } : {}) }))
+    : undefined;
+  return {
+    ...face,
+    conversationId,
+    ...(segments.some(({ session }) => session.cronTaskId) ? { cronTaskId: segments.find(({ session }) => session.cronTaskId)!.session.cronTaskId } : {}),
+    ...(webhookHistory ? { webhookHistory } : {}),
+    ...(segmentViews ? { segments: segmentViews } : {}),
+    // A switched conversation keeps the title of its first real segment; a fresh
+    // segment's own title may be derived from the handoff envelope.
+    title: overrides[conversationId] ?? (segments.length > 1 ? firstLive?.title ?? face.title : face.title),
+    ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
+    ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
+    ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),
+    ...(autoResponders[conversationId] ? { autoRespond: autoResponders[conversationId] } : {}),
+    ...(createdAt ? { createdAt } : {}),
+  };
+}
+
+/**
+ * One switched conversation, found from its own records the way a listing would show it:
+ * the opened segment is read from its path, every other segment from its transcript alone,
+ * located by session id in the project's transcript folders. Opening one used to list the
+ * whole project for this: 0.5 s on a quiet Mac, 22 s on a loaded one (2026-11-02). Returns
+ * undefined when the opened segment has no transcript here, so the caller can still list.
+ */
+export async function findConversation(project: HarnessProject, opened: { engine: HarnessId; sessionPath: string; sessionId: string }, conversationId: string): Promise<SessionSummary | undefined> {
+  const [labels, records, openedSession] = await Promise.all([
+    conversationLabels(project.id),
+    listConversationSegments(project.id, conversationId),
+    sessionCatalog.find(project, opened.engine, opened.sessionPath, opened.sessionId),
+  ]);
+  if (!openedSession) return undefined;
+  const isOpened = (record: ConversationRecord) => record.engine === opened.engine && record.sessionId === opened.sessionId;
+  const others = records.filter((record) => !isOpened(record) && !isInternalSession(record.sessionId));
+  const filesByEngine = new Map(await Promise.all([...new Set(others.map((record) => record.engine))]
+    .map(async (engine) => [engine, await transcriptFilesById(project, engine)] as const)));
+  const segments: Array<{ session: SessionSummary; segmentIndex: number }> = [];
+  const seen = new Set<string>();
+  for (const record of records) {
+    let session: SessionSummary | undefined;
+    if (isOpened(record)) session = openedSession;
+    else if (isInternalSession(record.sessionId)) continue;
+    else {
+      const file = filesByEngine.get(record.engine)?.get(record.sessionId);
+      // A transcript the harness leaves out (an unstarted one) stays out of the group, as in a listing.
+      if (file) session = (await adapterFor(record.engine).sessions.refresh(project, [], [file])).find((candidate) => candidate.id === record.sessionId);
+      else session = recordedDraft(record, labels.overrides);
+    }
+    if (!session || !session.path || seen.has(session.path) || isInternalSession(session.id, session.firstMessage) && !isOpened(record)) continue;
+    seen.add(session.path);
+    applyConversationRecord(session, record);
+    segments.push({ session, segmentIndex: record.segmentIndex ?? 0 });
+  }
+  return groupConversation(conversationId, segments, labels);
+}
+
 /** Lists every registered harness through the shared catalog, then applies Joint Bob metadata. */
 export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = []): Promise<SessionSummary[]> {
-  const [overrides, colors, classifications, doneMarks, autoResponders, initialSessions, records] = await Promise.all([
-    sessionTitleOverrides(),
-    sessionColorOverrides(),
-    sessionClassificationOverrides(),
-    sessionDoneOverrides(),
-    autoRespondListing(project.id),
+  const [labels, initialSessions, records] = await Promise.all([
+    conversationLabels(project.id),
     sessionCatalog.list(project),
     listConversationRecords(project.id),
   ]);
+  const { overrides, classifications } = labels;
   let sessions = initialSessions;
   const pinnedFilesByAdapter = new Map<HarnessAdapter, string[]>();
   for (const sessionPath of pinnedSessionPaths) {
@@ -307,16 +434,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   };
   const initialMissingRecords = eligibleMissingRecords(sessions);
   const missingEngines = new Set(initialMissingRecords.map((record) => record.engine));
-  const filesByEngine = new Map(await Promise.all([...missingEngines].map(async (engine) => {
-    const adapter = adapters.find((candidate) => candidate.id === engine);
-    if (!adapter) throw new Error(`No harness registered for conversation engine: ${engine}`);
-    const filesBySessionId = new Map<string, string>();
-    for (const filePath of await adapter.sessions.files(project)) {
-      const sessionId = adapter.paths.sessionId(filePath) ?? adapter.paths.sessionId(`${adapter.id}:${filePath}`);
-      if (sessionId) filesBySessionId.set(sessionId, filePath);
-    }
-    return [engine, filesBySessionId] as const;
-  })));
+  const filesByEngine = new Map(await Promise.all([...missingEngines].map(async (engine) => [engine, await transcriptFilesById(project, engine)] as const)));
   const discoveredRecords = initialMissingRecords.filter((record) => filesByEngine.get(record.engine)!.has(record.sessionId));
   const discovered = discoveredRecords.map((record) => filesByEngine.get(record.engine)!.get(record.sessionId)!);
   if (discovered.length) {
@@ -336,39 +454,13 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     }
     for (const [adapter, files] of discoveredFilesByAdapter) sessions = await adapter.sessions.refresh(transcriptProject, sessions, files);
   }
-  for (const session of sessions) {
-    const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
-    if (record?.taskId && !session.taskId) session.taskId = record.taskId;
-    if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
-    if (record?.webhookHistory) session.webhookHistory = record.webhookHistory;
-    if (record?.silentReviewFrom) session.silentReviewFrom = record.silentReviewFrom;
-    if (record?.silentReviewUntil) session.silentReviewUntil = record.silentReviewUntil;
-  }
+  for (const session of sessions) applyConversationRecord(session, recordsBySession.get(`${session.harnessId}:${session.id}`));
   // A harness can intentionally omit an unstarted transcript. Its record must
   // not turn that existing transcript back into a visible draft.
   const missingRecords = eligibleMissingRecords(sessions).filter((record) => !filesByEngine.get(record.engine)?.has(record.sessionId));
-  for (const record of missingRecords) {
-    const adapter = adapters.find((candidate) => candidate.id === record.engine);
-    if (!adapter) throw new Error(`No harness registered for conversation engine: ${record.engine}`);
-    // Fixer runs carry the internal ID prefix, so their records are filtered above without
-    // opening transcripts. Reading them here reparsed every unlisted transcript per listing.
-    sessions.push({
-      id: record.sessionId,
-      path: conversationDraftPath(record.engine, record.sessionId),
-      harnessId: record.engine,
-      agentId: record.engine,
-      agentLabel: adapter.label,
-      title: overrides[record.sessionId] ?? `New ${adapter.label} conversation`,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-      draft: true,
-      ...(record.taskId ? { taskId: record.taskId } : {}),
-      ...(record.cronTaskId ? { cronTaskId: record.cronTaskId } : {}),
-      ...(record.webhookHistory ? { webhookHistory: record.webhookHistory } : {}),
-      ...(record.silentReviewFrom ? { silentReviewFrom: record.silentReviewFrom } : {}),
-      ...(record.silentReviewUntil ? { silentReviewUntil: record.silentReviewUntil } : {}),
-    });
-  }
+  // Fixer runs carry the internal ID prefix, so their records are filtered above without
+  // opening transcripts. Reading them here reparsed every unlisted transcript per listing.
+  for (const record of missingRecords) sessions.push(recordedDraft(record, overrides));
   const seen = new Set<string>();
   const isPinned = (session: SessionSummary): boolean => pinnedPaths.has(session.path)
     || pinnedIds.has(`${session.harnessId}:${session.id}`)
@@ -386,40 +478,13 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     return classifications[logicalId] ? { ...session, classification: classifications[logicalId] } : session;
   });
   scheduleUsageIngest(project, flat, records);
-  // A harness switch continues one logical conversation: group its segments and
-  // let the newest segment face the list. Single sessions group as themselves.
   const byConversation = new Map<string, Array<{ session: SessionSummary; segmentIndex: number }>>();
   for (const session of flat) {
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
     const conversationId = record?.conversationId ?? session.id;
     byConversation.set(conversationId, [...(byConversation.get(conversationId) ?? []), { session, segmentIndex: record?.segmentIndex ?? 0 }]);
   }
-  const ordered = [...byConversation.entries()].map(([conversationId, segments]) => {
-    segments.sort((left, right) => left.segmentIndex - right.segmentIndex || (left.session.updatedAt ?? "").localeCompare(right.session.updatedAt ?? ""));
-    const face = segments.at(-1)!.session;
-    const webhookHistory = segments.map(({ session }) => session.webhookHistory).filter(item => item !== undefined)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-    const firstLive = segments.map((segment) => segment.session).find((session) => !session.draft);
-    const createdAt = segments.map((segment) => segment.session.createdAt).filter(Boolean).sort().at(0);
-    const segmentViews = segments.length > 1
-      ? segments.map((segment) => ({ engine: segment.session.harnessId, sessionId: segment.session.id, path: segment.session.path, ...(segment.session.draft ? { draft: true } : {}) }))
-      : undefined;
-    return {
-      ...face,
-      conversationId,
-      ...(segments.some(({ session }) => session.cronTaskId) ? { cronTaskId: segments.find(({ session }) => session.cronTaskId)!.session.cronTaskId } : {}),
-      ...(webhookHistory ? { webhookHistory } : {}),
-      ...(segmentViews ? { segments: segmentViews } : {}),
-      // A switched conversation keeps the title of its first real segment; a fresh
-      // segment's own title may be derived from the handoff envelope.
-      title: overrides[conversationId] ?? (segments.length > 1 ? firstLive?.title ?? face.title : face.title),
-      ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
-      ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
-      ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),
-      ...(autoResponders[conversationId] ? { autoRespond: autoResponders[conversationId] } : {}),
-      ...(createdAt ? { createdAt } : {}),
-    };
-  }).sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
+  const ordered = [...byConversation.entries()].map(([conversationId, segments]) => groupConversation(conversationId, segments, labels)).sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
 
   // Closed-out conversations sink below the live ones so the 50-row cap spends its
   // room on work that is still moving. Pins still outrank everything.
