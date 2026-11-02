@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.192.0 — 2026-11-02
+
+- Added standalone Kiro profiles that sign in with AWS IAM Identity Center on their own, each with its own name, start URL and region, kept apart from your Claude and Pi accounts and from subscription pools.
+- Added Pi profiles that hold several providers, so one profile can connect API-key and OAuth providers through Manage providers and Connect provider.
+- Showed Pi profiles as "Providers configured" or "No providers configured" instead of a Claude-style sign-in.
+- Restored signed-in Claude models in subscription pool fallback choices.
+- Made adding a profile with a blank name ask for a name instead of creating an unnamed profile.
+
 ## 2.191.1 — 2026-11-01
 
 - Changed the Joint Bob logo in the header, the Activity and story screens, the install banner and the startup screen to draw without its dark square, so it sits on the page background. The app icon and browser tab icon keep the square.
