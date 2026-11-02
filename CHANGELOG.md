@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.194.0 — 2026-11-02
+
+- Changed the focus interface to be the only mode on phones and small screens, so the "Focus interface (experimental)" switch in Settings is gone. Desktops keep the classic layout.
+
 ## 2.193.3 — 2026-11-02
 
 - Fixed file copying between machines crawling on projects with very large worktrees, which left taking over a conversation stuck on "Copying files".
