@@ -34,6 +34,8 @@ export async function runAutoResponder(input: AutoRespondRunInput): Promise<stri
 }
 
 async function executeAutoResponder(input: AutoRespondRunInput): Promise<string> {
+  // A stop that lands before the responder starts must not open a harness session or resolve a profile.
+  if (input.signal.aborted) throw new Error("Auto respond was cancelled");
   const override = process.env.JOINT_BOB_AUTO_RESPONDER;
   if (override) {
     const module = await import(override) as { default: (input: AutoRespondRunInput) => Promise<string> };
