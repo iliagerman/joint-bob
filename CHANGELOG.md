@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.194.3 — 2026-11-02
+
+- Fixed the message box so it resizes with larger conversation text and avoids unwanted scrollbars.
+
 ## 2.194.2 — 2026-11-02
 
 - Removed the leftover "Focus interface (experimental)" switch from Settings, which the focus interface no longer needs.

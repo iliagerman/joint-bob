@@ -85,10 +85,24 @@ function hasModifier(event) {
 }
 
 function autoGrowInput() {
-  elements.messageInput.style.height = "auto";
+  const input = elements.messageInput;
+  input.style.overflowY = "hidden";
+  input.style.height = "auto";
+  const style = getComputedStyle(input);
+  const height = Math.ceil(input.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth));
   const maxHeight = matchMedia("(min-width: 1024px)").matches ? Math.min(innerHeight * 0.4, 360) : 160;
-  elements.messageInput.style.height = `${Math.min(elements.messageInput.scrollHeight, maxHeight)}px`;
+  input.style.height = `${Math.min(height, maxHeight)}px`;
+  input.style.overflowY = height > maxHeight ? "auto" : "hidden";
 }
+
+let inputWidth = 0;
+new ResizeObserver(([entry]) => {
+  // Appearance zoom and panel resizing rewrap drafts without an input event.
+  // Ignore our own height changes and resize outside the observer delivery.
+  if (entry.contentRect.width === inputWidth) return;
+  inputWidth = entry.contentRect.width;
+  requestAnimationFrame(autoGrowInput);
+}).observe(elements.messageInput);
 
 export function setInputValue(text) {
   elements.messageInput.value = text;
