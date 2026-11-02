@@ -21,7 +21,7 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   await page.getByTestId("login-submit-button").click();
   await page.locator("#loginDialog[open]").waitFor({ state: "hidden" });
   await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("settings-tab-connections").click();
   await page.getByTestId("provider-profile-add").waitFor();
 
   const addProfile = async (provider: "claude" | "openai-codex", label: string) => {
@@ -40,7 +40,7 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   await writeFile(claudeAuth, JSON.stringify({ anthropic: { type: "oauth", access: "fixture-access", refresh: "fixture-refresh", expires: Date.now() + 3_600_000 } }), { mode: 0o600 });
   await page.reload();
   await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("settings-tab-connections").click();
   await page.getByTestId("provider-profiles-tab-pools").click();
   assert.equal(await page.getByTestId("subscription-pool-form").count(), 0, "the editor stays closed until New pool");
   assert.equal(await page.getByTestId("provider-profile-row").count(), 0, "profile cards live on the Profiles tab");
@@ -101,12 +101,11 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   const poolId = await editedPool.getAttribute("data-pool-id");
   assert.ok(poolId);
 
-  const defaultRow = page.locator('[data-testid="provider-assignment-row"][data-scope="default"]');
-  await page.getByTestId("provider-profiles-tab-usage").click();
-  await choose(defaultRow, "provider-assignment-claude", "Team pool edited", "Team pool edited");
-  await page.getByTestId("provider-assignments-save").click();
+  await page.getByTestId("provider-profiles-tab-assignments").click();
+  const defaultChoice = page.getByTestId("provider-assignment-default-select");
+  await choose(page, "provider-assignment-default-select", "Team pool edited", "Team pool edited");
   await page.getByTestId("confirm-accept-button").click();
-  await page.getByTestId("provider-assignments-pending").filter({ hasText: "All choices saved" }).waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Team pool edited");
 
   const cookie = (await page.context().cookies(node.url)).map(({ name, value }) => `${name}=${value}`).join("; ");
   const createdCluster = await page.evaluate(async () => {
@@ -118,11 +117,11 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   const cluster = (await clusters.json()).clusters.find((item: { name: string }) => item.name === "Pool test cluster");
   assert.ok(cluster);
   await page.getByTestId("settings-tab-account").click();
-  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("settings-tab-connections").click();
   await page.getByTestId("provider-profiles-tab-pools").click();
   assert.match(await editedPool.innerText(), /Used for My default \(Claude\)/);
   assert.equal(await editedPool.getByTestId("subscription-pool-delete").isDisabled(), true, "a pool in use cannot be deleted");
-  await page.getByTestId("provider-profiles-tab-usage").click();
+  // Cluster pools are part of the Pools tab.
   const clusterRow = page.locator('[data-testid="cluster-pool-row"]').filter({ hasText: "Pool test cluster" });
   await clusterRow.waitFor();
   const assignmentPath = `/api/clusters/${cluster.id}/subscription-pool`;
@@ -152,16 +151,14 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   await assignmentStatus.waitFor({ state: "detached" });
   assert.match(await clusterRow.innerText(), /No pool assigned/);
 
-  const assignment = defaultRow.getByTestId("provider-assignment-claude");
-  await assignment.click();
-  await defaultRow.getByTestId("provider-assignment-claude-search").fill("None");
-  await defaultRow.getByTestId("provider-assignment-claude-option").filter({ hasText: "None" }).click();
+  await page.getByTestId("provider-profiles-tab-assignments").click();
   const personalChoiceResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/selection" && response.request().method() === "PUT");
-  await page.getByTestId("provider-assignments-save").click();
+  await choose(page, "provider-assignment-default-select", "None", "None");
   await page.getByTestId("confirm-accept-button").click();
   const personalChoice = await personalChoiceResponse;
   assert.equal(personalChoice.status(), 200, await personalChoice.text());
-  await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-row"][data-scope="default"] [data-testid="provider-assignment-claude"]')?.textContent?.trim() === "None");
+  await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "None");
+  assert.equal((await defaultChoice.innerText()).trim(), "None");
   const savedSelections = await (await page.request.get(`${node.url}/api/provider-profiles`)).json();
   assert.equal(savedSelections.selections.some((selection: { poolId?: string }) => selection.poolId === poolId), false);
   const savedClusters = await (await page.request.get(`${node.url}/api/clusters`)).json();

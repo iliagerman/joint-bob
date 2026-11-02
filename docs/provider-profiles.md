@@ -1,10 +1,12 @@
 # Subscription profiles
 
-Joint Bob supports multiple node-local Claude subscription logins and ChatGPT logins through Pi's OpenAI Codex provider.
+Joint Bob supports multiple node-local Claude subscription logins, ChatGPT logins through Pi's OpenAI Codex provider, Pi provider sign-ins, and Kiro IAM Identity Center accounts.
 
 ## Add a profile
 
-Open Settings → Harnesses. The **Subscription profiles** card sits below the **Harness configuration** card. Choose Claude or ChatGPT, name the profile, add it, then sign in. The OAuth flow opens the provider's sign-in page or shows a device code. Complete it in the browser, then return to Joint Bob. Logins never go through the relay.
+Open Settings → Connections. It has three tabs: **Profiles**, **Pools**, and **Assignments**. On **Profiles**, pick the provider tab (Claude, ChatGPT, Pi, or Kiro), name the profile, add it, then sign in. A Kiro profile also needs its IAM Identity Center start URL and AWS region. The OAuth flow opens the provider's sign-in page or shows a device code. Complete it in the browser, then return to Joint Bob. Logins never go through the relay.
+
+Kiro profiles are private and stay on the node where they were signed in. They cannot be shared for automation or join a pool.
 
 Each profile card shows its sign-in state: **Signed in on this node**, **Using the sign-in on <twin>**, **Not signed in**, or **Sign-in unavailable**. The state is checked when the card is shown and again with **Check status**.
 
@@ -24,7 +26,7 @@ Profiles start private. The owner can choose **Share for automation** to make a 
 
 ## Select a profile
 
-Under **Where each profile is used**, pick a profile for your default and for each workspace, for Claude and ChatGPT, then choose **Save choices** once. Inherited cells show which profile they fall back to. Under **Project and conversation overrides**, add or remove an override for a single project or conversation. These choices belong to **you**, not the project owner, even on a shared project. Assigning your profile to a workspace, project, or conversation never shares the profile with another user. Queued human turns retain their author's identity when another user's connection drains the queue.
+On **Assignments**, pick the provider tab, then choose the profile or pool that **every conversation** on that provider uses. To use a different one in a single workspace, project, or conversation, choose **Add exception**, pick where it applies, and pick the profile or pool. Remove an exception to go back to the next matching choice. Each change is saved when you confirm it. These choices belong to **you**, not the project owner, even on a shared project. Assigning your profile to a workspace, project, or conversation never shares the profile with another user. Queued human turns retain their author's identity when another user's connection drains the queue.
 
 The most specific saved choice wins:
 
@@ -33,13 +35,13 @@ The most specific saved choice wins:
 3. Workspace
 4. Your default
 
-Choose the inherit option to remove a choice at that level. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work. A choice that points at a profile shared for automation is marked in red and must be changed before your next turn.
+Choose **None** as the default, or remove an exception, to clear a choice at that level. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work. A choice that points at a profile shared for automation is marked in red as unavailable and must be changed before your next turn.
 
 The selection takes effect on the next turn. An already-running turn keeps its existing account. Switching a conversation can send its prior transcript to a different provider account, so Joint Bob asks for confirmation before saving the selection.
 
 ## Subscription pools and failover
 
-A subscription pool groups private profiles you own. Arrange its members in failover order and choose a fallback model for each provider represented in a mixed-provider pool. Pool selectors are searchable wherever a profile can be chosen. The simulation in Settings is local to the page: marking a member unavailable changes neither saved pool data nor real provider quotas.
+A subscription pool groups private profiles you own. On the **Pools** tab, choose **New pool**, arrange its members in failover order, and choose the model to use after switching to each provider the pool holds; a mixed-provider pool requires one. Pool selectors are searchable wherever a profile can be chosen. **Test failover** on a pool card is local to the page: marking a member unavailable changes neither saved pool data nor real provider quotas.
 
 For a turn, Joint Bob tries profiles from the current provider first, preserving the pool order within each provider. Pi can switch providers; after a switch it uses the configured classifier mapping for the current difficulty when available, otherwise that provider's pool fallback model. Claude Code stays on Claude, and Kiro cannot use pools.
 
@@ -47,7 +49,7 @@ A retry is allowed only for a recognized subscription quota, authentication, or 
 
 ## Cluster assignments and relay
 
-A pool owner can assign their pool to a cluster after every current member confirms pool-protocol support. That assignment overrides personal choices only for work shared through that cluster; other work continues to use each person's normal scope precedence. Only the pool owner can change or clear the assignment. New members must support pools while an assignment is active.
+A pool owner can assign their pool to a cluster, under **Cluster pools** on the **Pools** tab, after every current member confirms pool-protocol support. That assignment overrides personal choices only for work shared through that cluster; other work continues to use each person's normal scope precedence. Only the pool owner can change or clear the assignment. New members must support pools while an assignment is active.
 
 Cluster members receive a signed, non-secret pool manifest, not provider credentials. When a turn needs a profile held on another node, the manager revalidates the current cluster assignment and membership before the holder lends a short-lived access token over the signed peer channel. The refresh credential stays on the profile holder; the borrowed token is kept in memory and never becomes a cluster manifest.
 
@@ -67,6 +69,6 @@ A crashed migration writer leaves a fail-closed `.authority-lock` directory besi
 
 OpenAI Codex credentials stay in a separate private auth file for each profile. Pi refreshes tokens through its OAuth provider under the SDK auth-file lock. Concurrent requests therefore share the rotated refresh token rather than refreshing separate stale copies.
 
-If a provider has revoked a login, that profile's turn stops with a sign-in error. Joint Bob never silently switches to another profile or a provider API key. Sign out or sign in again on that node from Settings → Harnesses.
+If a provider has revoked a login, that profile's turn stops with a sign-in error. Joint Bob never silently switches to another profile or a provider API key. Sign out or sign in again on that node from Settings → Connections.
 
 Claude transcripts continue using the configured session directory. Subscription profile directories share that transcript directory by link, so account selection does not fork or move conversation history. Local credentials remain outside the synchronized transcript tree.

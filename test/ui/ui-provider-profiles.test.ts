@@ -9,7 +9,7 @@ async function choose(page: Page | Locator, testid: string, search: string, labe
   await page.getByTestId(`${testid}-option`).filter({ hasText: label }).first().click();
 }
 
-test("subscription profiles sit apart from harness setup, page, and save choices for many workspaces at once", { timeout: 120_000 }, async (t) => {
+test("connections have their own Settings tab, list profiles per provider, and choose a default with exceptions", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -18,12 +18,19 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   await page.locator("#loginDialog[open]").waitFor({ state: "hidden" });
   await page.locator(".project-card").first().waitFor();
   await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("settings-tab-connections").click();
   await page.getByTestId("provider-profile-add").waitFor();
-  assert.match(await page.getByTestId("harness-config-card").locator("h3").innerText(), /Harness configuration/);
-  assert.match(await page.getByTestId("provider-profiles").locator("h3").innerText(), /Subscription profiles/);
+  assert.match(await page.getByTestId("provider-profiles").locator("h3").innerText(), /Connections/);
   assert.match(await page.getByTestId("provider-profiles").innerText(), /never goes through the relay/);
-  assert.equal(await page.getByTestId("harness-config-card").getByTestId("provider-profiles").count(), 0, "profiles are not inside the harness card");
+  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("harness-config-card").waitFor();
+  assert.equal(await page.locator("#settingsPanel-engines [data-testid='provider-profiles'], #settingsPanel-engines [data-testid='kiro-profiles']").count(), 0, "Harnesses holds no profile management");
+  await page.getByTestId("settings-tab-connections").click();
+
+  // Every provider, Kiro included, is the same kind of tab with its own icon.
+  for (const provider of ["claude", "openai-codex", "pi", "kiro"]) {
+    assert.equal(await page.getByTestId(`provider-profile-provider-${provider}`).locator("svg").count(), 1, `${provider} tab has its icon`);
+  }
 
   let posted = 0;
   page.on("request", (request) => { if (request.url().endsWith("/api/provider-profiles") && request.method() === "POST") posted += 1; });
@@ -49,60 +56,73 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   await first.getByTestId("provider-profile-status").filter({ hasText: "Sign in on this node or on a twin." }).waitFor();
   assert.equal(await first.locator(".profile-pill").innerText(), "Not signed in");
   assert.equal(await first.getByTestId("provider-profile-signout").isVisible(), false);
+  await page.getByTestId("provider-profile-provider-claude").click();
+  assert.equal(await page.getByTestId("provider-profile-row").count(), 0, "each provider tab lists only its own profiles");
+  assert.match(await page.getByTestId("provider-profile-list").innerText(), /No Claude profiles yet/);
 
-  assert.equal(await page.getByTestId("provider-assignment-row").count(), 0, "choices live on their own tab");
-  await page.getByTestId("provider-profiles-tab-usage").click();
-  assert.equal(await page.getByTestId("provider-profile-row").count(), 0, "profile cards stay on the Profiles tab");
-  const defaultRow = page.locator('[data-testid="provider-assignment-row"][data-scope="default"]');
-  const workspaceRows = page.locator('[data-testid="provider-assignment-row"][data-scope="workspace"]');
-  assert.ok(await workspaceRows.count() >= 2, "the seeded workspaces each have a row");
-  const workspaceCell = (index: number) => workspaceRows.nth(index).getByTestId("provider-assignment-openai-codex");
-  await choose(defaultRow, "provider-assignment-openai-codex", "Account 1", "Account 1");
-  await page.getByTestId("provider-assignments-pending").filter({ hasText: "1 unsaved change" }).waitFor();
-  assert.match(await workspaceCell(0).innerText(), /Use my default · Account 1/);
-  await choose(workspaceRows.nth(0), "provider-assignment-openai-codex", "Account 2", "Account 2");
-  await choose(workspaceRows.nth(1), "provider-assignment-openai-codex", "Account 3", "Account 3");
-  await page.getByTestId("provider-assignments-pending").filter({ hasText: "3 unsaved changes" }).waitFor();
-  const workspaceIds = await workspaceRows.evaluateAll((rows) => rows.slice(0, 2).map((row) => (row as HTMLElement).dataset.scopeId));
-
-  const puts: Array<{ scope: string; scopeId: string }> = [];
+  const ids = Object.fromEntries((await (await page.request.get(`${node.url}/api/provider-profiles`)).json()).profiles.map((item: { id: string; label: string }) => [item.label, item.id]));
+  const puts: Array<{ scope: string; scopeId: string; profileId: string | null }> = [];
   page.on("request", (request) => { if (request.url().endsWith("/api/provider-profiles/selection") && request.method() === "PUT") puts.push(request.postDataJSON()); });
-  await page.getByTestId("provider-assignments-save").click();
+
+  await page.getByTestId("provider-profiles-tab-assignments").click();
+  assert.equal(await page.getByTestId("provider-profile-row").count(), 0, "profile cards stay on the Profiles tab");
+  await page.getByTestId("provider-assignment-provider-openai-codex").click();
+  assert.match(await page.getByTestId("provider-assignment-default").innerText(), /Every ChatGPT conversation uses/);
+  const savedChoice = () => page.waitForResponse((response) => response.url().endsWith("/api/provider-profiles/selection") && response.request().method() === "PUT");
+  await choose(page, "provider-assignment-default-select", "Account 1", "Account 1");
   await page.locator("#confirmDialog[open]").waitFor();
   assert.match(await page.locator("#confirmDialog").innerText(), /conversation history/);
+  const defaultSaved = savedChoice();
   await page.getByTestId("confirm-accept-button").click();
-  await page.getByTestId("provider-assignments-pending").filter({ hasText: "All choices saved" }).waitFor();
-  assert.deepEqual(puts.map(({ scope, scopeId }) => [scope, scopeId]).sort(), [["default", ""], ["workspace", workspaceIds[0]], ["workspace", workspaceIds[1]]].sort());
+  assert.equal((await defaultSaved).status(), 200);
+  assert.deepEqual(puts.at(-1), { provider: "openai-codex", scope: "default", scopeId: "", profileId: ids["Account 1"] });
+
+  const addException = async (scope: "workspace" | "project", label: string) => {
+    await page.getByTestId("provider-exception-new").click();
+    await page.getByTestId("provider-exception-scope").selectOption(scope);
+    await page.getByTestId(`provider-exception-${scope}`).selectOption({ index: 0 });
+    await choose(page, "provider-exception-choice-select", label, label);
+    await page.getByTestId("provider-exception-add").click();
+    const exceptionSaved = savedChoice();
+    await page.getByTestId("confirm-accept-button").click();
+    assert.equal((await exceptionSaved).status(), 200);
+    await page.getByTestId("provider-exception-row").filter({ hasText: label }).waitFor();
+  };
+  await addException("project", "Account 3");
+  await addException("workspace", "Account 2");
+  const rows = page.getByTestId("provider-exception-row");
+  assert.deepEqual(await rows.evaluateAll((items) => items.map((item) => (item as HTMLElement).dataset.scope)), ["workspace", "project"], "less specific exceptions come first");
+  assert.match(await rows.first().innerText(), /workspace[\s\S]*uses[\s\S]*Account 2/i);
+  assert.deepEqual(puts.slice(-2).map(({ scope, profileId }) => [scope, profileId]), [["project", ids["Account 3"]], ["workspace", ids["Account 2"]]]);
 
   await page.getByTestId("settings-tab-account").click();
   const reload = page.waitForResponse((response) => response.url().endsWith("/api/provider-profiles") && response.request().method() === "GET");
-  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("settings-tab-connections").click();
   await reload;
-  await page.getByTestId("provider-assignments-pending").filter({ hasText: "All choices saved" }).waitFor();
-  assert.equal((await workspaceCell(0).innerText()).trim(), "Account 2");
-  assert.equal((await workspaceCell(1).innerText()).trim(), "Account 3");
+  await rows.nth(1).waitFor();
+  assert.equal((await page.getByTestId("provider-assignment-default-select").innerText()).trim(), "Account 1");
+  await page.getByTestId("provider-assignment-provider-claude").click();
+  assert.match(await page.getByTestId("provider-exception-list").innerText(), /No exceptions/, "each provider has its own choices");
+  await page.getByTestId("provider-assignment-provider-openai-codex").click();
 
-  await page.getByTestId("provider-override-provider").selectOption("openai-codex");
-  await choose(page, "provider-override-profile", "Account 4", "Account 4");
-  await page.getByTestId("provider-override-add").click();
+  const project = rows.filter({ hasText: "Account 3" });
+  await project.getByTestId("provider-exception-remove").click();
   await page.getByTestId("confirm-accept-button").click();
-  const override = page.getByTestId("provider-override-row").filter({ hasText: "Account 4" });
-  await override.waitFor();
-  await override.getByTestId("provider-override-remove").click();
-  await page.getByTestId("confirm-accept-button").click();
-  await override.waitFor({ state: "detached" });
+  await project.waitFor({ state: "detached" });
 
   await page.getByTestId("provider-profiles-tab-profiles").click();
+  await page.getByTestId("provider-profile-provider-openai-codex").click();
   const sharing = page.getByTestId("provider-profile-row").filter({ hasText: "Account 2" });
   await sharing.getByTestId("provider-profile-sharing").click();
   await page.locator("#confirmDialog[open]").waitFor();
   assert.match(await page.locator("#confirmDialog").innerText(), /Every user on this node/);
   await page.getByTestId("confirm-accept-button").click();
   await page.getByTestId("provider-profile-row").filter({ hasText: "Account 2" }).filter({ hasText: "Shared for automation" }).waitFor();
-  await page.getByTestId("provider-profiles-tab-usage").click();
-  assert.match(await workspaceCell(0).innerText(), /Account 2 — unavailable, choose another/);
-  assert.match(await workspaceCell(0).getAttribute("class") ?? "", /invalid/);
-  await defaultRow.getByTestId("provider-assignment-openai-codex").click();
-  await defaultRow.getByTestId("provider-assignment-openai-codex-search").fill("Account 2");
-  assert.equal(await defaultRow.getByTestId("provider-assignment-openai-codex-option").count(), 0);
+  await page.getByTestId("provider-profiles-tab-assignments").click();
+  const shared = rows.filter({ hasText: "Account 2" }).getByTestId("provider-exception-choice");
+  assert.match(await shared.innerText(), /Account 2 — unavailable, choose another/);
+  assert.match(await shared.getAttribute("class") ?? "", /invalid/);
+  await page.getByTestId("provider-assignment-default-select").click();
+  await page.getByTestId("provider-assignment-default-select-search").fill("Account 2");
+  assert.equal(await page.getByTestId("provider-assignment-default-select-option").count(), 0);
 });

@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.196.0 — 2026-11-02
+
+- Moved subscription profiles, pools, and choices into their own Settings → Connections tab; Harnesses now holds only harness setup.
+- Profiles, Pools, and Assignments are separate tabs. Each provider (Claude, ChatGPT, Pi, Kiro) has its own tab with the same icon.
+- Assignments shows one default per provider, plus a short list of exceptions for a workspace, project, or conversation, with the most specific one winning.
+- Kiro profiles are listed and signed in beside the other providers. They still stay private and cannot join pools.
+- Pools are built in a step-by-step editor, and Test failover shows which profile the next turn would use without changing anything.
+- Fixed a duplicated Continue sign-in button when connecting a provider key; the key prompt replaces the starting message, and Enter submits it.
+
 ## 2.195.2 — 2026-11-02
 
 - Fixed the Take ownership and finished-conversation banners hiding their buttons behind the activity progress card on wide screens; the banners now stop short of the card.

@@ -776,6 +776,7 @@
           <option value="browser">Browser</option>
           <option value="workspaces">Workspaces</option>
           <option value="engines">Harnesses</option>
+          <option value="connections">Connections</option>
           <option value="git">Git</option>
           <option value="story">Activity overview</option>
           <option value="classifiers">Classifiers</option>
@@ -810,6 +811,7 @@
           <div class="settings-group-label" role="presentation">Agents</div>
           <button class="settings-tab" type="button" data-settings-tab="story" role="tab" id="settingsTab-story" aria-controls="settingsPanel-story" aria-selected="false" tabindex="-1" data-testid="settings-tab-story"><span class="settings-tab-icon" style="--tile:#ec4899" aria-hidden="true">🎙</span><span class="settings-tab-label">Activity overview</span></button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines"><span class="settings-tab-icon" style="--tile:#a855f7" aria-hidden="true">🤖</span><span class="settings-tab-label">Harnesses</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="connections" role="tab" id="settingsTab-connections" aria-controls="settingsPanel-connections" aria-selected="false" tabindex="-1" data-testid="settings-tab-connections"><span class="settings-tab-icon" style="--tile:#f59e0b" aria-hidden="true">🔌</span><span class="settings-tab-label">Connections</span></button>
           <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers"><span class="settings-tab-icon" style="--tile:#14b8a6" aria-hidden="true">🧭</span><span class="settings-tab-label">Classifiers</span></button>
           <button class="settings-tab" type="button" data-settings-tab="guardian" role="tab" id="settingsTab-guardian" aria-controls="settingsPanel-guardian" aria-selected="false" tabindex="-1" data-testid="settings-tab-guardian" data-admin-only><span class="settings-tab-icon" style="--tile:#dc2626" aria-hidden="true">🛡️</span><span class="settings-tab-label">Guardian</span></button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets"><span class="settings-tab-icon" style="--tile:#37cfab" aria-hidden="true">🔑</span><span class="settings-tab-label">Secrets</span></button>
@@ -1675,6 +1677,8 @@
             <div class="engine-readiness" data-admin-only id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></div>
           </section>
         </section>
+
+        <section class="settings-panel" id="settingsPanel-connections" role="tabpanel" aria-labelledby="settingsTab-connections" tabindex="0" data-testid="settings-panel-connections" hidden></section>
 
         <section class="settings-panel" id="settingsPanel-git" role="tabpanel" aria-labelledby="settingsTab-git" tabindex="0" hidden>
           <p>Choose the default reviewer for Git review comments. Automatic picks the opposite harness to the one used last in the conversation. Reviewer changes save immediately.</p>

@@ -5,11 +5,19 @@ import { brandIcon, menuIcon } from "./icons.js";
 import { confirmAction, toast } from "./shell.js";
 
 const PROVIDERS = [
-  { id: "claude", name: "Claude", via: "Claude subscription", brand: "claude" },
-  { id: "openai-codex", name: "ChatGPT", via: "ChatGPT subscription via Pi", brand: "openai" },
-  { id: "pi", name: "Pi", via: "Multiple providers · API keys and OAuth", brand: "pi" },
+  { id: "claude", name: "Claude", via: "Claude subscription", brand: "claude", note: "Claude subscriptions. Sign in once on this node; tokens refresh automatically." },
+  { id: "openai-codex", name: "ChatGPT", via: "ChatGPT subscription via Pi", brand: "openai", note: "ChatGPT subscriptions, used through Pi." },
+  { id: "pi", name: "Pi", via: "Multiple providers · API keys and OAuth", brand: "pi", note: "API keys and OAuth sign-ins for any provider Pi supports. Connect them under Manage providers." },
+  { id: "kiro", name: "Kiro", via: "AWS IAM Identity Center", brand: "kiro", note: "AWS IAM Identity Center accounts for Kiro. Their sign-ins stay on this node, and they cannot join pools or be shared." },
 ];
-const PAGE_SIZE = { profiles: 4, pools: 4, workspaces: 6, overrides: 5 };
+/** Pools and the failover dry run cover subscription providers; Kiro profiles stand alone. */
+const POOL_PROVIDERS = PROVIDERS.filter((provider) => provider.id !== "kiro");
+const SCOPES = [
+  { id: "workspace", label: "Workspace", icon: "folder" },
+  { id: "project", label: "Project", icon: "folder" },
+  { id: "conversation", label: "Conversation", icon: "chat" },
+];
+const PAGE_SIZE = { profiles: 4, pools: 4, exceptions: 6 };
 const HISTORY_WARNING = "The next turn may send conversation history under a different provider account. Running turns keep their current account.";
 
 let root;
@@ -19,28 +27,27 @@ let modelCatalogLoad;
 let conversationDefaultProvider = "claude";
 let simulationModelChoice = "configured-default";
 const simulationUnavailable = new Map();
-const pages = { profiles: 0, pools: 0, workspaces: 0, overrides: 0 };
+const pages = { profiles: 0, pools: 0, exceptions: 0 };
 const profileStatuses = new Map();
-/** Which tab is open, and whether the Pools tab shows the list, the editor, or a failover test. */
+/** Which tab is open, which provider each provider tab bar shows, and what the Pools tab shows. */
 let view = "profiles";
+/** Empty until the first load picks the first provider that has profiles. */
+let profileProvider = "", assignmentProvider = "";
 let poolMode = "list", testedPoolId = "";
 let poolEditor = emptyPoolEditor();
+/** The exception being added on the Assignments tab: its scope, while the form is open. */
+let exceptionDraft = null;
 let loginPolls = 0;
-/** Default and workspace choices edited in the grid but not saved yet, keyed by selectionKey. */
-const pending = new Map();
 const conversationTitles = new Map();
 const sections = {};
-let newProvider = "claude";
 let loginTimer;
 
 const providerOf = (id) => PROVIDERS.find((item) => item.id === id);
-const selectionKey = (provider, scope, scopeId) => JSON.stringify([provider, scope, scopeId]);
 const privateProfiles = (provider) => profiles.filter((item) => item.provider === provider && !item.shared);
 const profileNamed = (id) => profiles.find((item) => item.id === id);
 const poolNamed = (id) => pools.find((item) => item.id === id);
 const selectionValue = (entry) => entry?.poolId ? `pool:${entry.poolId}` : entry?.profileId ? `profile:${entry.profileId}` : null;
 const saved = (provider, scope, scopeId) => selectionValue(selections.find((item) => item.provider === provider && item.scope === scope && item.scopeId === scopeId));
-const choice = (provider, scope, scopeId) => { const key = selectionKey(provider, scope, scopeId); return pending.has(key) ? pending.get(key) : saved(provider, scope, scopeId); };
 
 function el(tag, { text, testid, className } = {}) {
   const item = document.createElement(tag);
@@ -71,37 +78,67 @@ function sectionHeader(title, hint) {
   if (hint) head.append(el("p", { className: "settings-hint", text: hint }));
   return head;
 }
-function pager(name, total, testPrefix) {
+function pager(name, total, testPrefix, section = name) {
   const count = Math.ceil(total / PAGE_SIZE[name]);
   pages[name] = Math.min(pages[name], Math.max(0, count - 1));
   if (count <= 1) return [];
   const bar = el("div", { className: "profile-pager" });
-  const previous = actionButton("Previous", `${testPrefix}-prev`, () => { pages[name] -= 1; rerender(name); });
-  const next = actionButton("Next", `${testPrefix}-next`, () => { pages[name] += 1; rerender(name); });
+  const previous = actionButton("Previous", `${testPrefix}-prev`, () => { pages[name] -= 1; rerender(section); });
+  const next = actionButton("Next", `${testPrefix}-next`, () => { pages[name] += 1; rerender(section); });
   previous.disabled = pages[name] === 0; next.disabled = pages[name] >= count - 1;
   bar.append(previous, el("span", { text: `Page ${pages[name] + 1} of ${count}` }), next);
   return [bar];
 }
 function pageOf(name, items) { return items.slice(pages[name] * PAGE_SIZE[name], (pages[name] + 1) * PAGE_SIZE[name]); }
+/** The same provider tabs, with the same icons, wherever profiles are listed or chosen. */
+function providerTabs(selected, onSelect, testPrefix, count) {
+  const tabs = el("div", { className: "settings-subtabs profile-provider-tabs", testid: `${testPrefix}-tabs` });
+  tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Provider");
+  for (const item of PROVIDERS) {
+    const tab = el("button", { className: "settings-subtab", testid: `${testPrefix}-${item.id}` }); tab.type = "button";
+    tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(item.id === selected));
+    tab.append(providerMark(item.id), item.name);
+    if (count) tab.append(el("span", { className: "profile-tab-count", text: String(count(item.id)) }));
+    tab.addEventListener("click", () => onSelect(item.id));
+    tabs.append(tab);
+  }
+  return tabs;
+}
 
-/** Opening the tab starts from the saved choices; reloads after an edit keep unsaved grid changes. */
-export async function loadProviderProfiles({ keepPending = false } = {}) {
+/** Opening Settings → Connections starts from the saved profiles, pools, and choices. */
+export async function loadProviderProfiles() {
   clearTimeout(loginTimer);
   if (!root) {
     root = el("section", { testid: "provider-profiles", className: "engines-card provider-profiles" });
     root.setAttribute("aria-labelledby", "providerProfilesTitle");
-    document.querySelector("#settingsPanel-engines").append(root);
+    document.querySelector("#settingsPanel-connections").append(root);
   }
   const [body, poolBody, projectBody, workspaceBody, clusterBody, settingsBody] = await Promise.all([
     api("/api/provider-profiles"), api("/api/provider-profiles/pools"), api("/api/projects"), api("/api/workspaces"), api("/api/clusters"), api("/api/settings"),
   ]);
-  profiles = body.profiles.filter((profile) => profile.provider !== "kiro"); pools = poolBody.pools; selections = body.selections.filter((selection) => selection.provider !== "kiro"); projects = projectBody.projects; workspaces = workspaceBody.workspaces; clusters = clusterBody.clusters;
+  profiles = body.profiles; pools = poolBody.pools; selections = body.selections; projects = projectBody.projects; workspaces = workspaceBody.workspaces; clusters = clusterBody.clusters;
   conversationDefaultProvider = settingsBody.conversationDefaults.pi.provider;
-  if (!keepPending) pending.clear();
   for (const id of profileStatuses.keys()) if (!profiles.some((profile) => profile.id === id)) profileStatuses.delete(id);
-  for (const key of pending.keys()) { const id = pending.get(key); if (id && !profileNamed(id)) pending.delete(key); }
+  if (!profileProvider) profileProvider = assignmentProvider = (PROVIDERS.find(({ id }) => profiles.some((profile) => profile.provider === id)) ?? PROVIDERS[0]).id;
   render();
+  prefetchStatuses();
   void loadModelCatalog();
+}
+/** Pool cards show each member's sign-in, including profiles on another provider tab or page. */
+function prefetchStatuses() {
+  const shown = new Set(pageOf("profiles", profiles.filter((profile) => profile.provider === profileProvider)).map((profile) => profile.id));
+  for (const profile of profiles) {
+    if (shown.has(profile.id)) continue;
+    void fetchStatus(profile).catch((error) => {
+      for (const item of sections.pools.querySelectorAll(`[data-pool-status-id="${CSS.escape(profile.id)}"]`)) { item.textContent = "Status unavailable"; item.title = error.message; }
+    });
+  }
+}
+async function fetchStatus(profile) {
+  const body = await api(`/api/provider-profiles/${profile.id}/status`);
+  profileStatuses.set(profile.id, body);
+  for (const item of sections.pools.querySelectorAll(`[data-pool-status-id="${CSS.escape(profile.id)}"]`)) item.textContent = statusOf(body).label;
+  return body;
 }
 function loadModelCatalog() {
   if (modelCatalogLoad) return modelCatalogLoad;
@@ -110,22 +147,21 @@ function loadModelCatalog() {
     .then(() => { if (root && poolMode === "edit") rerender("pools"); });
   return modelCatalogLoad;
 }
-const builders = { profiles: profilesSection, pools: poolsSection, workspaces: assignmentsSection, overrides: overridesSection, clusters: clustersSection };
+const builders = { profiles: profilesSection, pools: poolsSection, assignments: assignmentsSection };
 const VIEWS = [
-  { id: "profiles", label: "Profiles", sections: ["profiles"], count: () => profiles.length },
-  { id: "pools", label: "Pools", sections: ["pools"], count: () => pools.length },
-  { id: "usage", label: "Where they're used", sections: ["workspaces", "overrides", "clusters"] },
+  { id: "profiles", label: "Profiles", count: () => profiles.length },
+  { id: "pools", label: "Pools", count: () => pools.length },
+  { id: "assignments", label: "Assignments", count: () => selections.length },
 ];
 function render() {
   const header = el("header", { className: "engines-card-header" });
-  const icon = el("span", { className: "engines-card-icon", text: "🔑" }); icon.style.setProperty("--tile", "#f59e0b"); icon.setAttribute("aria-hidden", "true");
+  const icon = el("span", { className: "engines-card-icon", text: "🔌" }); icon.style.setProperty("--tile", "#f59e0b"); icon.setAttribute("aria-hidden", "true");
   const title = el("div", { className: "engines-card-title" });
-  const heading = el("h3", { text: "Subscription profiles" }); heading.id = "providerProfilesTitle";
-  title.append(heading, el("p", { text: "1. Add and sign in to your subscriptions. 2. Optionally group them into a failover pool. 3. Choose where each one is used." }));
+  const heading = el("h3", { text: "Connections" }); heading.id = "providerProfilesTitle";
+  title.append(heading, el("p", { text: "Sign in to your accounts under Profiles, group them for failover under Pools, and choose which one each conversation uses under Assignments." }));
   const synced = el("span", { className: "profile-badge synced", text: "Synced with your twins" }); synced.prepend(menuIcon("transfer"));
   header.append(icon, title, synced);
   const about = el("p", { className: "settings-hint", text: "A sign-in stays on the machine where you signed in and never goes through the relay; a twin without its own sign-in borrows short-lived tokens from that machine. A profile shared for automation serves automations only, never human turns." });
-  // Every section is built so pool cards can show the sign-in states the profile cards fetch.
   for (const name of Object.keys(builders)) sections[name] = builders[name]();
   sections.header = header; sections.about = about;
   showView();
@@ -134,52 +170,63 @@ function render() {
 function showView() {
   const panel = el("div", { testid: "provider-profiles-panel", className: "profile-view" });
   panel.setAttribute("role", "tabpanel");
-  panel.append(...VIEWS.find((item) => item.id === view).sections.map((name) => sections[name]));
+  panel.append(sections[view]);
   root.replaceChildren(sections.header, sections.about, viewTabs(), panel);
 }
 function viewTabs() {
   const tabs = el("div", { className: "settings-subtabs profile-view-tabs", testid: "provider-profiles-tabs" });
-  tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Subscription profile sections");
+  tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Connection sections");
   for (const item of VIEWS) {
     const tab = el("button", { className: "settings-subtab", testid: `provider-profiles-tab-${item.id}` }); tab.type = "button";
     tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(item.id === view));
-    tab.append(item.label);
-    if (item.count) tab.append(el("span", { className: "profile-tab-count", text: String(item.count()) }));
+    tab.append(item.label, el("span", { className: "profile-tab-count", text: String(item.count()) }));
     tab.addEventListener("click", () => { view = item.id; showView(); });
     tabs.append(tab);
   }
   return tabs;
 }
-function rerender(name, focusKey) {
+function rerender(name) {
   const next = builders[name]();
   sections[name].replaceWith(next); sections[name] = next;
-  if (focusKey) next.querySelector(`[data-key="${CSS.escape(focusKey)}"]`).focus();
 }
 
 function profilesSection() {
-  const section = el("section", { className: "profile-section" });
-  const chooser = el("div", { testid: "provider-profile-provider", className: "profile-provider-choice" });
-  chooser.setAttribute("role", "radiogroup"); chooser.setAttribute("aria-label", "Provider");
-  for (const item of PROVIDERS) {
-    const option = el("button", { testid: `provider-profile-provider-${item.id}`, className: "profile-provider-option" }); option.type = "button";
-    option.setAttribute("role", "radio"); option.setAttribute("aria-checked", String(item.id === newProvider));
-    option.append(providerMark(item.id), item.name);
-    option.addEventListener("click", () => { newProvider = item.id; for (const other of chooser.children) other.setAttribute("aria-checked", String(other === option)); });
-    chooser.append(option);
-  }
-  const name = el("input", { testid: "provider-profile-label" }); name.maxLength = 80; name.placeholder = "Profile name, e.g. Work account"; name.setAttribute("aria-label", "Profile name");
+  const section = el("section", { testid: "provider-profile-section", className: "profile-section" });
+  const own = profiles.filter((profile) => profile.provider === profileProvider);
+  const tabs = providerTabs(profileProvider, (id) => { profileProvider = id; pages.profiles = 0; rerender("profiles"); }, "provider-profile-provider",
+    (id) => profiles.filter((profile) => profile.provider === id).length);
+  const pagination = pager("profiles", own.length, "provider-profile");
+  const list = el("div", { testid: "provider-profile-list", className: "profile-grid" });
+  list.append(...pageOf("profiles", own).map(profileCard));
+  if (!own.length) list.append(el("p", { className: "profile-empty", text: `No ${providerOf(profileProvider).name} profiles yet. Add one above, then sign in.` }));
+  section.append(tabs, el("p", { className: "settings-hint", text: providerOf(profileProvider).note }), addProfileForm(profileProvider), list, ...pagination);
+  return section;
+}
+function addProfileForm(provider) {
+  const form = el("div", { testid: "provider-profile-add-form", className: "profile-add" });
+  const name = el("input", { testid: "provider-profile-label" }); name.maxLength = 80; name.placeholder = `${providerOf(provider).name} profile name, e.g. Work account`; name.setAttribute("aria-label", "Profile name");
+  const kiro = provider === "kiro" ? kiroFields() : null;
   const add = actionButton("Add profile", "provider-profile-add", async () => {
     if (!name.value.trim()) { name.focus(); throw new Error("Enter a profile name first."); }
-    await api("/api/provider-profiles", { method: "POST", body: JSON.stringify({ provider: newProvider, label: name.value }) });
-    pages.profiles = Math.floor(profiles.length / PAGE_SIZE.profiles); await loadProviderProfiles({ keepPending: true });
+    await api("/api/provider-profiles", { method: "POST", body: JSON.stringify({ provider, label: name.value, ...(kiro ? { kiro: kiro.value() } : {}) }) });
+    pages.profiles = Math.floor(profiles.filter((profile) => profile.provider === provider).length / PAGE_SIZE.profiles);
+    await loadProviderProfiles();
   }, { icon: "plus", className: "primary profile-action" });
-  const form = el("div", { className: "profile-add" }); form.append(chooser, name, add);
-  const pagination = pager("profiles", profiles.length, "provider-profile");
-  const list = el("div", { testid: "provider-profile-list", className: "profile-grid" });
-  for (const profile of pageOf("profiles", profiles)) list.append(profileCard(profile));
-  if (!profiles.length) list.append(el("p", { className: "profile-empty", text: "No subscription profiles yet. Add one, then sign in." }));
-  section.append(sectionHeader("Profiles", "One profile per subscription account. Add it, then sign in on this node."), form, list, ...pagination);
-  return section;
+  form.append(name, ...(kiro ? kiro.fields : []), add);
+  return form;
+}
+function kiroFields() {
+  const url = el("input", { testid: "kiro-profile-start-url" }); url.type = "url"; url.placeholder = "https://your-organization.awsapps.com/start"; url.setAttribute("aria-label", "IAM Identity Center start URL");
+  const region = el("input", { testid: "kiro-profile-region" }); region.placeholder = "AWS region, e.g. us-east-1"; region.setAttribute("aria-label", "AWS region");
+  const value = () => {
+    if (!url.value.trim() || !region.value.trim()) throw new Error("Enter the IAM Identity Center start URL and AWS region");
+    return { startUrl: url.value.trim(), region: region.value.trim() };
+  };
+  return { fields: [url, region], value };
+}
+async function refreshHarnessAvailability() {
+  const { loadHarnesses } = await import("./chat-controls.js");
+  await loadHarnesses();
 }
 
 function profileStatusLabel(profileId) { return profileStatuses.has(profileId) ? statusOf(profileStatuses.get(profileId)).label : "Checking status…"; }
@@ -187,7 +234,7 @@ function poolMemberRow(index) {
   const row = el("div", { className: "pool-member-editor", testid: "subscription-pool-member-row" });
   const value = poolEditor.profileIds[index] ?? "";
   const usedElsewhere = new Set(poolEditor.profileIds.filter((id, position) => position !== index && id));
-  const options = profiles.filter((profile) => !profile.shared && (!usedElsewhere.has(profile.id) || profile.id === value)).map((profile) => ({
+  const options = profiles.filter((profile) => !profile.shared && profile.provider !== "kiro" && (!usedElsewhere.has(profile.id) || profile.id === value)).map((profile) => ({
     value: profile.id, label: profile.label, detail: `${providerOf(profile.provider).name} · ${profileStatusLabel(profile.id)}`,
   }));
   if (value && !options.some((option) => option.value === value)) options.unshift({ value, label: profileNamed(value)?.label ?? "Unavailable profile", detail: "Choose another profile" });
@@ -291,16 +338,13 @@ async function savePool() {
   if (poolEditor.id) await api(`/api/provider-profiles/pools/${poolEditor.id}`, { method: "PUT", body: JSON.stringify(payload) });
   else await api("/api/provider-profiles/pools", { method: "POST", body: JSON.stringify(payload) });
   poolEditor = emptyPoolEditor(); poolMode = "list";
-  await loadProviderProfiles({ keepPending: true });
+  await loadProviderProfiles();
   toast("Subscription pool saved.");
 }
 function sortedMembers(pool) { return [...pool.members].sort((left, right) => left.position - right.position); }
 /** Where a pool is chosen, in words, so a card says whether it does anything yet. */
 function poolUses(pool) {
-  const uses = selections.filter((selection) => selection.poolId === pool.id).map((selection) => {
-    const where = selection.scope === "default" ? "My default" : selection.scope === "workspace" ? workspaces.find((item) => item.id === selection.scopeId)?.label ?? "A workspace" : scopeName(selection);
-    return `${where} (${providerOf(selection.provider).name})`;
-  });
+  const uses = selections.filter((selection) => selection.poolId === pool.id).map((selection) => `${scopeName(selection)} (${providerOf(selection.provider).name})`);
   for (const cluster of clusters) if (cluster.subscriptionPool?.poolId === pool.id) uses.push(`Cluster ${cluster.name}`);
   return uses;
 }
@@ -318,7 +362,7 @@ function poolCard(pool) {
   const switched = Object.entries(pool.fallbackModels).map(([provider, model]) => `${providerOf(provider).name}: ${model}`);
   const fallback = el("p", { className: "profile-status-detail", text: switched.length ? `After switching provider: ${switched.join(" · ")}` : "No model set for switching provider" });
   const uses = poolUses(pool);
-  const used = el("p", { className: "profile-status-detail pool-card-uses", text: uses.length ? `Used for ${uses.join(", ")}` : "Not used yet. Choose it under Where they're used." });
+  const used = el("p", { className: "profile-status-detail pool-card-uses", text: uses.length ? `Used for ${uses.join(", ")}` : "Not used yet. Choose it under Assignments." });
   const actions = el("div", { className: "profile-actions" });
   actions.append(actionButton("Edit", "subscription-pool-edit", () => {
     poolEditor = { id: pool.id, name: pool.name, profileIds: sortedMembers(pool).map(({ profileId }) => profileId), fallbackModels: { ...pool.fallbackModels }, customModels: new Set() };
@@ -326,7 +370,7 @@ function poolCard(pool) {
   }, { icon: "pencil" }), actionButton("Test failover", "subscription-pool-test", () => { testedPoolId = pool.id; poolMode = "test"; rerender("pools"); }, { icon: "play" }));
   const remove = actionButton("Delete", "subscription-pool-delete", async () => {
     if (!await confirmAction({ title: `Delete ${pool.name}?`, message: "Remove its personal choices and cluster assignments first.", destructive: true, confirmLabel: "Delete" })) return;
-    await api(`/api/provider-profiles/pools/${pool.id}`, { method: "DELETE" }); await loadProviderProfiles({ keepPending: true });
+    await api(`/api/provider-profiles/pools/${pool.id}`, { method: "DELETE" }); await loadProviderProfiles();
   }, { icon: "trash", className: "ghost danger profile-action" });
   remove.disabled = uses.length > 0; remove.title = uses.length ? "Remove this pool's choices and cluster assignments first" : ""; actions.append(remove);
   card.append(head, members, fallback, used, actions);
@@ -346,7 +390,7 @@ function poolsSection() {
   const list = el("div", { testid: "subscription-pool-list", className: "subscription-pool-grid" });
   list.append(...pageOf("pools", pools).map(poolCard));
   if (!pools.length) list.append(el("p", { className: "profile-empty", text: "No pools yet. Add profiles on the Profiles tab, then group them here so a turn can move to the next one when a quota runs out." }));
-  section.append(head, list, ...pager("pools", pools.length, "subscription-pool"));
+  section.append(head, list, ...pager("pools", pools.length, "subscription-pool"), clustersSection());
   return section;
 }
 
@@ -378,7 +422,7 @@ function clusterPoolRow(cluster) {
       if (!await confirmAction({ title: `Remove the pool from ${cluster.name}?`, message: "Projects shared through this cluster will use each person's normal subscription choice again.", confirmLabel: "Remove pool" })) return;
       await api(`/api/clusters/${cluster.id}/subscription-pool`, { method: "DELETE", body: JSON.stringify({ poolId: assignment.poolId, expectedEpoch: cluster.managerEpoch }) });
     }
-    await loadProviderProfiles({ keepPending: true });
+    await loadProviderProfiles();
   }, { icon: "check", className: "primary profile-action" });
   const updateSaveState = () => { save.disabled = Boolean(assignment && !ownPool) || picker.value === (assignment?.poolId ?? ""); };
   picker.onChange(updateSaveState); updateSaveState();
@@ -394,7 +438,7 @@ function simulationView(pool) {
   const modelPicker = createSearchableSelect({ id: "subscriptionPoolSimulationModel", testid: "subscription-pool-simulation-model", label: "Conversation starts on", prompt: "Choose a provider", placeholder: "Search providers", emptyText: "No providers found" });
   modelPicker.setOptions([
     { value: "configured-default", label: "The provider new conversations use", detail: `Currently ${conversationDefaultProvider}` },
-    ...PROVIDERS.map(({ id, name }) => ({ value: id, label: name })),
+    ...POOL_PROVIDERS.map(({ id, name }) => ({ value: id, label: name })),
   ]);
   modelPicker.setValue(simulationModelChoice);
   const cards = el("ol", { testid: "subscription-pool-simulation-cards", className: "pool-simulation-grid" });
@@ -432,6 +476,8 @@ function statusOf(body) {
   // A Pi profile has no Sign in button; its providers are connected under Manage providers.
   if (body.provider === "pi") return { kind: body.signedIn ? "ok" : "warn", label: body.signedIn ? "Providers configured" : "No providers configured", detail: body.signedIn ? body.message : "Connect one under Manage providers." };
   if (body.signedIn) return { kind: "ok", label: "Signed in on this node", detail: "Tokens refresh automatically here." };
+  // Twins never borrow a Kiro sign-in, so only this node can sign it in.
+  if (body.provider === "kiro" && body.message.startsWith("Sign in on this node")) return { kind: "warn", label: "Not signed in", detail: "Kiro sign-ins stay on this node." };
   if (body.twin) return { kind: "twin", label: `Using the sign-in on ${body.twin}`, detail: "Turns here borrow short-lived tokens from it." };
   if (body.message.startsWith("Sign in on this node")) return { kind: "warn", label: "Not signed in", detail: `Sign in on this node or on a twin.${body.message.slice("Sign in on this node".length)}` };
   return { kind: "error", label: "Sign-in unavailable", detail: body.message };
@@ -443,7 +489,9 @@ function showStatus(container, { kind, label, detail = "" }) {
 function profileCard(profile) {
   const card = el("article", { testid: "provider-profile-row", className: `profile-card ${profile.provider}` }); card.dataset.profileId = profile.id;
   const tile = el("span", { className: `profile-tile ${profile.provider}` }); tile.append(providerMark(profile.provider));
-  const meta = el("div", { className: "profile-card-meta" }); meta.append(el("strong", { text: profile.label }), el("span", { text: providerOf(profile.provider).via }));
+  const kiro = profile.provider === "kiro";
+  const via = kiro ? `${profile.kiro.startUrl} · ${profile.kiro.region}` : providerOf(profile.provider).via;
+  const meta = el("div", { className: "profile-card-meta" }); meta.append(el("strong", { text: profile.label }), el("span", { text: via }));
   const sharing = el("span", { className: `profile-badge ${profile.shared ? "shared" : "private"}`, text: profile.shared ? "Shared for automation" : "Private" });
   sharing.prepend(menuIcon(profile.shared ? "share" : "lock"));
   const head = el("div", { className: "profile-card-head" }); head.append(tile, meta, sharing);
@@ -451,33 +499,38 @@ function profileCard(profile) {
   const login = el("div", { testid: "provider-profile-login", className: "profile-login" });
   async function checkStatus() {
     showStatus(status, { kind: "checking", label: "Checking…" });
-    const body = await api(`/api/provider-profiles/${profile.id}/status`);
-    profileStatuses.set(profile.id, body);
-    showStatus(status, profile.provider === "pi" && body.signedIn ? { kind: "ok", label: "Providers configured", detail: body.message } : statusOf(body));
-    for (const item of root.querySelectorAll(`[data-pool-status-id="${CSS.escape(profile.id)}"]`)) item.textContent = statusOf(body).label;
+    const body = await fetchStatus(profile);
+    showStatus(status, statusOf(body));
     signIn.hidden = body.signedIn; signOut.hidden = !body.signedIn;
-    if (body.login?.state === "waiting") showLogin(profile, login, body.login, checkStatus);
+    if (body.login?.state === "waiting") showLogin(profile, login, body.login, signedIn);
   }
+  // Kiro's harness is ready only once one of its profiles is signed in.
+  const signedIn = async () => { await checkStatus(); if (kiro) await refreshHarnessAvailability(); };
   const signIn = actionButton("Sign in", "provider-profile-signin", async () => {
     const { login: state } = await api(`/api/provider-profiles/${profile.id}/login`, { method: "POST" });
-    showLogin(profile, login, state, checkStatus);
+    showLogin(profile, login, state, signedIn);
   }, { icon: "key" });
+  const signOutMessage = kiro ? "Signs out only this Kiro profile on this node. Other Kiro accounts and conversations stay intact."
+    : "Signs out on this node only. Conversations here that select this profile pause until you sign in again, unless a twin still holds a sign-in for it.";
   const signOut = actionButton("Sign out", "provider-profile-signout", async () => {
-    if (!await confirmAction({ title: `Sign out of ${profile.label}?`, message: "Signs out on this node only. Conversations here that select this profile pause until you sign in again, unless a twin still holds a sign-in for it." })) return;
-    await api(`/api/provider-profiles/${profile.id}/logout`, { method: "POST" }); await checkStatus();
+    if (!await confirmAction({ title: `Sign out of ${profile.label}?`, message: signOutMessage })) return;
+    await api(`/api/provider-profiles/${profile.id}/logout`, { method: "POST" }); await signedIn();
   }, { icon: "transfer" });
   signOut.hidden = true;
   const share = actionButton(profile.shared ? "Make private" : "Share for automation", "provider-profile-sharing", async () => {
     if (!await confirmAction({ title: profile.shared ? "Make profile private?" : "Share profile for automation?", message: profile.shared ? "Other users' automations using this profile will stop. Your interactive selections can use it again." : "Every user on this node can assign this profile to automations. It will no longer be available for interactive turns, including your own." })) return;
     await api(`/api/provider-profiles/${profile.id}/sharing`, { method: "PUT", body: JSON.stringify({ shared: !profile.shared }) });
-    await loadProviderProfiles({ keepPending: true });
+    await loadProviderProfiles();
   }, { icon: profile.shared ? "lock" : "share" });
   const remove = actionButton("Delete", "provider-profile-delete", async () => {
-    if (!await confirmAction({ title: `Delete ${profile.label}?`, message: "Remove its choices and overrides first. Deleting removes the profile and its sign-in from this node and from your twins.", destructive: true, confirmLabel: "Delete" })) return;
-    await api(`/api/provider-profiles/${profile.id}`, { method: "DELETE" }); await loadProviderProfiles({ keepPending: true });
+    const deleting = kiro ? "Its native Kiro sign-in is removed; saved conversation transcripts remain." : "Deleting removes the profile and its sign-in from this node and from your twins.";
+    if (!await confirmAction({ title: `Delete ${profile.label}?`, message: `Remove its assignments and automation choices first. ${deleting}`, destructive: true, confirmLabel: "Delete" })) return;
+    await api(`/api/provider-profiles/${profile.id}`, { method: "DELETE" }); await loadProviderProfiles();
+    if (kiro) await refreshHarnessAvailability();
   }, { icon: "trash", className: "ghost danger profile-action" });
   const actions = el("div", { className: "profile-actions" });
-  actions.append(actionButton("Check status", "provider-profile-check", checkStatus, { icon: "refresh" }), ...(profile.provider === "pi" ? [] : [signIn, signOut]), share, remove);
+  // Kiro profiles are private and standalone: the server refuses to share them.
+  actions.append(actionButton("Check status", "provider-profile-check", checkStatus, { icon: "refresh" }), ...(profile.provider === "pi" ? [] : [signIn, signOut]), ...(kiro ? [] : [share]), remove);
   card.append(head, status, actions);
   // A Pi provider's key is asked for below the provider it is for, where the user just clicked Connect.
   if (profile.provider === "pi") card.append(createPiProfileProviderEditor(profile, login, (state, settled) => showLogin(profile, login, state, settled), checkStatus).root);
@@ -516,7 +569,8 @@ function showLogin(profile, container, state, settled) {
   }));
   container.append(actions);
   // A card on another tab keeps polling; a card replaced by a rebuild stops.
-  loginTimer = setTimeout(() => { if (sections.profiles.contains(container) && !root.closest("[hidden]")) void refreshLogin(profile, container, settled).catch((error) => { container.textContent = error.message; }); }, 2000);
+  // Device-code sign-ins can finish within seconds, so the link and code must show quickly.
+  loginTimer = setTimeout(() => { if (sections.profiles.contains(container) && !root.closest("[hidden]")) void refreshLogin(profile, container, settled).catch((error) => { container.textContent = error.message; }); }, 1000);
 }
 async function refreshLogin(profile, container, settled) {
   // A poll that started before Continue was clicked must not bring back the answered question.
@@ -531,87 +585,118 @@ async function refreshLogin(profile, container, settled) {
   showLogin(profile, container, login, settled);
 }
 
+/**
+ * One provider at a time: the account every conversation uses, then the exceptions that
+ * replace it for a workspace, project, or conversation. The most specific exception wins.
+ */
 function assignmentsSection() {
   const section = el("section", { testid: "provider-assignments", className: "profile-section" });
-  const headRow = el("tr"); headRow.append(el("th", { text: "Scope" }));
-  for (const item of PROVIDERS) { const cell = el("th"); cell.append(providerMark(item.id), item.name); headRow.append(cell); }
-  const thead = el("thead"); thead.append(headRow);
-  const pagination = pager("workspaces", workspaces.length, "provider-workspaces");
-  const rows = [{ scope: "default", scopeId: "", label: "My default", icon: "user" }, ...pageOf("workspaces", workspaces).map((item) => ({ scope: "workspace", scopeId: item.id, label: item.label, icon: "folder" }))];
-  const tbody = el("tbody"); tbody.append(...rows.map(assignmentRow));
-  const table = el("table", { className: "profile-matrix" }); table.append(thead, tbody);
-  const count = el("span", { testid: "provider-assignments-pending", className: "profile-pending", text: pending.size ? `${pending.size} unsaved change${pending.size === 1 ? "" : "s"}` : "All choices saved" });
-  const discard = actionButton("Discard", "provider-assignments-discard", () => { pending.clear(); rerender("workspaces"); });
-  const save = actionButton("Save choices", "provider-assignments-save", saveAssignments, { icon: "check", className: "primary profile-action" });
-  discard.disabled = save.disabled = !pending.size;
-  const footer = el("div", { className: "profile-matrix-footer" }); footer.append(count, discard, save);
-  section.append(sectionHeader("Your default and each workspace", "For each provider, pick the profile or pool a conversation uses. A workspace on \"Use my default\" follows the first row, and the overrides below win over both. With nothing selected, only the node administrator falls back to the node's own login. Changes apply from the next turn."), table, ...pagination, footer);
+  const tabs = providerTabs(assignmentProvider, (id) => { assignmentProvider = id; exceptionDraft = null; pages.exceptions = 0; rerender("assignments"); }, "provider-assignment-provider",
+    (id) => selections.filter((item) => item.provider === id).length);
+  section.append(tabs, defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
   return section;
 }
-function assignmentRow(row) {
-  const tr = el("tr", { testid: "provider-assignment-row" }); tr.dataset.scope = row.scope; tr.dataset.scopeId = row.scopeId;
-  const name = el("th", { className: "profile-matrix-scope" }); name.scope = "row"; name.append(menuIcon(row.icon), row.label);
-  tr.append(name);
-  for (const item of PROVIDERS) { const cell = el("td"); cell.append(assignmentSelect(item.id, row)); tr.append(cell); }
-  return tr;
-}
-function choiceOptions(provider, inheritedLabel) {
+function choiceOptions(provider) {
   return [
-    { value: "", label: inheritedLabel },
     ...privateProfiles(provider).map((profile) => ({ value: `profile:${profile.id}`, label: profile.label, detail: `${providerOf(provider).name} profile · ${profileStatusLabel(profile.id)}` })),
-    ...pools.map((pool) => ({ value: `pool:${pool.id}`, label: pool.name, detail: `Subscription pool · ${pool.members.length} profiles` })),
+    ...(provider === "kiro" ? [] : pools.map((pool) => ({ value: `pool:${pool.id}`, label: pool.name, detail: `Pool · ${pool.members.length} profile${pool.members.length === 1 ? "" : "s"}` }))),
   ];
 }
 function choiceLabel(value) {
-  if (!value) return "none";
   if (value.startsWith("pool:")) return poolNamed(value.slice(5))?.name ?? "Unavailable pool";
   return profileNamed(value.slice(8))?.label ?? "Unavailable profile";
 }
+/** A choice the provider can no longer use, such as a profile since shared for automation. */
+const usableChoice = (provider, value) => choiceOptions(provider).some((option) => option.value === value);
 function selectionPayload(provider, scope, scopeId, value) {
   if (value?.startsWith("pool:")) return { provider, scope, scopeId, profileId: null, poolId: value.slice(5) };
   return { provider, scope, scopeId, profileId: value?.startsWith("profile:") ? value.slice(8) : null };
 }
-function assignmentSelect(provider, row) {
-  const key = selectionKey(provider, row.scope, row.scopeId), current = choice(provider, row.scope, row.scopeId);
-  const inherited = row.scope === "default" ? "None" : `Use my default · ${choiceLabel(choice(provider, "default", ""))}`;
-  const options = choiceOptions(provider, inherited);
-  const usable = !current || options.some(({ value }) => value === current);
+function defaultChoice(provider) {
+  const name = providerOf(provider).name;
+  const block = el("div", { testid: "provider-assignment-default", className: "assignment-block" });
+  const current = saved(provider, "default", "");
+  const options = [{ value: "", label: "None", detail: "No profile chosen" }, ...choiceOptions(provider)];
+  const usable = !current || usableChoice(provider, current);
   if (!usable) options.push({ value: current, label: `${choiceLabel(current)} — unavailable, choose another` });
-  const control = createSearchableSelect({ id: `providerAssignment${provider}${row.scope}${row.scopeId}`, testid: `provider-assignment-${provider}`, label: `${providerOf(provider).name} for ${row.label}`, prompt: inherited, placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
-  control.setOptions(options); control.setValue(current ?? ""); control.trigger.dataset.key = key;
-  control.trigger.classList.toggle("changed", pending.has(key)); control.trigger.classList.toggle("invalid", !usable);
-  control.onChange((value) => {
-    if (value === saved(provider, row.scope, row.scopeId)) pending.delete(key); else pending.set(key, value || null);
-    rerender("workspaces", key);
-  });
-  return control.root;
+  const picker = createSearchableSelect({ id: `providerDefault${provider}`, testid: "provider-assignment-default-select", label: `Default for ${name} conversations`, prompt: "None", placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
+  picker.setOptions(options); picker.setValue(current ?? ""); picker.trigger.classList.toggle("invalid", !usable);
+  picker.onChange((value) => void changeChoice(selectionPayload(provider, "default", "", value || null), `Use ${value ? choiceLabel(value) : "no profile"} for ${name} conversations?`)
+    .catch((error) => { toast(error.message); rerender("assignments"); }));
+  block.append(sectionHeader(`Every ${name} conversation uses`, "Unless an exception below matches. With none chosen, only the node administrator falls back to this node's own sign-in."), picker.root);
+  return block;
 }
-async function saveAssignments() {
-  if (!await confirmAction({ title: "Save subscription choices?", message: HISTORY_WARNING, confirmLabel: "Save choices" })) return;
-  const count = pending.size;
-  try {
-    for (const [key, value] of [...pending]) {
-      const [provider, scope, scopeId] = JSON.parse(key);
-      const body = await api("/api/provider-profiles/selection", { method: "PUT", body: JSON.stringify(selectionPayload(provider, scope, scopeId, value)) });
-      selections = body.selections; pending.delete(key);
-    }
-  } finally { rerender("workspaces"); rerender("pools"); }
-  toast(`${count} subscription choice${count === 1 ? "" : "s"} saved. Your twins receive them automatically.`);
+async function changeChoice(payload, title) {
+  if (!await confirmAction({ title, message: HISTORY_WARNING, confirmLabel: "Save" })) { rerender("assignments"); return; }
+  await putSelection(payload);
 }
-
-function overridesSection() {
-  const section = el("section", { testid: "provider-overrides", className: "profile-section" });
-  const overrides = selections.filter((item) => item.scope === "project" || item.scope === "conversation");
-  const pagination = pager("overrides", overrides.length, "provider-overrides");
-  const visible = pageOf("overrides", overrides);
-  const list = el("div", { testid: "provider-override-list", className: "profile-override-list" });
-  list.append(...visible.map(overrideRow));
-  if (!overrides.length) list.append(el("p", { className: "profile-empty", text: "No overrides. Every project and conversation follows the choices above." }));
-  section.append(sectionHeader("Project and conversation overrides", "Use a different profile or pool for one project or one conversation."), list, ...pagination, overrideForm());
+const SCOPE_RANK = { workspace: 0, project: 1, conversation: 2 };
+function exceptionsBlock(provider) {
+  const name = providerOf(provider).name;
+  const exceptions = selections.filter((item) => item.provider === provider && item.scope !== "default")
+    .sort((left, right) => SCOPE_RANK[left.scope] - SCOPE_RANK[right.scope] || scopeName(left).localeCompare(scopeName(right)));
+  const block = el("div", { testid: "provider-assignment-exceptions", className: "assignment-block" });
+  const pagination = pager("exceptions", exceptions.length, "provider-exceptions", "assignments");
+  const visible = pageOf("exceptions", exceptions);
+  const list = el("ul", { testid: "provider-exception-list", className: "assignment-exception-list" });
+  list.append(...visible.map(exceptionRow));
+  if (!exceptions.length) list.append(el("li", { className: "profile-empty", text: `No exceptions. Every ${name} conversation uses the profile above.` }));
+  const add = exceptionDraft ? exceptionForm(provider) : actionButton("Add exception", "provider-exception-new", () => { exceptionDraft = { scope: "workspace" }; rerender("assignments"); }, { icon: "plus" });
+  block.append(sectionHeader("Exceptions", "Use a different profile or pool in one workspace, project, or conversation. When several match, the most specific wins: a conversation over its project, a project over its workspace."), list, ...pagination, add);
   void loadConversationTitles(visible).catch((error) => toast(error.message));
-  return section;
+  return block;
+}
+function exceptionRow(entry) {
+  const scope = SCOPES.find((item) => item.id === entry.scope);
+  const value = selectionValue(entry);
+  const row = el("li", { testid: "provider-exception-row", className: "assignment-exception-row" }); row.dataset.scope = entry.scope; row.dataset.scopeId = entry.scopeId;
+  const where = el("span", { className: "assignment-exception-where" }); where.append(menuIcon(scope.icon), scopeName(entry));
+  const usable = usableChoice(entry.provider, value);
+  const who = el("span", { className: `assignment-exception-choice${usable ? "" : " invalid"}`, testid: "provider-exception-choice" });
+  who.append(providerMark(entry.provider), usable ? choiceLabel(value) : `${choiceLabel(value)} — unavailable, choose another`);
+  const remove = actionButton("Remove", "provider-exception-remove", async () => {
+    if (!await confirmAction({ title: "Remove exception?", message: `${scopeName(entry)} goes back to the next matching choice. ${HISTORY_WARNING}`, confirmLabel: "Remove" })) return;
+    await putSelection({ provider: entry.provider, scope: entry.scope, scopeId: entry.scopeId, profileId: null });
+  }, { icon: "close" });
+  row.append(el("span", { className: "assignment-scope-chip", text: scope.label }), where, el("span", { className: "assignment-uses", text: "uses" }), who, remove);
+  return row;
+}
+/** "In [scope] [target] use [profile or pool]", one sentence; only changing the scope rebuilds it. */
+function exceptionForm(provider) {
+  const form = el("div", { testid: "provider-exception-form", className: "assignment-exception-form" });
+  const scope = select("provider-exception-scope", SCOPES.map((item) => [item.id, item.label]), exceptionDraft.scope);
+  scope.addEventListener("change", () => { exceptionDraft = { scope: scope.value }; rerender("assignments"); });
+  const workspace = select("provider-exception-workspace", workspaces.map((item) => [item.id, item.label]));
+  const project = select("provider-exception-project", projects.map((item) => [item.id, item.name]));
+  const conversation = select("provider-exception-conversation", []);
+  const targets = exceptionDraft.scope === "workspace" ? [labeled("Workspace", workspace)]
+    : [labeled("Project", project), ...(exceptionDraft.scope === "conversation" ? [labeled("Conversation", conversation)] : [])];
+  const fillConversations = async () => {
+    const body = await api(`/api/projects/${encodeURIComponent(project.value)}/sessions`);
+    conversation.replaceChildren(...body.sessions.map((item) => new Option(item.title, item.conversationId || item.id)));
+  };
+  if (exceptionDraft.scope === "conversation" && project.value) {
+    project.addEventListener("change", () => void fillConversations().catch((error) => toast(error.message)));
+    void fillConversations().catch((error) => toast(error.message));
+  }
+  const account = createSearchableSelect({ id: "providerExceptionChoice", testid: "provider-exception-choice-select", label: "Profile or pool", prompt: "Choose a profile or pool", placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
+  account.setOptions(choiceOptions(provider));
+  const scopeId = () => exceptionDraft.scope === "workspace" ? workspace.value : exceptionDraft.scope === "project" ? project.value : JSON.stringify([project.value, conversation.value]);
+  const save = actionButton("Add exception", "provider-exception-add", async () => {
+    if (!scopeId() || (exceptionDraft.scope === "conversation" && !conversation.value)) throw new Error(`Choose a ${exceptionDraft.scope} first`);
+    if (!account.value) throw new Error(`Choose a ${providerOf(provider).name} profile or a pool first`);
+    if (!await confirmAction({ title: "Add exception?", message: HISTORY_WARNING, confirmLabel: "Add exception" })) return;
+    const payload = selectionPayload(provider, exceptionDraft.scope, scopeId(), account.value);
+    exceptionDraft = null;
+    await putSelection(payload);
+  }, { icon: "check", className: "primary profile-action" });
+  const cancel = actionButton("Cancel", "provider-exception-cancel", () => { exceptionDraft = null; rerender("assignments"); });
+  form.append(labeled("In", scope), ...targets, labeled("use", account.root), save, cancel);
+  return form;
 }
 function scopeName(entry) {
+  if (entry.scope === "default") return "My default";
+  if (entry.scope === "workspace") return workspaces.find((item) => item.id === entry.scopeId)?.label ?? "Unknown workspace";
   if (entry.scope === "project") return projects.find((item) => item.id === entry.scopeId)?.name ?? "Unknown project";
   const [projectId, conversationId] = JSON.parse(entry.scopeId);
   const project = projects.find((item) => item.id === projectId)?.name ?? "Unknown project";
@@ -624,52 +709,12 @@ async function loadConversationTitles(entries) {
     const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
     conversationTitles.set(projectId, new Map(body.sessions.map((item) => [item.conversationId || item.id, item.title])));
   }));
-  rerender("overrides");
-}
-function overrideRow(entry) {
-  const row = el("div", { testid: "provider-override-row", className: "profile-override-row" });
-  const where = el("span", { className: "profile-override-scope" }); where.append(menuIcon(entry.scope === "project" ? "folder" : "chat"), scopeName(entry));
-  const who = el("span", { className: "profile-override-profile" });
-  const selected = entry.poolId ? poolNamed(entry.poolId)?.name ?? "Unavailable pool" : profileNamed(entry.profileId)?.label ?? "Unavailable profile";
-  who.append(providerMark(entry.provider), selected);
-  row.append(where, who, actionButton("Remove", "provider-override-remove", async () => {
-    if (!await confirmAction({ title: "Remove override?", message: `${scopeName(entry)} will follow the workspace and default choices. ${HISTORY_WARNING}`, confirmLabel: "Remove" })) return;
-    await putSelection({ provider: entry.provider, scope: entry.scope, scopeId: entry.scopeId, profileId: null });
-  }, { icon: "close" }));
-  return row;
-}
-function overrideForm() {
-  const scope = select("provider-override-scope", [["project", "Project"], ["conversation", "Conversation"]]);
-  const project = select("provider-override-project", projects.map((item) => [item.id, item.name]), projects[0]?.id);
-  const conversation = select("provider-override-conversation", []);
-  const provider = select("provider-override-provider", PROVIDERS.map((item) => [item.id, item.name]), "claude");
-  const account = createSearchableSelect({ id: "providerOverrideProfile", testid: "provider-override-profile", label: "Profile or pool", prompt: "Choose a profile or pool", placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
-  const conversationLabel = labeled("Conversation", conversation); conversationLabel.hidden = true;
-  const fillChoices = () => {
-    const options = choiceOptions(provider.value, "").filter((option) => option.value);
-    account.setOptions(options); account.setValue("");
-  };
-  async function fillConversations() {
-    conversationLabel.hidden = scope.value !== "conversation";
-    if (scope.value !== "conversation" || !project.value) return;
-    const body = await api(`/api/projects/${encodeURIComponent(project.value)}/sessions`);
-    conversation.replaceChildren(...body.sessions.map((item) => new Option(item.title, item.conversationId || item.id)));
-  }
-  provider.addEventListener("change", fillChoices);
-  for (const control of [scope, project]) control.addEventListener("change", () => void fillConversations().catch((error) => toast(error.message)));
-  fillChoices();
-  const add = actionButton("Add override", "provider-override-add", async () => {
-    if (!account.value) throw new Error(`Choose a private ${providerOf(provider.value).name} profile or a pool first`);
-    if (!await confirmAction({ title: "Add override?", message: HISTORY_WARNING, confirmLabel: "Add override" })) return;
-    const scopeId = scope.value === "project" ? project.value : JSON.stringify([project.value, conversation.value]);
-    await putSelection(selectionPayload(provider.value, scope.value, scopeId, account.value));
-  }, { icon: "plus" });
-  const form = el("div", { className: "profile-override-form" });
-  form.append(labeled("Apply to", scope), labeled("Project", project), conversationLabel, labeled("Provider", provider), labeled("Profile or pool", account.root), add);
-  return form;
+  rerender("assignments");
 }
 async function putSelection(value) {
   const body = await api("/api/provider-profiles/selection", { method: "PUT", body: JSON.stringify(value) });
-  selections = body.selections; rerender("overrides");
-  toast("Subscription choice saved. Your twins receive it automatically.");
+  selections = body.selections;
+  // Pool cards say where each pool is used, and a pool in use cannot be deleted; the tab counts change too.
+  rerender("assignments"); rerender("pools"); showView();
+  toast("Choice saved. Your twins receive it automatically.");
 }

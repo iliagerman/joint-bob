@@ -33,7 +33,7 @@ test("Pi profiles configure multiple providers together or keep single-provider 
   await page.locator("#loginDialog[open]").waitFor({ state: "hidden" });
   await page.locator(".project-card").first().waitFor();
   await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("settings-tab-connections").click();
   await page.getByTestId("provider-profile-provider-pi").click();
   const add = async (label: string) => {
     await page.getByTestId("provider-profile-label").fill(label);
@@ -55,7 +55,9 @@ test("Pi profiles configure multiple providers together or keep single-provider 
   await configure(two, "openai", "fixture-single-openai");
   await page.reload();
   await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-tab-engines").click();
+  await page.getByTestId("settings-tab-connections").click();
+  // A fresh page opens on the first provider that has profiles: here only Pi has any.
+  assert.equal(await page.getByTestId("provider-profile-provider-pi").getAttribute("aria-selected"), "true");
   const restored = page.getByTestId("provider-profile-row").filter({ hasText: "Multi provider" });
   await restored.getByTestId("pi-profile-providers-toggle").click();
   const zai = restored.getByTestId("pi-profile-connected-provider").filter({ hasText: "Z.AI" });

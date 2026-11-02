@@ -17,7 +17,7 @@ export async function createSessionModelRuntime(
         if (credential?.type === "oauth" && credential.expires <= Date.now()) throw new Error("Sign in to the selected profile again on this node");
         return credential;
       },
-      delete: async () => { throw new Error("Manage subscription sign-ins in Settings > Harnesses"); },
+      delete: async () => { throw new Error("Manage subscription sign-ins in Settings > Connections"); },
   };
   const runtime = await ModelRuntime.create({ credentials,
     // Creation restores the node's cached model catalog (no network). Skipping it left only
