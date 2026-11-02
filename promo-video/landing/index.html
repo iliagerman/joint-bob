@@ -10,7 +10,7 @@
   <meta property="og:url" content="https://joint-bob.bobthebot.io/">
   <meta property="og:title" content="Joint Bob: close the laptop, your agent keeps running">
   <meta property="og:description" content="A private workspace for Claude Code, Pi and Kiro. Conversations run on machines you own, and you pick them up from any of them, or from your phone.">
-  <meta property="og:image" content="https://joint-bob.bobthebot.io/media/hero-1080.jpg">
+  <meta property="og:image" content="https://joint-bob.bobthebot.io/media/monday-1080.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="media/icon.svg">
   <link rel="stylesheet" href="landing.css">
@@ -23,8 +23,8 @@
       <span class="brand-copy"><strong>Joint Bob</strong><span>Agent workspace</span></span>
     </a>
     <span class="links">
-      <a class="ghost" href="#use-cases">Use cases</a>
-      <a class="ghost" href="#tour">The tour</a>
+      <a class="ghost" href="#fleet">Features</a>
+      <button class="ghost" type="button" data-watch="monday">A day with it</button>
       <a class="ghost" href="https://github.com/iliagerman/joint-bob">GitHub</a>
     </span>
     <button class="ghost icon-button" type="button" id="soundButton" aria-pressed="false" aria-label="Sound" title="Sound">
@@ -48,18 +48,19 @@
           <h1>Close the laptop. <em>Your agent keeps running.</em></h1>
           <p class="lede">Joint Bob runs Claude Code, Pi and Kiro conversations on machines you own. Start one on your laptop, let your server carry it, and pick it up from your phone.</p>
           <!-- The install command here too, so nobody has to reach the foot of the page for it. -->
+          <div class="os" role="group" aria-label="Your system"><button type="button" data-os="unix" aria-pressed="true">macOS · Linux</button><button type="button" data-os="windows" aria-pressed="false">Windows</button></div>
           <div class="quick">
-            <div class="composer-input">curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash</div>
+            <div class="composer-input" data-install data-prompt="$">curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash</div>
             <button class="primary go" type="button" data-copy>Copy</button>
           </div>
-          <p class="quick-note">Paste it in a terminal on macOS, Linux or Windows with WSL 2. No sudo. <a href="#install">More about installing</a></p>
+          <p class="quick-note"><span data-install-note>Paste it in a terminal on macOS or Linux. No sudo.</span> <a href="#install">More about installing</a></p>
           <div class="actions">
-            <a class="primary" href="#use-cases">See what it does</a>
-            <button class="primary" type="button" data-watch="hero">▶ Watch with sound</button>
+            <a class="primary" href="#fleet">See what it does</a>
+            <button class="primary" type="button" data-watch="monday">▶ Watch with sound</button>
           </div>
         </div>
         <div class="enter-film" id="enterFilm">
-          <div class="frame" data-film="hero"><div class="screen"><video data-src="media/hero-1080.mp4" poster="media/hero-1080.jpg" muted loop playsinline aria-label="A 22-second film: an agent in a terminal dies when the laptop closes; in Joint Bob the same task keeps running on a home server and is picked up from a phone."></video><span class="hear"><i></i><i></i><i></i></span></div></div>
+          <div class="frame" data-film="monday"><div class="screen"><video data-src="media/monday-1080.mp4" poster="media/monday-1080.jpg" muted loop playsinline aria-label="A hand-drawn film of one developer's Monday with Joint Bob, a minute and forty seconds long, with the real app on his screens: a test migration on his laptop, one Claude account running out and the next in his pool taking over, Guardian asking before a risky delete, his assistant scheduling the launch from his phone at lunch, the work moved to his server, the change merged from the train, and the launch going out at six."></video><span class="hear"><i></i><i></i><i></i></span></div></div>
         </div>
         <p class="hint" id="hint">Scroll</p>
       </div>
@@ -72,23 +73,35 @@
       <div class="ribbon"><div class="machines" id="machines" aria-hidden="true">
         <span>MacBook Pro</span><span class="to">→</span><span>Home server</span><span class="to">→</span><span>Phone</span><span class="to">→</span><span>Maya's MacBook</span><span class="to">→</span><span>EC2 instance</span><span class="to">→</span><span>MacBook Pro</span><span class="to">→</span><span>Home server</span><span class="to">→</span><span>Phone</span><span class="to">→</span><span>Maya's MacBook</span>
       </div></div>
-      <!-- The seven use cases as pictures to pick from; landing.js fills this in. -->
-      <p class="section-title pick" data-flow="bottom" data-delay="0.1">Seven use cases, under 25 seconds each. Pick one to watch</p>
-      <div class="tiles wrap" id="tiles"></div>
-      <div class="dots" id="dots"></div>
     </section>
 
-    <!-- The journey. landing.js adds a stop for each use case. -->
-    <section class="journey" id="use-cases">
-      <div class="line" id="line"><i></i><b></b></div>
-      <div class="wrap" id="stops"></div>
+    <!-- The feature films as a fleet flying through space; it flies by itself, and the controls under it pick a film. fleet.js fills it in. -->
+    <section class="fleet" id="fleet" aria-label="The feature films">
+      <div class="fleet-pin">
+        <canvas class="fleet-stars" id="fleetStars" aria-hidden="true"></canvas>
+        <div class="fleet-head">
+          <p class="section-title pick">Pick a feature to watch</p>
+          <p class="fleet-hint">Each one flies in by itself. Pick another with the arrows or the dots below.</p>
+        </div>
+        <div class="fleet-deck">
+          <div class="fleet-space" id="fleetSpace"></div>
+        </div>
+        <div class="fleet-hud">
+          <button class="fleet-step" type="button" id="fleetBack" aria-label="Previous feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <div class="fleet-track"><div class="fleet-now"><button class="fleet-pause" type="button" id="fleetPause" aria-pressed="false" aria-label="Pause the films"><svg class="when-playing" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg><svg class="when-paused" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></button><span class="fleet-count" id="fleetCount">01 / 14</span></div><div class="fleet-rail" id="fleetRail"></div></div>
+          <button class="fleet-step" type="button" id="fleetOn" aria-label="Next feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+        </div>
+      </div>
     </section>
 
-    <section class="tour" id="tour">
+    <!-- Features that are explained in words, and the smaller ones. landing.js fills both in from features.js. -->
+    <section class="more" id="features-more">
       <div class="wrap">
-        <p class="eyebrow" data-flow="bottom">The tour</p>
-        <h2 class="big" data-split data-delay="0.1">All of it in 50 seconds</h2>
-        <div class="frame" data-flow="tilt"><video data-src="media/teaser-1080.mp4" poster="media/teaser-1080.jpg" controls muted playsinline></video></div>
+        <p class="eyebrow" data-flow="bottom">More to know</p>
+        <h2 class="big" data-split data-delay="0.1">The rest of what it does</h2>
+        <div class="more-grid" id="moreStops"></div>
+        <h3 class="small-title" data-flow="bottom">And a lot of smaller things</h3>
+        <div class="small-grid" id="small"></div>
       </div>
     </section>
 
@@ -109,20 +122,21 @@
         <h2 class="big" data-split data-delay="0.1">One command, on a machine you own</h2>
         <p class="lede" data-flow="bottom" data-delay="0.2">No sudo. The installer downloads the latest release, checks its checksum and sets up a service for your user. Then open the local address it prints and create your account.</p>
         <div class="composer" data-flow="bottom" data-delay="0.3">
-          <div class="command-strip"><span>macOS</span><span>Linux</span><span>Windows with WSL 2</span><span>MIT licensed</span><a href="https://github.com/iliagerman/joint-bob">GitHub</a></div>
+          <div class="command-strip"><div class="os" role="group" aria-label="Your system"><button type="button" data-os="unix" aria-pressed="true">macOS · Linux</button><button type="button" data-os="windows" aria-pressed="false">Windows</button></div><span>MIT licensed</span><a href="https://github.com/iliagerman/joint-bob">GitHub</a></div>
           <div class="composer-row">
-            <div class="composer-input" id="installCommand">curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash</div>
+            <div class="composer-input" data-install data-prompt="$">curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash</div>
             <button class="send" type="button" data-copy aria-label="Copy the install command" title="Copy the install command">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10.5 13.5M21 3l-6.5 18-4-7.5L3 9.5z"/></svg>
             </button>
           </div>
         </div>
-        <p class="fine">Every screen in these films is the app itself, on throwaway machines with invented projects. The agent's replies in them are scripted. © 2026 Ilia German</p>
+        <p class="install-note" data-install-note>Paste it in a terminal on macOS or Linux. No sudo.</p>
+        <p class="fine">Every screen in these films is the app itself, on throwaway machines with invented projects; the people and places around them are drawn. The agent's replies in them are scripted, and the narration is the open-source Kokoro voice Joint Bob installs. © 2026 Ilia German</p>
       </div>
     </section>
   </main>
   <!-- An offer that stays at the foot of the window through the use cases. -->
-  <button class="watch-pill" type="button" id="watchPill" data-watch=""><i></i><span>Watch with sound</span></button>
+  <a class="install-pill" id="installPill" href="#install"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></i><span>Install now</span></a>
 
   <!-- The theater: any film, large, with its sound; one after another. -->
   <dialog class="theater" id="theater" aria-label="Films, with sound">
@@ -141,6 +155,8 @@
     </div>
   </dialog>
   <div class="toast" id="toast" role="status"></div>
+  <script src="features.js" defer></script>
+  <script src="fleet.js" defer></script>
   <script src="landing.js" defer></script>
 </body>
 </html>

@@ -2,64 +2,25 @@
 // from the reader: the window scrolls as it always does, and every movement on the page is a
 // function of a smoothed copy of where it has got to, so things glide after the hand and settle.
 
-// The seven use cases, in the order the line passes them. Each has what was asked, the film
-// that answers, the machine it ran on, and three things that happened.
-const cases = [
-  { id: "lid", title: "Long-running tasks", time: "0:21", runsOn: "Home server", ask: "Migrate all 212 test files. I have to leave in five minutes.",
-    steps: [["Runs on", "moved to your server"], ["Laptop", "closed"], ["Phone", "watched it finish, merged the PR"]] },
-  { id: "team", title: "Teams", time: "0:24", runsOn: "Maya's MacBook", ask: "Maya should be in this conversation too.",
-    steps: [["Invite", "one link, one use"], ["Shared", "one project, nothing else"], ["Maya", "wrote in, then forked it"]] },
-  { id: "schedule", title: "Scheduled tasks", time: "0:22", runsOn: "Home server", ask: "Review our support calls every hour. Fix what keeps going wrong.",
-    steps: [["Every hour", "42 calls reviewed"], ["Found", "a hold message that loops"], ["Opened", "PR #88"]] },
-  { id: "alerts", title: "Alerts to pull requests", time: "0:18", runsOn: "Home server", ask: "When production breaks at night, don't wake me. Fix it.",
-    steps: [["3 AM", "the alert calls a webhook"], ["Agent", "finds the bug, fixes it"], ["Morning", "PR #213 in your inbox"]] },
-  { id: "browser", title: "Agent browser", time: "0:18", runsOn: "MacBook Pro", ask: "The promo code breaks checkout on staging. Reproduce it in the browser.",
-    steps: [["Browser", "inside the conversation"], ["Agent", "clicks like a customer"], ["You", "take control any time"]] },
-  { id: "secrets", title: "Secrets", time: "0:18", runsOn: "MacBook Pro", ask: "Open the pull request with the team's GitHub account.",
-    steps: [["Added", "once"], ["Team", "can use it, read-only"], ["Chat", "never sees the token"]] },
-  { id: "analytics", title: "Costs and analytics", time: "0:15", runsOn: "MacBook Pro", ask: "Why did we spend more this month?",
-    steps: [["Costs", "by project, model and skill"], ["Changed", "in one sentence"], ["Skill", "the one that keeps failing"]] },
-];
+// The features that have a film, in the order the fleet flies them; features.js holds the words.
+// Each has what was asked, the film that answers, the machine it ran on, and three things that happened.
+const cases = features.filter((item) => item.film);
 
-// A stop: the film on one side of the line, the words on the other, swapping sides each time.
-document.querySelector("#stops").innerHTML = cases.map((item, index) => {
-  const [film, words] = index % 2 ? ["left", "right"] : ["right", "left"];
-  return `<article class="stop" id="${item.id}">
-    <div class="film-card" data-flow="${film}" data-film="${item.id}">
-      <div class="film-bar"><strong>${item.title}</strong><span>● Runs on ${item.runsOn}</span>
-        <button class="ghost icon-button" type="button" data-watch="${item.id}" aria-label="Watch ${item.title} full size, with sound" title="Watch full size, with sound"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg></button>
-      </div>
-      <div class="screen"><video data-src="media/${item.id}.mp4" poster="media/${item.id}.jpg" muted loop playsinline aria-label="${item.title}, a ${item.time} film. Click to watch it full size with sound"></video><span class="hear"><i></i><i></i><i></i></span></div>
-    </div>
-    <div class="words">
-      <p class="eyebrow" data-flow="${words}">Use case ${index + 1} of ${cases.length} · ${item.time}</p>
-      <h3 data-split data-delay="0.08">${item.title}</h3>
-      <p class="message user" data-flow="${words}" data-delay="0.16">${item.ask}</p>
-      <div class="steps">${item.steps.map(([name, what], step) => `<span class="tool-output" data-flow="bottom" data-delay="${(0.12 + step * 0.06).toFixed(2)}"><i></i><b>${name}</b>${what}</span>`).join("")}</div>
-    </div>
-  </article>`;
-}).join("");
-
-// The same seven as small pictures near the top, for whoever would rather pick one than scroll to it.
-document.querySelector("#tiles").innerHTML = cases.map((item, index) => `<button class="tile" type="button" data-watch="${item.id}" style="--i:${index}" aria-label="Watch ${item.title} with sound">
-  <span class="thumb"><img src="media/${item.id}.jpg" alt="" loading="lazy"><i></i></span><strong>${item.title}</strong><span>${item.time}</span></button>`).join("");
-
-// On a narrow screen those pictures are a carousel. The dots under it say which one is in the
-// middle, and take you to another.
-const tiles = document.querySelector("#tiles");
-const dots = document.querySelector("#dots");
-dots.innerHTML = cases.map((item) => `<button type="button" aria-label="Show ${item.title}"></button>`).join("");
-function markDot() {
-  const middle = tiles.getBoundingClientRect().left + tiles.clientWidth / 2;
-  const away = [...tiles.children].map((tile) => { const box = tile.getBoundingClientRect(); return Math.abs(box.left + box.width / 2 - middle); });
-  [...dots.children].forEach((dot, index) => dot.classList.toggle("on", away[index] === Math.min(...away)));
+/** What is said about a feature beside or under its film: the sentence, the steps to try, and what is good to know. */
+function explain(item) {
+  return `<p class="lead-text" data-flow="bottom" data-delay="0.2">${item.lead}</p>
+      <div class="how" data-flow="bottom" data-delay="0.1"><h4>How to use it</h4><ol>${item.how.map((step) => `<li>${step}</li>`).join("")}</ol></div>
+      <div class="facts" data-flow="bottom" data-delay="0.1"><h4>Good to know</h4><ul>${item.facts.map((fact) => `<li>${fact}</li>`).join("")}</ul></div>
+      <p class="where" data-flow="bottom" data-delay="0.1"><span>Find it</span>${item.where}</p>`;
 }
-tiles.addEventListener("scroll", () => requestAnimationFrame(markDot), { passive: true });
-dots.addEventListener("click", (event) => {
-  const tile = tiles.children[[...dots.children].indexOf(event.target.closest("button"))];
-  if (tile) tiles.scrollTo({ left: tile.offsetLeft - tiles.offsetLeft - (tiles.clientWidth - tile.offsetWidth) / 2, behavior: "smooth" });
-});
-markDot();
+
+// Features without a film yet: the same words, on their own.
+document.querySelector("#moreStops").innerHTML = features.filter((item) => !item.film).map((item) => `<article class="more-card" id="${item.id}">
+    <h3 data-split data-delay="0.08">${item.title}</h3>
+    ${item.ask ? `<p class="message user" data-flow="bottom" data-delay="0.16">${item.ask}</p>` : ""}
+    ${explain(item)}
+  </article>`).join("");
+document.querySelector("#small").innerHTML = small.map(([name, what], index) => `<div class="small-item" data-flow="bottom" data-delay="${(index % 4 * 0.05).toFixed(2)}"><b>${name}</b><span>${what}</span></div>`).join("");
 
 // A heading marked to be split arrives a word at a time, each rising out of its own line.
 for (const heading of document.querySelectorAll("[data-split]")) {
@@ -74,10 +35,9 @@ const inOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 /** How far down the page an element starts, whatever it is being moved by. */
 const pageTop = (element) => { let top = 0; for (let node = element; node; node = node.offsetParent) top += node.offsetTop; return top; };
 
-const flows = [...document.querySelectorAll("[data-flow]")].map((element) => ({ element, from: element.dataset.flow, delay: Number(element.dataset.delay ?? 0), card: element.classList.contains("film-card"), top: 0, height: 0 }));
-const stops = [...document.querySelectorAll(".stop")].map((element, index) => ({ element, title: cases[index].title, id: cases[index].id, middle: 0 }));
-const page = document.querySelector("main");
-const pill = document.querySelector("#watchPill");
+const flows = [...document.querySelectorAll("[data-flow]")].map((element) => ({ element, from: element.dataset.flow, delay: Number(element.dataset.delay ?? 0), top: 0, height: 0 }));
+const pill = document.querySelector("#installPill");
+const install = document.querySelector("#install");
 const progress = document.querySelector("#progress");
 const sky = document.querySelector("#sky");
 const pen = sky.getContext("2d");
@@ -90,12 +50,12 @@ const film = document.querySelector("#enterFilm");
 const frame = film.querySelector(".frame");
 const heroFilm = film.querySelector("video");
 const hint = document.querySelector("#hint");
-const line = document.querySelector("#line");
 const machines = document.querySelector("#machines");
 const topbar = document.querySelector("#topbar");
 let view = { width: 0, height: 0 };
 let filmBox = { centre: 0, width: 0, height: 0 };
-let journey = { top: 0, height: 1 };
+let installTop = 0;
+let fleetSpan = { top: 0, bottom: 0 };
 let machinesTop = 0;
 let furthest = 0;
 
@@ -105,11 +65,13 @@ function measure() {
   const ratio = Math.min(2, devicePixelRatio);
   Object.assign(sky, { width: innerWidth * ratio, height: innerHeight * ratio });
   pen.setTransform(ratio, 0, 0, ratio, 0, 0);
-  for (const stop of stops) stop.middle = pageTop(stop.element) + stop.element.offsetHeight / 2;
   // Where the hero film rests inside its pinned screen, before anything moves it.
   filmBox = { centre: film.offsetTop + film.offsetHeight / 2, width: film.offsetWidth, height: frame.offsetHeight };
-  journey = { top: pageTop(line), height: line.offsetHeight };
+  installTop = pageTop(install);
+  const fleetSection = document.querySelector("#fleet");
+  fleetSpan = { top: pageTop(fleetSection) - innerHeight, bottom: pageTop(fleetSection) + fleetSection.offsetHeight };
   machinesTop = pageTop(machines);
+  fleet.measure();
   furthest = document.documentElement.scrollHeight - innerHeight;
 }
 
@@ -153,28 +115,14 @@ function draw() {
       if (begin + span > furthest) begin = furthest - span;
       const t = ease(clamp((smooth - begin) / span));
       const rest = 1 - t;
-      if (flow.card) {
-        // A film swings in from its side like a door, then keeps a little depth for as long as it is on
-        // screen: it leans with its height in the window, drifts slower than the words, and sinks back as it leaves.
-        const side = flow.from === "left" ? -1 : 1;
-        const place = Math.max(-1, Math.min(1, (flow.top + flow.height / 2 - smooth - height / 2) / height));
-        const leaving = clamp((-place - 0.4) / 0.45);
-        flow.element.style.transform = `perspective(1400px) translate3d(${side * rest * 240 * reach}px, ${rest * 40 + place * -38}px, 0) rotateY(${-side * rest * 34}deg) rotateX(${place * 9}deg) scale(${0.82 + 0.18 * t - leaving * 0.07})`;
-        flow.element.style.opacity = String(clamp(t * 1.4) * (1 - leaving * 0.55));
-        continue;
-      }
       const move = flow.from === "left" ? `translate3d(${-rest * 190 * reach}px, ${rest * 30}px, 0) rotate(${-rest * 2.5}deg)`
         : flow.from === "right" ? `translate3d(${rest * 190 * reach}px, ${rest * 30}px, 0) rotate(${rest * 2.5}deg)`
         : flow.from === "zoom" ? `translate3d(0, ${rest * 60}px, 0) scale(${0.78 + 0.22 * t})`
-        // The tour's screen lies back and comes up to face the reader.
-        : flow.from === "tilt" ? `perspective(1300px) translate3d(0, ${rest * 90}px, 0) rotateX(${rest * 46}deg) scale(${0.8 + 0.2 * t})`
         : flow.from === "word" ? `translate3d(0, ${rest * 115}%, 0) rotate(${rest * 7}deg)`
         : `translate3d(0, ${rest * 90}px, 0)`;
       flow.element.style.transform = t >= 1 ? "" : move;
       flow.element.style.opacity = t >= 1 || flow.from === "word" ? "" : String(clamp(t * 1.4));
     }
-    // The stops lean with the speed of the scroll and stand straight again when it stops.
-    page.style.setProperty("--skew", `${Math.max(-2.2, Math.min(2.2, lag * 0.004))}deg`);
 
     // The motes drift up as the page goes down, the near ones faster, and stretch into streaks at speed.
     pen.clearRect(0, 0, width, height);
@@ -192,16 +140,11 @@ function draw() {
     }
     progress.style.transform = `scaleX(${furthest ? clamp(smooth / furthest) : 0})`;
 
-    // The line runs ahead of the reader's eye, and each stop lights as the line reaches it.
-    const along = clamp((smooth + height * 0.56 - journey.top) / journey.height);
-    line.firstElementChild.style.transform = `scaleY(${along})`;
-    line.lastElementChild.style.top = `${along * 100}%`;
-    line.lastElementChild.style.opacity = String(clamp(along * 40) * clamp((1 - along) * 40));
-    for (const stop of stops) stop.element.classList.toggle("reached", smooth + height * 0.56 >= stop.middle);
-    // The offer at the foot of the window names the use case nearest the middle of it.
-    const nearest = stops.reduce((best, stop) => (Math.abs(stop.middle - smooth - height / 2) < Math.abs(best.middle - smooth - height / 2) ? stop : best), stops[0]);
-    if (pill.dataset.watch !== nearest.id) { pill.dataset.watch = nearest.id; pill.lastElementChild.textContent = `Watch “${nearest.title}” with sound`; pill.setAttribute("aria-label", pill.lastElementChild.textContent); }
-    pill.classList.toggle("show", smooth > journey.top - height * 0.55 && smooth < journey.top + journey.height - height * 0.6);
+    // The offer at the foot of the window: install, once the hero's own command has gone by and
+    // until the install section is on screen. On a narrow screen it would cover the fleet's
+    // buttons, so it waits until the fleet has gone by.
+    const overFleet = width < 980 && smooth > fleetSpan.top && smooth < fleetSpan.bottom - height * 0.8;
+    pill.classList.toggle("show", smooth > height * 1.75 && smooth + height < installTop + 160 && !overFleet);
 
     // The row of machines slides sideways as the page goes down.
     machines.style.transform = `translate3d(${(machinesTop - smooth - height * 0.5) * 0.35}px, 0, 0)`;
@@ -211,11 +154,9 @@ function draw() {
   else if (!showing && !heroFilm.paused) { heroFilm.pause(); tune(); }
   if (seen.get(heroFilm) !== (showing ? 0.8 : 0)) seen.set(heroFilm, showing ? 0.8 : 0);
   if (grown !== smooth > view.height * 0.1) { grown = !grown; tune(); }
+  fleet.fly(smooth, performance.now(), watching);
   requestAnimationFrame(draw);
 }
-
-// The row of pictures arrives when it is a third of the way up the window.
-new IntersectionObserver(([entry], observer) => { if (entry.isIntersecting) { entry.target.classList.add("in"); observer.disconnect(); } }, { rootMargin: "0px 0px -18% 0px" }).observe(document.querySelector("#tiles"));
 
 // A film plays while most of it is on screen, and is fetched as it comes near.
 const films = [...document.querySelectorAll("video[data-src]")];
@@ -224,6 +165,8 @@ const seen = new Map();
 // after a new publish the address differs and the old copy is not shown.
 const published = Date.parse(document.lastModified) || 0;
 const fresh = (address) => `${address}?v=${published}`;
+// The feature films near the top, as a fleet the scroll flies through (fleet.js).
+const fleet = createFleet({ cases, fresh, still, pageTop });
 const near = new IntersectionObserver((entries) => {
   for (const entry of entries) if (entry.isIntersecting && !entry.target.src) entry.target.src = fresh(entry.target.dataset.src);
 }, { rootMargin: "600px" });
@@ -303,9 +246,8 @@ for (const { element, video } of cards) {
 
 // The theater: one film at a time, large, with sound and its controls, and the next one after it.
 const playlist = [
-  { id: "hero", title: "The short version", text: "An agent dies with the laptop. Then the same task, in Joint Bob." },
+  { id: "monday", title: "A day with Joint Bob", text: "Alex's Monday, from 9:02 to the launch at six." },
   ...cases.map((item) => ({ id: item.id, title: item.title, text: item.ask })),
-  { id: "teaser", title: "The whole tour", text: "All of it in 50 seconds." },
 ];
 const theater = document.querySelector("#theater");
 const theaterFilm = document.querySelector("#theaterFilm");
@@ -365,8 +307,26 @@ document.querySelector("#soundButton").addEventListener("click", () => {
 document.querySelector("#themeButton").addEventListener("click", () => {
   document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
 });
+// The install command for the reader's system: the shell installer on macOS and Linux, and on
+// Windows the PowerShell one, which sets up WSL 2 and Ubuntu first and runs the same installer there.
+const installers = {
+  unix: { prompt: "$", command: "curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash", note: "Paste it in a terminal on macOS or Linux. No sudo." },
+  windows: { prompt: "PS>", command: "irm https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install-windows.ps1 | iex", note: "Paste it in PowerShell as yourself, not as administrator. On Windows 10 or 11 it sets up WSL 2 and Ubuntu if they are missing." },
+};
+let system = /Windows/.test(navigator.userAgent) ? "windows" : "unix";
+function showInstaller() {
+  const { prompt, command, note } = installers[system];
+  for (const input of document.querySelectorAll("[data-install]")) { input.textContent = command; input.dataset.prompt = prompt; }
+  for (const line of document.querySelectorAll("[data-install-note]")) line.textContent = note;
+  for (const button of document.querySelectorAll("[data-os]")) button.setAttribute("aria-pressed", String(button.dataset.os === system));
+}
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-os]");
+  if (button) { system = button.dataset.os; showInstaller(); }
+});
+showInstaller();
 for (const button of document.querySelectorAll("[data-copy]")) button.addEventListener("click", () => {
-  navigator.clipboard.writeText(document.querySelector("#installCommand").textContent).then(() => toast("Command copied"), () => toast("Select the command and copy it"));
+  navigator.clipboard.writeText(installers[system].command).then(() => toast("Command copied"), () => toast("Select the command and copy it"));
 });
 // A link down the page travels there slowly enough for the page to flow past.
 for (const link of document.querySelectorAll('a[href^="#"]')) {
@@ -374,8 +334,10 @@ for (const link of document.querySelectorAll('a[href^="#"]')) {
     const target = document.querySelector(link.getAttribute("href"));
     if (!target) return;
     event.preventDefault();
-    // The hero is the top of the page; everything else is aimed a little above itself.
-    scrollTo({ top: target.id === "top" ? 0 : pageTop(target) - 70, behavior: still.matches ? "instant" : "smooth" });
+    // The hero is the top of the page and the fleet lands where its first film docks; everything
+    // else is aimed a little above itself.
+    const top = target.id === "top" ? 0 : target.id === "fleet" ? pageTop(target) : pageTop(target) - 70;
+    scrollTo({ top, behavior: still.matches ? "instant" : "smooth" });
   });
 }
 

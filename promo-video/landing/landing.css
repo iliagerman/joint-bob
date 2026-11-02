@@ -116,26 +116,10 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .machines span.to { border: 0; background: none; padding: 0; color: var(--muted); }
 .machines span.to::before { display: none; }
 
-/* ---- The journey: one line down the page, a stop for each use case ---- */
-.journey { padding: clamp(30px, 6vh, 70px) 0 clamp(50px, 10vh, 120px); }
-.line { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--line); }
-.line i { position: absolute; inset: 0; background: linear-gradient(var(--accent), var(--live)); transform-origin: 50% 0; transform: scaleY(0); }
-.line b { position: absolute; left: 50%; top: 0; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 18px var(--accent), 0 0 4px #fff; }
-.stop { transform: skewY(var(--skew, 0deg)); }
-.stop { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(40px, 8vw, 120px); align-items: center; padding: clamp(34px, 8vh, 90px) 0; }
-.stop::before { content: ""; position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--bg); transition: border-color 600ms ease, background-color 600ms ease, box-shadow 600ms ease, scale 600ms var(--spring); z-index: 1; }
-.stop.reached::before { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent); scale: 1.15; }
-/* A branch from the line to the film, drawn when the line gets there. */
-.stop::after { content: ""; position: absolute; top: 50%; left: 50%; width: clamp(20px, 4vw, 60px); height: 2px; margin-top: -1px; background: linear-gradient(90deg, var(--accent), transparent); transform-origin: 0 50%; transform: scaleX(0); transition: transform 800ms var(--ease) 150ms; }
-.stop:nth-child(even)::after { left: auto; right: 50%; background: linear-gradient(270deg, var(--accent), transparent); transform-origin: 100% 50%; }
-.stop.reached::after { transform: scaleX(1); }
-.stop:nth-child(odd) .film-card { order: 2; }
-.film-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; box-shadow: var(--shadow); transition: border-color 400ms ease, box-shadow 400ms ease, scale 500ms var(--spring); }
-.film-card:hover { scale: 1.025; border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong)); box-shadow: var(--shadow), 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent), 0 0 60px color-mix(in srgb, var(--accent) 18%, transparent); }
+/* The bar over a film in the theater. */
 .film-bar { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 12px; background: var(--header); border-bottom: 1px solid var(--line); }
 .film-bar strong { font: 600 14px var(--serif); color: var(--heading); }
 .film-bar span { margin-left: auto; color: var(--live); font: 600 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
-.film-card video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #07080a; }
 .film-bar .icon-button { width: 30px; min-width: 30px; min-height: 30px; margin-right: -6px; color: var(--muted); }
 .film-bar .icon-button:hover { color: var(--accent); }
 .film-bar .icon-button svg { width: 15px; height: 15px; }
@@ -161,30 +145,112 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 [data-hear="on"] .hear i:nth-child(3) { animation-delay: 360ms; }
 @keyframes bars { to { height: 12px; } }
 
-/* ---- Seven pictures to pick from ---- */
-.pick { margin-top: 30px; display: inline-flex; align-items: center; gap: 8px; }
+/* ---- The fleet: the feature films flying through space ---- */
+/* Space is dark in either theme. The section is one window tall; the page's scroll passes it
+   like any other, and the fleet inside flies by itself (fleet.js). */
+.fleet { position: relative; height: 100vh; height: 100svh; min-height: 560px; color-scheme: dark; --text: #ebeced; --muted: #9aa1a8; --heading: #f1f4f3; --accent: #37cfab; --glow: 55, 207, 171;
+  --ship-w: min(720px, 46vw, calc((100svh - 330px) * 1.5)); --brief-w: min(480px, 34vw); --pair-gap: clamp(18px, 2vw, 34px); }
+.fleet-pin { position: relative; height: 100%; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 86px 0 calc(16px + env(safe-area-inset-bottom)); color: var(--text);
+  background: radial-gradient(55% 45% at 60% 40%, rgba(var(--glow), 0.12), transparent 70%), radial-gradient(40% 38% at 18% 78%, rgba(179, 155, 255, 0.1), transparent 70%), radial-gradient(130% 100% at 50% 50%, #070a10 35%, #010205 100%); }
+/* Soft edges into the page above and below. */
+.fleet-pin::before, .fleet-pin::after { content: ""; position: absolute; left: 0; right: 0; height: 70px; z-index: 2; pointer-events: none; }
+.fleet-pin::before { top: 0; background: linear-gradient(var(--bg), transparent); }
+.fleet-pin::after { bottom: 0; background: linear-gradient(transparent, var(--bg)); }
+.fleet-stars { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.fleet-head { position: relative; z-index: 3; display: grid; justify-items: center; gap: 6px; padding: 0 20px; text-align: center; }
+.fleet-head .pick { margin: 0; color: var(--accent); font-size: 11px; letter-spacing: 0.16em; }
+.fleet-hint { color: var(--muted); font-size: 13px; }
+.pick { display: inline-flex; align-items: center; gap: 8px; }
 .pick::after { content: ""; border: solid transparent; border-width: 5px 0 5px 8px; border-left-color: var(--accent); animation: point 1.4s var(--ease) infinite; }
 @keyframes point { 50% { transform: translateX(5px); } }
-.tiles { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
-.tile { display: grid; gap: 4px; padding: 6px 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--panel); color: var(--text); text-align: left; opacity: 0; transform: translateY(46px) scale(0.9); transition: border-color 300ms ease, translate 400ms var(--spring), box-shadow 300ms ease, opacity 700ms var(--ease) calc(var(--i) * 80ms), transform 900ms var(--spring) calc(var(--i) * 80ms); }
-.tiles.in .tile { opacity: 1; transform: none; }
-.tile:hover { translate: 0 -6px; border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong)); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
-.thumb { position: relative; display: block; overflow: hidden; border-radius: 8px; aspect-ratio: 16 / 9; background: #07080a; }
-.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; transition: scale 700ms var(--ease), filter 300ms ease; filter: brightness(0.8); }
-.tile:hover .thumb img { scale: 1.08; filter: brightness(1); }
-.thumb i { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; transition: scale 400ms var(--spring); }
-.thumb i::before { content: ""; border: solid transparent; border-width: 5px 0 5px 8px; border-left-color: #04231b; margin-left: 2px; }
-.tile:hover .thumb i { scale: 1.25; }
-.tile strong { padding: 4px 4px 0; font-size: 12.5px; line-height: 1.25; }
-.tile > span:last-child { padding: 0 4px; color: var(--muted); font: 10.5px var(--mono); }
-.dots { display: none; }
+/* The ships stand in one 3D space whose vanishing point is where the stars come from. Each is a
+   pair, the film and its brief, centred together and turned about the film's middle. */
+.fleet-deck { position: relative; z-index: 1; }
+.fleet-space { position: absolute; inset: 0; perspective: 1000px; perspective-origin: 58% 42%; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.ship { position: absolute; left: 50%; top: 50%; display: flex; align-items: center; gap: var(--pair-gap); translate: -50% -50%; transform-origin: calc(var(--ship-w) / 2) 50%; will-change: transform, opacity; }
+.craft { position: relative; flex: none; width: var(--ship-w); margin: 0; padding: 0; border: 0; background: none; color: inherit; text-align: left; -webkit-tap-highlight-color: transparent; }
+.craft:focus-visible { outline: none; }
+.craft:focus-visible .hull { outline: 2px solid var(--accent); outline-offset: 4px; }
+.hull { position: relative; display: block; padding: 8px 8px 0; border: 1px solid rgba(var(--glow), 0.22); border-radius: 18px; background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.015) 40%), #0b0e13; box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.08); transition: border-color 400ms ease, box-shadow 500ms ease; }
+.ship.docked .hull { border-color: rgba(var(--glow), 0.7); box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(var(--glow), 0.25), 0 0 80px rgba(var(--glow), 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+/* The engines: a glow at the back of the hull and two trails behind it, as long as the speed. */
+.hull::after { content: ""; position: absolute; top: 20%; bottom: 34%; right: -4px; width: 10px; border-radius: 8px; background: radial-gradient(closest-side, #d9fff4, rgba(var(--glow), 0.6) 55%, transparent); opacity: calc(0.25 + var(--thrust, 0) * 0.9); }
+.fleet.reverse .hull::after { right: auto; left: -4px; }
+.engines { position: absolute; top: 26%; bottom: 40%; left: calc(100% - 8px); width: min(440px, 60vw); display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; transform-origin: 0 50%; transform: scaleX(var(--thrust, 0)); opacity: min(1, calc(var(--thrust, 0) * 1.5)); }
+.engines i { height: 5px; border-radius: 5px; background: linear-gradient(90deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); box-shadow: 0 0 12px rgba(var(--glow), 0.55); }
+.fleet.reverse .engines { left: auto; right: calc(100% - 8px); transform-origin: 100% 50%; }
+.fleet.reverse .engines i { background: linear-gradient(270deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); }
+/* Targeting corners lock on to the docked ship. */
+.reticle { --l: 26px; --w: 2px; position: absolute; inset: -13px; pointer-events: none; opacity: 0; scale: 1.1; transition: opacity 300ms ease, scale 600ms var(--spring);
+  background: linear-gradient(var(--accent), var(--accent)) left top / var(--l) var(--w), linear-gradient(var(--accent), var(--accent)) left top / var(--w) var(--l), linear-gradient(var(--accent), var(--accent)) right top / var(--l) var(--w), linear-gradient(var(--accent), var(--accent)) right top / var(--w) var(--l), linear-gradient(var(--accent), var(--accent)) left bottom / var(--l) var(--w), linear-gradient(var(--accent), var(--accent)) left bottom / var(--w) var(--l), linear-gradient(var(--accent), var(--accent)) right bottom / var(--l) var(--w), linear-gradient(var(--accent), var(--accent)) right bottom / var(--w) var(--l);
+  background-repeat: no-repeat; filter: drop-shadow(0 0 6px rgba(var(--glow), 0.8)); }
+.ship.docked .reticle { opacity: 1; scale: 1; animation: lock 2.6s ease-in-out infinite; }
+@keyframes lock { 50% { scale: 1.022; } }
+.view { position: relative; display: block; overflow: hidden; border-radius: 11px; aspect-ratio: 16 / 9; background: #05070a; }
+.view img, .view video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.view video { opacity: 0; transition: opacity 500ms ease; }
+.ship.live .view video { opacity: 1; }
+/* The further a ship is from the dock, the darker it is. */
+.view::after { content: ""; position: absolute; inset: 0; background: rgba(3, 5, 9, calc(var(--far, 0) * 0.55)); pointer-events: none; }
+.play { position: absolute; left: 50%; top: 50%; z-index: 1; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; box-shadow: 0 0 0 9px rgba(var(--glow), 0.18), 0 0 40px rgba(var(--glow), 0.55); opacity: 0; scale: 0.6; transition: opacity 300ms ease, scale 500ms var(--spring); }
+.play::before { content: ""; border: solid transparent; border-width: 9px 0 9px 15px; border-left-color: #04231b; margin-left: 4px; }
+.ship.docked .play { opacity: 1; scale: 1; }
+.ship.live .play { opacity: 0; scale: 0.8; }
+.ship.live:hover .play { opacity: 1; scale: 1; }
+.ship .go { position: absolute; right: 10px; top: 10px; z-index: 1; min-height: 26px; padding: 0 10px; border-radius: 999px; background: var(--accent); color: #04231b; font: 700 10.5px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; display: inline-flex; align-items: center; opacity: 0; translate: 0 -6px; transition: opacity 300ms ease, translate 400ms var(--spring); }
+.ship.docked .go { opacity: 1; translate: 0 0; }
+.plate { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 0 8px; }
+.plate b { color: var(--accent); font: 600 11px var(--mono); letter-spacing: 0.1em; }
+.plate strong { flex: 1; min-width: 0; color: var(--heading); font: 600 clamp(14px, 1.3vw, 17px)/1.2 var(--sans); }
+.plate em { color: var(--muted); font: 11px var(--mono); font-style: normal; }
+/* The brief: what the docked feature does, how to use it and what is good to know. It is glass,
+   so the fleet waiting behind it shows through. */
+/* A brief shows only near the dock (--near, from fleet.js), so it arrives and leaves with its film. */
+.brief { position: relative; flex: none; width: var(--brief-w); height: var(--ship-h, 420px); opacity: var(--near, 0); pointer-events: none; user-select: text; -webkit-user-select: text; display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); gap: 10px; padding: 20px 22px 18px; border: 1px solid rgba(var(--glow), 0.22); border-radius: 18px; background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01) 40%), #090d13; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06); text-align: left; }
+.ship.docked .brief { pointer-events: auto; border-color: rgba(var(--glow), 0.4); }
+.brief h3 { font-size: clamp(22px, 2vw, 30px); line-height: 1.1; letter-spacing: -0.01em; }
+.brief .message { justify-self: start; padding: 8px 12px; font-size: 14.5px; line-height: 1.5; }
+.brief-tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; background: rgba(0, 0, 0, 0.25); }
+.brief-tabs button { flex: 1; min-height: 32px; padding: 0 8px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: 600 11px var(--mono); letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.brief-tabs button:hover { color: var(--text); }
+.brief-tabs button[aria-selected="true"] { background: rgba(var(--glow), 0.16); color: var(--accent); box-shadow: inset 0 0 0 1px rgba(var(--glow), 0.35); }
+.brief-body { display: none; }
+.fleet[data-part="what"] .brief-body[data-part="what"], .fleet[data-part="how"] .brief-body[data-part="how"], .fleet[data-part="facts"] .brief-body[data-part="facts"] { display: grid; }
+.brief-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-content: start; gap: 12px; padding-right: 4px; scrollbar-width: thin; scrollbar-color: rgba(var(--glow), 0.4) transparent; padding-bottom: 16px; -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent); mask-image: linear-gradient(#000 calc(100% - 22px), transparent); }
+/* A brief is as tall as its film, so when its words run longer they scroll, fading at the foot. */
+.brief-body .lead-text { font-size: 14.5px; line-height: 1.55; }
+.brief-body .steps { gap: 6px; }
+.brief-body .tool-output { min-height: 32px; padding: 5px 10px; background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.08); }
+.brief-body ol, .brief-body ul { display: grid; gap: 7px; margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.brief-body li::marker { color: var(--accent); font-weight: 700; }
+/* Under the fleet: back, where you are among the fourteen, and on. */
+.fleet-hud { position: relative; z-index: 3; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 0 12px; }
+.fleet-step { width: 46px; height: 46px; padding: 0; border: 1px solid rgba(var(--glow), 0.38); border-radius: 50%; background: rgba(8, 12, 18, 0.72); color: var(--accent); display: grid; place-items: center; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: background-color 200ms ease, scale 300ms var(--spring); }
+.fleet-step svg { width: 20px; height: 20px; }
+.fleet-step:hover { background: rgba(var(--glow), 0.16); scale: 1.06; }
+.fleet-track { display: grid; justify-items: center; gap: 2px; }
+.fleet-count { color: var(--muted); font: 600 11px var(--mono); letter-spacing: 0.16em; }
+.fleet-rail { display: flex; }
+.fleet-rail button { width: 18px; height: 30px; padding: 0; border: 0; background: none; display: grid; place-items: center; }
+.fleet-rail i { width: 6px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.24); transition: width 400ms var(--spring), background-color 300ms ease, box-shadow 300ms ease; }
+.fleet-rail .past i { background: rgba(var(--glow), 0.45); }
+/* The docked film's dot fills up while it waits, and the next film flies in when it is full. */
+.fleet-rail .on i { position: relative; overflow: hidden; width: 22px; background: rgba(var(--glow), 0.28); box-shadow: 0 0 10px rgba(var(--glow), 0.5); }
+.fleet-rail .on i::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--accent); transform-origin: 0 50%; transform: scaleX(var(--fill, 1)); }
+.fleet-now { display: inline-flex; align-items: center; gap: 6px; }
+.fleet-pause { width: 26px; height: 26px; padding: 0; border: 1px solid rgba(var(--glow), 0.35); border-radius: 50%; background: rgba(8, 12, 18, 0.72); color: var(--accent); display: grid; place-items: center; }
+.fleet-pause:hover { background: rgba(var(--glow), 0.16); }
+.fleet-pause svg { width: 12px; height: 12px; }
+.fleet-pause .when-paused, .fleet-pause[aria-pressed="true"] .when-playing { display: none; }
+.fleet-pause[aria-pressed="true"] .when-paused { display: block; }
 
 /* ---- The offer at the foot of the window ---- */
-.watch-pill { position: fixed; right: clamp(14px, 3vw, 40px); bottom: 20px; z-index: 15; translate: 0 90px; display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 20px 0 14px; border: 0; border-radius: 999px; background: var(--accent); color: #04231b; font: 700 14px var(--sans); box-shadow: var(--shadow); opacity: 0; transition: translate 700ms var(--spring), opacity 400ms ease, scale 300ms var(--spring); animation: beckon 2.2s ease-out infinite; }
-.watch-pill.show { translate: 0 0; opacity: 1; }
-.watch-pill:hover { scale: 1.05; }
-.watch-pill i { width: 26px; height: 26px; border-radius: 50%; background: #04231b; display: grid; place-items: center; }
-.watch-pill i::before { content: ""; border: solid transparent; border-width: 5px 0 5px 8px; border-left-color: var(--accent); margin-left: 2px; }
+.install-pill { position: fixed; right: clamp(14px, 3vw, 40px); bottom: 20px; z-index: 15; translate: 0 90px; display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 20px 0 14px; border: 0; border-radius: 999px; background: var(--accent); color: #04231b; font: 700 14px var(--sans); box-shadow: var(--shadow); opacity: 0; transition: translate 700ms var(--spring), opacity 400ms ease, scale 300ms var(--spring); animation: beckon 2.2s ease-out infinite; }
+.install-pill.show { translate: 0 0; opacity: 1; }
+.install-pill:hover { scale: 1.05; }
+.install-pill { text-decoration: none; }
+.install-pill i { width: 26px; height: 26px; border-radius: 50%; background: #04231b; color: var(--accent); display: grid; place-items: center; }
+.install-pill svg { width: 15px; height: 15px; }
 
 /* ---- The theater ---- */
 .theater { border: 0; padding: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; background: transparent; color: var(--text); }
@@ -196,8 +262,6 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .theater-foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--header); border-top: 1px solid var(--line); }
 .theater-foot .message { margin-right: auto; padding: 7px 12px; font-size: 14px; }
 .theater-foot .primary { white-space: nowrap; }
-.words { display: grid; gap: 12px; justify-items: start; }
-.words h3 { font-size: clamp(24px, 2.9vw, 38px); line-height: 1.1; letter-spacing: -0.01em; }
 .message { max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-card); padding: 10px 13px; font-size: 15.5px; line-height: 1.55; }
 .message.user { background: color-mix(in srgb, var(--accent) 11%, var(--field)); border-color: color-mix(in srgb, var(--accent) 24%, transparent); }
 .steps { display: grid; gap: 7px; justify-items: start; }
@@ -205,10 +269,6 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .tool-output i { width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
 .tool-output b { color: var(--text); font: 600 12.5px var(--mono); }
 
-/* ---- The tour ---- */
-.tour { padding: clamp(50px, 10vh, 120px) 0; text-align: center; }
-.tour .wrap { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 14px; }
-.tour .frame { width: min(100%, 880px); margin-top: 14px; }
 
 /* ---- Why it is yours ---- */
 .why { padding: clamp(40px, 8vh, 100px) 0; }
@@ -227,7 +287,15 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .command-strip a:hover { color: var(--accent); border-color: var(--accent); }
 .composer-row { display: flex; gap: 8px; align-items: center; padding: 10px 12px 14px; }
 .composer-input { flex: 1; min-width: 0; min-height: 46px; display: flex; align-items: center; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line-strong)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 14px; padding: 0 15px; background: var(--panel); font: 13px var(--mono); white-space: nowrap; overflow-x: auto; scrollbar-width: none; text-align: left; }
-.composer-input::before { content: "$"; color: var(--accent); margin-right: 9px; }
+.composer-input::before { content: attr(data-prompt); color: var(--accent); margin-right: 9px; }
+/* Which installer: macOS and Linux, or Windows. */
+.os { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); }
+.os button { min-height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: 600 12px var(--mono); transition: background-color 200ms ease, color 200ms ease; }
+.os button:hover { color: var(--text); }
+.os button[aria-pressed="true"] { background: var(--accent); color: var(--on-ink); }
+.command-strip .os { padding: 2px; background: var(--field); border-color: var(--line); }
+.command-strip .os button { min-height: 24px; }
+.install-note { color: var(--muted); font-size: 13px; }
 .send { display: inline-grid; place-items: center; width: 46px; min-width: 46px; min-height: 46px; padding: 0; border-radius: 14px; color: var(--on-ink); background: var(--accent); }
 .send:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
 .send svg { width: 20px; height: 20px; }
@@ -235,35 +303,41 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .toast { position: fixed; left: 50%; top: 14px; z-index: 30; translate: -50% -80px; padding: 11px 15px; border: 1px solid var(--btn-border); border-radius: var(--radius-ctl); background: var(--btn-bg); color: var(--btn-fg); box-shadow: var(--shadow); font-size: 13px; opacity: 0; transition: translate 500ms var(--spring), opacity 300ms ease; }
 .toast.show { translate: -50% 0; opacity: 1; }
 
+/* Too narrow for the brief beside the film: the film docks at the top and the brief goes under it,
+   with the fleet waiting behind the film and flying off the top (fleet.js, `upright`). */
+@media (max-width: 979px) {
+  .fleet-pin { padding-top: 74px; }
+  .fleet-head { gap: 2px; }
+  .fleet-hint { font-size: 12px; }
+  .fleet-space { perspective-origin: 50% 8%; }
+  .fleet { --ship-w: min(90vw, 460px, calc((100svh - 300px) * 1.5)); --brief-w: min(92vw, 560px); --pair-gap: 14px; }
+  .ship { top: 22px; translate: -50% 0; flex-direction: column; transform-origin: 50% calc(var(--ship-h, 240px) / 2); }
+  .brief { height: calc(var(--deck-h, 60vh) - var(--ship-h, 240px) - 14px - 28px); max-height: none; gap: 8px; padding: 14px 14px 12px; }
+  .brief .eyebrow { font-size: 9.5px; }
+  .brief .message { font-size: 13.5px; padding: 6px 10px; }
+  .brief-tabs button { min-height: 34px; font-size: 10px; padding: 0 4px; }
+  .brief-body .lead-text, .brief-body ol, .brief-body ul { font-size: 14px; }
+  .fleet.upright .engines, .fleet.upright.reverse .engines { left: 22%; right: 22%; top: calc(100% - 8px); bottom: auto; width: auto; height: 46vh; flex-direction: row; transform-origin: 50% 0; transform: scaleY(var(--thrust, 0)); }
+  .fleet.upright.reverse .engines { top: auto; bottom: calc(100% - 8px); transform-origin: 50% 100%; }
+  .fleet.upright .engines i { width: 5px; height: auto; background: linear-gradient(180deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); }
+  .fleet.upright.reverse .engines i { background: linear-gradient(0deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); }
+  .fleet.upright .hull::after, .fleet.upright.reverse .hull::after { top: auto; bottom: -4px; left: 22%; right: 22%; width: auto; height: 10px; }
+  .fleet.upright.reverse .hull::after { bottom: auto; top: -4px; }
+  .ship .go { right: 8px; top: 8px; min-height: 22px; padding: 0 8px; font-size: 9.5px; }
+  .plate { min-height: 42px; }
+  .play { width: 48px; height: 48px; margin: -24px 0 0 -24px; }
+  .fleet-hud { gap: 8px; }
+  .fleet-rail button { width: 16px; }
+}
+
 @media (max-width: 820px) {
   .topbar .links { display: none; }
-  .line { left: 9px; }
-  .stop { grid-template-columns: minmax(0, 1fr); gap: 16px; padding-left: 30px; }
-  .stop::before { left: 9px; top: 26px; }
-  .stop:nth-child(odd) .film-card { order: 0; }
   .answers { grid-template-columns: minmax(0, 1fr); }
-  .stop::after, .film-bar > span { display: none; }
+  .film-bar > span { display: none; }
   .film-bar strong { margin-right: auto; }
-  /* The seven pictures are a carousel here: one in the middle, its neighbours showing at the edges,
-     and a row of dots under it for where you are. */
-  .tiles { display: flex; gap: 12px; width: 100%; padding: 6px 11vw 8px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; }
-  .tiles::-webkit-scrollbar { display: none; }
-  .tile { flex: 0 0 78vw; scroll-snap-align: center; padding: 8px 8px 13px; }
-  .tile strong { font-size: 16px; padding-top: 6px; }
-  .tile > span:last-child { font-size: 11.5px; }
-  .thumb i { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
-  .thumb i::before { border-width: 8px 0 8px 13px; margin-left: 3px; }
-  .dots { display: flex; justify-content: center; gap: 2px; }
-  .dots button { width: 22px; height: 22px; padding: 0; border: 0; background: none; display: grid; place-items: center; }
-  .dots button::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: var(--line-strong); transition: width 400ms var(--spring), background-color 300ms ease; }
-  .dots button.on::before { width: 20px; background: var(--accent); }
-  .pick { margin-inline: 20px; }
   .quick-note a { display: none; }
   .actions .primary { min-height: 42px; padding: 0 14px; font-size: 14px; }
-  /* The offer at the foot of the window shrinks to its play button, so it covers no words. */
-  .watch-pill { padding: 0 9px; min-height: 48px; }
-  .watch-pill span { display: none; }
-  .watch-pill i { width: 30px; height: 30px; }
+  .install-pill { min-height: 46px; padding: 0 16px 0 10px; }
   /* The theater's foot: what was asked on a line of its own, the two buttons under it. */
   .theater-foot { flex-wrap: wrap; }
   .theater-foot .message { flex-basis: 100%; }
@@ -286,3 +360,29 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
   .hint { display: none; }
   *, *::before, *::after { transition-duration: 1ms !important; animation: none !important; }
 }
+
+/* ---- What each feature says: the sentence, the steps, what is good to know ---- */
+.lead-text { color: var(--text); font-size: 16px; line-height: 1.6; }
+.how, .facts { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--panel); padding: 12px 16px 14px; }
+.how h4, .facts h4 { margin-bottom: 8px; color: var(--muted); font: 600 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.how ol, .facts ul { display: grid; gap: 7px; padding-left: 20px; font-size: 14.5px; line-height: 1.55; }
+.how li::marker { color: var(--accent); font-weight: 700; }
+.facts li::marker { color: var(--accent); }
+.facts li, .how li { color: var(--muted); }
+.where { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text); font: 13px var(--mono); }
+.where span { padding: 3px 8px; border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font: 600 11px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* ---- Features explained in words ---- */
+.more { padding: clamp(40px, 8vh, 100px) 0; }
+.more .wrap { display: grid; justify-items: center; gap: 14px; text-align: center; }
+.more-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; width: 100%; margin-top: 14px; text-align: left; }
+.more-card { display: grid; align-content: start; gap: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 22px 24px 26px; }
+.more-card h3 { font-size: clamp(22px, 2.4vw, 30px); line-height: 1.1; letter-spacing: -0.01em; }
+.more-card .how, .more-card .facts { background: var(--field); }
+.small-title { margin-top: clamp(30px, 6vh, 60px); font-size: clamp(22px, 2.6vw, 32px); }
+.small-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; width: 100%; text-align: left; }
+.small-item { display: grid; gap: 4px; align-content: start; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--panel); padding: 12px 14px 14px; }
+.small-item b { font: 600 13px var(--mono); color: var(--text); }
+.small-item span { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+@media (max-width: 900px) { .more-grid { grid-template-columns: minmax(0, 1fr); } .small-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .small-grid { grid-template-columns: minmax(0, 1fr); } }
