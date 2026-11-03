@@ -53,8 +53,8 @@ export function setAutoRespond(autoRespond, decision = null, nextDefaults) {
   if (current) {
     pill.dataset.state = current.status;
     const count = `${current.responses}${current.maxResponses ? `/${current.maxResponses}` : ""}`;
-    pill.textContent = current.status === "active" ? (decision ? `Auto … ${count}` : `Auto ${count}`) : "Auto stopped";
-    pill.title = current.status === "stopped" ? current.stopReason || "Stopped" : "Auto respond is answering for you";
+    pill.textContent = current.status === "active" ? (current.retry ? `Auto retry ${count}` : decision ? `Auto … ${count}` : `Auto ${count}`) : "Auto stopped";
+    pill.title = current.status === "stopped" ? current.stopReason || "Stopped" : current.retry ? `Retry at ${new Date(current.retry.nextAt).toLocaleTimeString()}: ${current.retry.error}` : "Auto respond is answering for you";
   }
   elements.autoRespondButton.classList.toggle("active", current?.status === "active");
   if (elements.autoRespondDialog.open) renderStatus();
@@ -73,7 +73,8 @@ export function markAutoReply(bubble, auto) {
 function renderStatus() {
   const current = state.autoRespond;
   elements.autoRespondStatus.textContent = !current ? "Off."
-    : current.status === "active" ? `On. ${current.responses}${current.maxResponses ? ` of ${current.maxResponses}` : ""} responses so far.`
+    : current.status === "active" && current.retry ? `Waiting to retry at ${new Date(current.retry.nextAt).toLocaleTimeString()}: ${current.retry.error}`
+      : current.status === "active" ? `On. ${current.responses}${current.maxResponses ? ` of ${current.maxResponses}` : ""} responses so far.`
       : `Stopped: ${current.stopReason || "stopped"}. Saving with the box ticked resumes it from zero.`;
   elements.saveAutoRespondButton.textContent = current?.status === "stopped" ? "Save and resume" : "Save";
 }

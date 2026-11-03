@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { DEFAULT_AUTO_RESPOND_INSTRUCTIONS, DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, validateAutoRespondProfile } from "../../conversation-auto-respond.js";
+import { getHarnessRuntime } from "../../harnesses.js";
+import type { HarnessId } from "../../types.js";
 import { actingAccount } from "../../account-context.js";
 import { assertAutomationCreator } from "../automation-profile.js";
 import { accessibleProviderProfile, listAccessibleProviderProfiles } from "../../provider-profiles/store.js";
@@ -105,6 +108,12 @@ async function manageCron(command: Command): Promise<unknown> {
     accessibleProviderProfile(command.input.creatorAccountId, command.input.providerProfileId, "automation");
   }
   command.input.creatorAccountId = existing?.creatorAccountId ?? command.input.creatorAccountId ?? null;
+  if (command.input.autoRespond) {
+    if (!command.input.creatorAccountId) throw new Error("Sign in to configure scheduled auto reply");
+    validateAutoRespondProfile(command.input.creatorAccountId, command.input.autoRespond);
+    const runtime = await getHarnessRuntime(command.input.autoRespond.harnessId as HarnessId);
+    await runtime.validateSettings({ provider: command.input.autoRespond.provider, modelId: command.input.autoRespond.modelId, reasoning: command.input.autoRespond.thinkingLevel });
+  }
   command.input.providerProfileId ??= null;
   if (command.input.providerProfileId) {
     if (!command.input.creatorAccountId) throw new Error("A signed-in creator is required to select a profile");
@@ -158,6 +167,9 @@ app.post("/api/cron", async (request, response, next) => {
     }
     response.json(await routeCommand(payload.nodeId, payload.command));
   } catch (error) { next(error); }
+});
+app.get("/api/auto-respond/defaults", (_request, response) => {
+  response.json({ instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 });
 });
 app.get("/api/projects/:projectId/cron", async (request, response, next) => {
   try {

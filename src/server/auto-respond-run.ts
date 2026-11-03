@@ -27,6 +27,7 @@ export interface AutoRespondRunInput {
  * runtime makes a used-up budget refuse the run.
  */
 export async function runAutoResponder(input: AutoRespondRunInput): Promise<string> {
+  if (input.signal.aborted) throw new Error("Auto respond was cancelled");
   const accountId = input.creatorAccountId;
   if (!accountId) throw new Error("Auto responder creator is missing; save its settings again");
   validateAutoRespondProfile(accountId, input.config);
@@ -34,8 +35,6 @@ export async function runAutoResponder(input: AutoRespondRunInput): Promise<stri
 }
 
 async function executeAutoResponder(input: AutoRespondRunInput): Promise<string> {
-  // A stop that lands before the responder starts must not open a harness session or resolve a profile.
-  if (input.signal.aborted) throw new Error("Auto respond was cancelled");
   const override = process.env.JOINT_BOB_AUTO_RESPONDER;
   if (override) {
     const module = await import(override) as { default: (input: AutoRespondRunInput) => Promise<string> };
@@ -77,8 +76,7 @@ async function executeAutoResponder(input: AutoRespondRunInput): Promise<string>
     // responder is still opening must keep the turn from starting at all.
     const cancelled = () => { if (input.signal.aborted) throw new Error("Auto respond was cancelled"); };
     cancelled();
-    await session.prompt({ text: input.prompt, beforeStart: async () => cancelled() });
-    await done;
+    await Promise.all([session.prompt({ text: input.prompt, beforeStart: async () => cancelled() }), done]);
     // After tool calls the reply spans several messages; the decision is in the last one.
     const last = [...session.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
     return (last?.text ?? events.join("")).trim();

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added auto-reply settings to scheduled tasks, with persistent retries, restart recovery, explicit stop criteria and response limits. Removed hidden auto-reply failure and no-progress stops.
+
 ## 2.207.0 — 2026-11-03
 
 - Relay rules for pools: sign in on a relay and choose a pool under **Settings → Relay → Pools**. Every project shared through the relay's group then uses that pool on every machine using the relay, and it wins over everyone's own choices. Nowhere else can a pool be assigned to a whole cluster: elsewhere, choices stay personal to you and your twins. **Assignments** says when a relay rule applies, and an offline machine no longer stops the relay from saving one.

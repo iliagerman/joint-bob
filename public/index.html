@@ -3085,6 +3085,18 @@
           <label id="cronReasoningLabel">Reasoning<select name="reasoning" data-testid="cron-reasoning"></select></label>
           <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
           <label class="checkbox-row"><input name="pauseOnFailure" type="checkbox" data-testid="cron-pause-on-failure">Pause schedule after a failed run</label>
+          <label class="checkbox-row"><input name="autoReplyEnabled" type="checkbox" data-testid="cron-auto-reply-enabled">Enable auto reply for each run</label>
+          <fieldset id="cronAutoReply" class="relay-form-section" hidden disabled>
+            <legend>Auto reply</legend>
+            <p class="cron-help">Drives the conversation until your stop criteria, response limit, or manual Stop. Failures retry automatically, including after a restart. Security restrictions and budgets still apply. Retries may incur model costs.</p>
+            <label>Responder harness<select name="autoReplyHarness" data-testid="cron-auto-reply-harness"></select></label>
+            <label>Responder model<select name="autoReplyModel" data-testid="cron-auto-reply-model"></select></label>
+            <label>Responder reasoning<select name="autoReplyThinking" data-testid="cron-auto-reply-thinking"></select></label>
+            <label>Instructions<textarea name="autoReplyInstructions" rows="4" maxlength="20000" data-testid="cron-auto-reply-instructions"></textarea></label>
+            <label>Stop only when<textarea name="autoReplyStopInstructions" rows="4" maxlength="20000" data-testid="cron-auto-reply-stop-instructions"></textarea><span class="settings-hint">Only these criteria may end auto reply automatically. Leave blank for no criteria-based stop.</span></label>
+            <label>Maximum replies<input name="autoReplyLimit" type="number" min="1" max="500" placeholder="Unlimited" data-testid="cron-auto-reply-limit"></label>
+            <label class="checkbox-row"><input name="autoReplyUseTools" type="checkbox" checked data-testid="cron-auto-reply-use-tools">Let the responder inspect files and run checks</label>
+          </fieldset>
           <label class="checkbox-row"><input name="markForReview" type="checkbox" data-testid="cron-mark-for-review">Count completed runs toward Needs review</label>
           <label class="checkbox-row"><input name="hideFromHistory" type="checkbox" data-testid="cron-hide-from-history">Hide this task's conversations from history, even when Show scheduled is on</label>
           <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Failed runs retry at the next scheduled time unless pause on failure is selected.</p>

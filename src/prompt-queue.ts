@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { autoRespondConfigSchema, type AutoRespondConfig } from "./conversation-auto-respond.js";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -19,13 +20,14 @@ export type QueuedSettings = z.infer<typeof queuedSettingsSchema>;
 export const queuedAutomationProfileSchema = z.object({ accountId: z.string().min(1), profileId: z.string().min(1).nullable(), nodeId: z.string().min(1) }).strict();
 const promptSchema = z.object({
   automationProfile: queuedAutomationProfileSchema.optional(),
+  scheduledAutoRespond: z.lazy(() => autoRespondConfigSchema).optional(),
   id: z.string().uuid(), requestId: z.string().uuid().optional(), systemEventId: z.string().uuid().optional(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),
   messageText: z.string().nullable(), promptSuffix: z.string().nullable(), displaySuffix: z.string().nullable(),
   attachmentPaths: z.array(z.string()), images: z.array(z.object({ path: z.string(), mimeType: z.string().min(1) }).strict()).default([]), settings: queuedSettingsSchema.nullable(), revision: z.number().int().positive(),
   author: messageAuthorSchema.optional(),
 });
 export type QueuedPrompt = z.infer<typeof promptSchema>;
-interface Metadata { automationProfile?: z.infer<typeof queuedAutomationProfileSchema>; requestId?: string; systemEventId?: string; author?: MessageAuthor; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
+interface Metadata { scheduledAutoRespond?: AutoRespondConfig; automationProfile?: z.infer<typeof queuedAutomationProfileSchema>; requestId?: string; systemEventId?: string; author?: MessageAuthor; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
 export type SystemPromptState = "pending" | "starting" | "consumed" | "missing";
 interface Row { id: string; queue_key: string; prompt: string; created_at: string; sequence: number; revision: number; origin_node_id: string }
 export interface QueuedPromptRef { id: string; revision: number }

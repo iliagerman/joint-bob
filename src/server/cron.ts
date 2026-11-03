@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { getAutoRespond } from "../conversation-auto-respond.js";
+import { observeAutoResponder } from "./auto-respond-recovery.js";
 import { automationProfileContext, runWithAutomationProfile } from "./automation-profile.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { getClusterNode } from "../cluster.js";
@@ -68,6 +70,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
   if (titleInstruction) bindWebhookTitle(task.projectId, sessionId, task.name);
   await queueConversationPrompt({
     automationProfile: automationProfileContext(task),
+    scheduledAutoRespond: task.autoRespond ?? undefined,
     projectId: task.projectId, engine: task.engine, sessionId, message: [titleInstruction, scheduledPromptText(task.prompt)].filter(Boolean).join("\n\n"), requestId: run.id, label: "Scheduled", until: "completed",
     // Model and reasoning ride along with the queued prompt instead of
     // configuring the live session here: unrelated scheduled tasks share a
@@ -89,7 +92,7 @@ async function executeCronRun(task: CronTask, run: CronRun): Promise<void> {
       if (task.assistantId) {
         if (!task.creatorAccountId) throw new Error("Assistant scheduled task has no creator account");
         const turn = await runPersonalAssistantAutomationTurn(task.creatorAccountId, task.assistantId, run.id, scheduledPromptText(task.prompt), {
-          label: "Scheduled", automationProfile: automationProfileContext(task),
+          label: "Scheduled", automationProfile: automationProfileContext(task), scheduledAutoRespond: task.autoRespond ?? undefined,
           prepare: async destination => {
             cronStore().target(run.id, destination.sessionId);
             if (destination.isNew) await markCronConversation(task.projectId, destination.engine, destination.sessionId, task.id, task.ownerNodeId);
@@ -141,12 +144,24 @@ export async function dispatchCronTasks(now = Date.now()): Promise<void> {
   }
 }
 export async function startCronScheduler(): Promise<void> {
+  const continuing = new Set<string>();
   for (const task of cronStore().list()) {
     if (!cronStore().active(task.id) || !task.lastRun?.sessionId) continue;
     const record = await getConversationRecord(task.projectId, task.engine, task.lastRun.sessionId);
-    const key = `${task.projectId}:${record?.conversationId ?? task.lastRun.sessionId}`;
+    const conversationId = record?.conversationId ?? task.lastRun.sessionId;
+    const responder = await getAutoRespond(task.projectId, conversationId);
+    if (task.autoRespond && responder?.sourceRequestId === task.lastRun.id) {
+      continuing.add(task.id);
+      const runId = task.lastRun.id;
+      void observeAutoResponder(responder).then(async () => {
+        cronStore().finish(runId, "succeeded", null);
+        transitionAutomationExecution(await clusterV2Database(), runId, "succeeded", null, task.lastRun!.sessionId!);
+      }).catch(error => console.error("Scheduled auto reply recovery failed", error));
+      continue;
+    }
+    const key = `${task.projectId}:${conversationId}`;
     for (const prompt of listQueuedPrompts(key)) if (prompt.requestId === task.lastRun.id) cancelQueuedPrompt(key, prompt.id);
   }
-  cronStore().recover();
+  cronStore().recover(Date.now(), continuing);
   setInterval(() => { void dispatchCronTasks().catch(error => console.error("Scheduled dispatch failed", error)); }, 1000).unref();
 }

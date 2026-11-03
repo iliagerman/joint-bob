@@ -25,8 +25,7 @@ import { getDifficultyClassifier } from "../classifiers/registry.js";
 import { automaticRoutingModelAllowed, routingEvalDue } from "../routing-policy.js";
 import { activeRoutingConfig, routingConfigDatabase, routingConfigWarning, type StoredRoutingConfig } from "../routing-configs.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
-import { attachAutoReplies, recordAutoReply, DEFAULT_AUTO_RESPOND_INSTRUCTIONS, DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, autoRespondInput, autoRespondConfigSchema, autoRespondMessage, disableAutoRespond, enableAutoRespond, getAutoRespond, parseAutoRespondDecision, recordAutoResponse, resetAutoRespondCount, responderPrompt, stopAutoRespond, type AutoRespondState, type AutoRespondStopKind } from "../conversation-auto-respond.js";
-import { BudgetExceededError } from "../budgets.js";
+import { attachAutoReplies, recordAutoReply, DEFAULT_AUTO_RESPOND_INSTRUCTIONS, DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, autoRespondInput, autoRespondConfigSchema, autoRespondMessage, disableAutoRespond, enableAutoRespond, getAutoRespond, parseAutoRespondDecision, recordAutoResponse, resetAutoRespondCount, responderPrompt, retryAutoRespond, stopAutoRespond, type AutoRespondConfig, type AutoRespondState, type AutoRespondStopKind } from "../conversation-auto-respond.js";
 import { runAutoResponder } from "./auto-respond-run.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
@@ -93,6 +92,31 @@ const autoCompacted = new Set<string>();
 
 /** Whose conversation this is: its project's owner, whose own settings drive it. */
 export function conversationOwner(connection: Pick<HarnessChatConnection, "project">): string | undefined {
+const autoRetryTimers = new Map<string, NodeJS.Timeout>();
+
+function clearAutoRetry(key: string): void {
+  clearTimeout(autoRetryTimers.get(key));
+  autoRetryTimers.delete(key);
+}
+
+function armAutoRetry(connection: HarnessChatConnection, state: AutoRespondState): void {
+  const key = queueKey(connection);
+  clearAutoRetry(key);
+  const timer = setTimeout(() => {
+    autoRetryTimers.delete(key);
+    void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
+  }, Math.max(0, Date.parse(state.retry!.nextAt) - Date.now()));
+  timer.unref();
+  autoRetryTimers.set(key, timer);
+}
+
+async function retryAutoResponse(connection: HarnessChatConnection, error: unknown): Promise<void> {
+  const state = await retryAutoRespond(connection.project.id, connection.conversationId, chatErrorMessage(error));
+  if (state?.status !== "active") return;
+  publishAutoRespond(connection, state);
+  broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+  armAutoRetry(connection, state);
+}
   return resourceOwner("project", connection.project.id);
 }
 
@@ -171,6 +195,7 @@ async function stopAutoRespondFor(connection: HarnessChatConnection, kind: AutoR
 }
 
 function runtimeSettings(settings: QueuedSettings): HarnessModelSettings {
+  clearAutoRetry(queueKey(connection));
   return { provider: settings.provider, modelId: settings.modelId, reasoning: settings.reasoning, ...(settings.enabledTools !== undefined ? { enabledTools: settings.enabledTools } : settings.claudeTools ? { enabledTools: settings.claudeTools.enabled ?? undefined } : {}) };
 }
 function currentSettings(connection: HarnessChatConnection): QueuedSettings {
@@ -274,12 +299,14 @@ async function resumeReviewedTask(connection: HarnessChatConnection): Promise<vo
   broadcastToProject(connection.project.id, { type: "tasksChanged" });
 }
 
-async function enqueue(connection: HarnessChatConnection, message: string, images: Array<{ name: string; mimeType: string; data: string }>, files: Array<{ name: string; mimeType: string; data: string }>, requestId?: string, settings?: QueuedSettings | null): Promise<void> {
+async function enqueue(connection: HarnessChatConnection, message: string, images: Array<{ name: string; mimeType: string; data: string }>, files: Array<{ name: string; mimeType: string; data: string }>, requestId?: string, settings?: QueuedSettings | null, scheduledAutoRespond?: AutoRespondConfig): Promise<void> {
   if (!message.trim()) throw new Error("Prompt cannot be empty");
   await writable(connection);
-  // A person's message goes first: it cancels a pending auto response and restarts the unattended count.
-  autoDecisions.get(queueKey(connection))?.controller.abort("person-typed");
-  await resetAutoRespondCount(connection.project.id, connection.conversationId);
+  // A later scheduled run waits for the current driver; only a person interrupts it.
+  if (!scheduledAutoRespond) {
+    autoDecisions.get(queueKey(connection))?.controller.abort("person-typed");
+    await resetAutoRespondCount(connection.project.id, connection.conversationId);
+  }
   await resumeReviewedTask(connection);
   if (settings) await (await getHarnessRuntime(selectedHarness(settings))).validateSettings(runtimeSettings(settings));
   const saved = await persistTaskAttachments(connection.cwd, images, files);
@@ -289,7 +316,7 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   const promptText = promptTextWithAttachments(message, imageAttachments, fileAttachments);
   const suffix = absolute.length ? `Attached: ${absolute.map(({ name }) => name).join(", ")}` : "";
   const displayText = [message.trim(), suffix].filter(Boolean).join("\n\n");
-  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { automationProfile: connection.automationProfile, requestId, author: connection.author, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
+  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { automationProfile: connection.automationProfile, scheduledAutoRespond, requestId, author: connection.author, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
   markHarnessInput(connection.shared);
   publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, ...(queued.author ? { author: queued.author } : {}), scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
@@ -480,6 +507,15 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
         const allowed = filterPersonalAssistantTools(baseline, assistantSettings);
         if (allowed.length !== active.length || allowed.some(name => !active.includes(name))) await connection.shared.session.setTools(allowed);
         if (!assistantSettings.allowBrowser) revokeBrowserAgentTokens(connection.project.id, connection.conversationId);
+    if (queued.scheduledAutoRespond) {
+      await writable(connection);
+      const current = await getAutoRespond(connection.project.id, connection.conversationId);
+      if (current?.sourcePromptId !== queued.id) {
+        const accountId = queued.automationProfile?.accountId;
+        if (!accountId) throw new Error("Scheduled auto responder creator is missing");
+        publishAutoRespond(connection, await enableAutoRespond(connection.project.id, connection.conversationId, queued.scheduledAutoRespond, queued.author ?? null, accountId, queued.id, queued.requestId ?? null));
+      }
+    }
       }
       const assistantContext = assistantSettings
         ? await personalAssistantContext(queued.author!.accountId, connection.project.id, connection.engine, connection.shared.session.id)
@@ -488,7 +524,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
       const text = `${assistantContext ? `${assistantContext}${toolPolicy}\n\n` : ""}${connection.handoffContext ?? ""}${authored}`;
       const finishSilentReview = queued.requestId && (isScheduledPromptText(queued.promptText) || isSilentWebhookRequest(queued.requestId))
         ? await silentScheduledReview(connection.project, connection.engine, connection.shared.session.id, queued.requestId) : undefined;
-      const promptInput = { text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
+      const promptInput = { text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: async () => { await writable(connection); promptSent = true; }, onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);
         if (claimed) return;
         claimed = claimQueuedPrompt(queued.id, currentSettings(connection));
@@ -498,6 +534,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
         connection.shared.scheduledTurn = isScheduledPromptText(queued.promptText);
         if (!queued.systemEventId) publish(connection, { type: "promptStarted", queueId: queued.id, scheduled: connection.shared.scheduledTurn });
         refreshHarnessPromptQueue(connection);
+    let promptSent = false;
       } };
       if (!pool) await connection.shared.session.prompt(promptInput);
       else {
@@ -535,12 +572,12 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
       // An automatic completion may have crossed the harness start boundary even
       // when transport failed before onStarted, so it is retired, never replayed.
       if (!claimed) {
-        if (queued.systemEventId) claimQueuedPrompt(queued.id);
+        if (queued.systemEventId || recovering) claimQueuedPrompt(queued.id);
         else resetQueuedPromptAttempt(queued.id);
       }
       if (!pausedDrains.has(queueKey(connection))) {
-        // The failure outlives this socket: a reopened conversation shows it in place.
-        if (claimed) recordTurnFailure(connection.engine, connection.shared.session.id, chatErrorMessage(error));
+        // An acknowledged or uncertain automatic turn is inspected, never replayed.
+        if (claimed || recovering) recordTurnFailure(connection.engine, connection.shared.session.id, chatErrorMessage(error));
         if (!queued.systemEventId) publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
         throw error;
       }
@@ -571,6 +608,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
 }
 
 function latestAssistantText(session: HarnessSession): string | undefined {
+      const recovering = promptSent && (await getAutoRespond(connection.project.id, connection.conversationId))?.status === "active";
   return [...session.messages].reverse().find((message) => message.role === "assistant")?.text;
 }
 
@@ -614,9 +652,15 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
   const state = await getAutoRespond(projectId, connection.conversationId);
   if (state?.status !== "active") return false;
   const shared = connection.shared;
-  if (harnessSessionBusy(shared) || listQueuedPrompts(queueKey(connection)).length) return false;
-  try { await writable(connection); } catch { return false; }
-  const input = autoRespondInput(shared.session.messages);
+  if (harnessSessionBusy(shared) || listQueuedPrompts(queueKey(connection)).some(prompt => !deferredAutoPrompt(prompt, state))) return false;
+  await writable(connection);
+  const messages = shared.session.messages;
+  const failure = listTurnFailures(connection.engine, shared.session.id).at(-1);
+  const lastMessage = messages.at(-1);
+  const failedAfterLastMessage = failure && (!lastMessage?.timestamp || failure.failedAt >= lastMessage.timestamp);
+  const input = autoRespondInput(failedAfterLastMessage
+    ? [...messages, { id: `failure-context:${failure.failedAt}`, role: "assistant", text: `The last turn failed: ${failure.error}. Inspect the current state before recovering; do not repeat actions with uncertain outcomes.` }]
+    : messages);
   if (!input) return false;
   const { turns, key } = input;
   if (key === state.answeredKey) return false;
@@ -643,17 +687,21 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
     }
     if (controller.signal.aborted) throw new Error("aborted");
     if (!decision) {
-      await stopAutoRespondFor(connection, "responder-failed", "The responder did not give a usable decision");
-      return false;
+      throw new Error("The responder did not give a usable decision");
     }
+function deferredAutoPrompt(prompt: QueuedPrompt, state: AutoRespondState): boolean {
+  return state.status === "active" && state.sourcePromptId !== null && Boolean(prompt.scheduledAutoRespond) && prompt.id !== state.sourcePromptId;
+}
+
     const latest = await getAutoRespond(projectId, connection.conversationId);
     if (latest?.status !== "active" || latest.revision !== state.revision) return false;
     if (decision.decision === "stop") {
       await stopAutoRespondFor(connection, "stop-instruction", decision.reason);
       return false;
+  if (state.retry && Date.parse(state.retry.nextAt) > Date.now()) { armAutoRetry(connection, state); return false; }
     }
-    if (listQueuedPrompts(queueKey(connection)).length) return true;
-    const queued = enqueuePrompt(queueKey(connection), decision.reply, decision.reply, { ...(state.enabledBy ? { author: state.enabledBy } : {}), messageText: decision.reply, promptSuffix: "", displaySuffix: "", attachmentPaths: [], images: [], settings: null });
+    if (listQueuedPrompts(queueKey(connection)).some(prompt => !deferredAutoPrompt(prompt, state))) return true;
+    const queued = enqueuePrompt(queueKey(connection), decision.reply, decision.reply, { automationProfile, ...(state.enabledBy ? { author: state.enabledBy } : {}), messageText: decision.reply, promptSuffix: "", displaySuffix: "", attachmentPaths: [], images: [], settings: null });
     markHarnessInput(shared);
     await recordAutoReply(projectId, connection.conversationId, decision.reply, state.modelId, decision.reason);
     publish(connection, { type: "userMessage", text: decision.reply, timestamp: queued.createdAt, ...(queued.author ? { author: queued.author } : {}), queued: true, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, auto: { modelId: state.modelId, reason: decision.reason } });
@@ -663,8 +711,7 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
   } catch (error) {
     if (controller.signal.aborted) return controller.signal.reason !== "user-stop";
     if (error instanceof ConversationOwnershipError) throw error;
-    if (error instanceof BudgetExceededError) await stopAutoRespondFor(connection, "budget", chatErrorMessage(error));
-    else await stopAutoRespondFor(connection, "responder-failed", chatErrorMessage(error));
+    await retryAutoResponse(connection, error);
     return false;
   } finally {
     if (autoDecisions.get(queueKey(connection)) === deciding) autoDecisions.delete(queueKey(connection));
@@ -684,9 +731,11 @@ function wakeWhenHarnessIdle(connection: HarnessChatConnection): void {
   const cleanup = () => {
     clearInterval(timer);
     unsubscribe();
+    const automationProfile = connection.automationProfile ?? { accountId: state.creatorAccountId!, profileId: null, nodeId: (await getClusterNode()).id };
     if (idleWakes.get(key) === cleanup) idleWakes.delete(key);
   };
   const check = () => {
+      if (!state.stopInstructions.trim()) throw new Error("The responder returned STOP without configured stop criteria");
     if (connection.shared !== shared || findHarnessSession(shared.projectId, shared.engine, shared.session.id) !== shared) return cleanup();
     if (harnessTurnBusy(shared)) return;
     cleanup();
@@ -710,7 +759,7 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
       await connection.shared.session.reload().catch((error) => console.warn("Skill reload before the next message failed", error instanceof Error ? error.message : error));
     }
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
-    const next = listQueuedPrompts(queueKey(connection))[0];
+    const next = listQueuedPrompts(queueKey(connection)).find(prompt => !responder || !deferredAutoPrompt(prompt, responder));
     if (next?.systemEventId && next.dispatchState === "starting") {
       if (startingIds.has(next.id)) return;
       // No dispatch here owns this start, so a shutdown interrupted it. Retire it
@@ -723,7 +772,6 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
       try { await dispatch(connection, next); }
       catch (error) {
         if (!next.systemEventId) {
-          if (!pausedDrains.has(queueKey(connection))) await stopAutoRespondFor(connection, "turn-failed", chatErrorMessage(error));
           throw error;
         }
         console.warn("Background completion dispatch failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
@@ -733,15 +781,25 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
       continue;
     }
     if (await runGoalTurn(connection)) continue;
-    if (!await runAutoResponse(connection)) return;
+    if (!await runAutoResponse(connection)) {
+      if (listQueuedPrompts(queueKey(connection)).length && (await getAutoRespond(connection.project.id, connection.conversationId))?.status !== "active") continue;
+      return;
+    }
   }
 }
 export function harnessPromptQueueIsDraining(key: string): boolean { return drains.has(key) || mutations.has(key); }
 export function drainHarnessPromptQueue(connection: HarnessChatConnection): Promise<void> {
   const key = queueKey(connection);
   const existing = drains.get(key); if (existing) return existing;
+    const responder = await getAutoRespond(connection.project.id, connection.conversationId);
+    if (responder?.status === "active" && responder.retry && Date.parse(responder.retry.nextAt) > Date.now()) { armAutoRetry(connection, responder); return; }
   idleWakes.get(key)?.();
-  const drain = drainLoop(connection).finally(() => drains.delete(key));
+  const drain = drainLoop(connection).catch(async error => {
+    if (error instanceof ConversationOwnershipError) throw error;
+    const state = await getAutoRespond(connection.project.id, connection.conversationId);
+    if (state?.status !== "active") throw error;
+    await retryAutoResponse(connection, error);
+  }).finally(() => drains.delete(key));
   drains.set(key, drain); return drain;
 }
 
@@ -757,6 +815,13 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
   const transcript = await conversationTranscriptPayload(connection.project.id, connection.engine, old.session.id, await listHarnessSessions(connection.project), old.session.messages);
   const id = randomUUID();
   const { accountIds } = await getScopeSecretAccounts("conversation", conversationScopeId(connection.engine, old.session.id));
+    if (next?.dispatchState === "starting" && !startingIds.has(next.id) && responder?.status === "active") {
+      await writable(connection);
+      claimQueuedPrompt(next.id);
+      recordTurnFailure(connection.engine, connection.shared.session.id, "A restart interrupted the previous prompt start. Inspect current state before continuing; do not replay actions with uncertain outcomes.");
+      refreshHarnessPromptQueue(connection);
+      continue;
+    }
   const shared = await openHarnessSession(engine, { projectId: connection.project.id, cwd: connection.cwd, sessionId: id, conversationId: connection.conversationId, accountIds });
   if (internal) {
     shared.turnInFlight += 1;
@@ -1043,7 +1108,7 @@ export async function handleHarnessChatMessage(connection: HarnessChatConnection
       await serializeMutation(connection, () => bobGoalCommand(connection, message.message ?? "", Boolean(message.images?.length || message.files?.length)));
       return;
     }
-    await serializeMutation(connection, () => enqueue(connection, message.message ?? "", message.images ?? [], message.files ?? [], message.requestId, message.queueSettings)); return;
+    await serializeMutation(connection, () => enqueue(connection, message.message ?? "", message.images ?? [], message.files ?? [], message.requestId, message.queueSettings, message.scheduledAutoRespond)); return;
   }
   if (message.type === "autoRespond") {
     if (!message.autoRespond) throw new Error("Auto respond settings are required");
@@ -1057,6 +1122,7 @@ export async function handleHarnessChatMessage(connection: HarnessChatConnection
   if (await controls(connection, message)) return;
   throw new Error(`Unknown chat command: ${message.type}`);
 }
+    clearAutoRetry(key);
 
 /** Ownership conflicts and malformed commands are answers to the client, not server faults. */
 function logChatFailure(context: string, connection: HarnessChatConnection, error: unknown): void {

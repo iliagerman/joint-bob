@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import type { AutoRespondConfig } from "../conversation-auto-respond.js";
 import { getClusterNode } from "../cluster.js";
 import { getConversationRecord } from "../conversation-records.js";
 import { cancelQueuedPrompt } from "../prompt-queue.js";
@@ -14,6 +15,7 @@ export interface ConversationPromptOptions {
   /** Trusted automation assignment, forwarded only over the signed local socket. */
   automationProfile?: { accountId: string; profileId: string | null };
   projectId: string;
+  scheduledAutoRespond?: AutoRespondConfig;
   author?: MessageAuthor;
   engine: string;
   sessionId: string;
@@ -67,6 +69,7 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
         const queueSettings = options.queueSettings?.(event.status);
         socket.send(JSON.stringify({
           type: "prompt", message: options.message, requestId: options.requestId, ...(queueSettings ? { queueSettings } : {}),
+          ...(options.scheduledAutoRespond ? { scheduledAutoRespond: options.scheduledAutoRespond } : {}),
           ...(options.images?.length ? { images: options.images } : {}), ...(options.files?.length ? { files: options.files } : {}),
         }));
       }
@@ -78,9 +81,10 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
         options.onStarted?.();
         if (options.until === "started") finish();
       }
-      if (event.type === "promptCompleted" && event.queueId === queueId) { options.onCompleted?.(); finish(); }
+      if (event.type === "promptCompleted" && event.queueId === queueId && !options.scheduledAutoRespond) { options.onCompleted?.(); finish(); }
+      if (options.scheduledAutoRespond && queueId && event.type === "autoRespond" && event.state?.sourcePromptId === queueId && event.state.status !== "active") { options.onCompleted?.(); finish(); }
       if (event.type === "queuedPromptCancelled" && event.queueId === queueId) finish(new Error(`${label} prompt was cancelled`));
-      if (event.type === "promptFailed" && event.queueId === queueId || event.type === "error") finish(new Error(event.error));
+      if ((event.type === "promptFailed" && event.queueId === queueId || event.type === "error") && !(options.scheduledAutoRespond && queueId)) finish(new Error(event.error));
     });
   });
 }

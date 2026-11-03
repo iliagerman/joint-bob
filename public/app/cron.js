@@ -1,5 +1,6 @@
 import { harnessIdFromPath, harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
+import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { createAutomationProfilePicker } from "./provider-profile-picker.js";
 import { createAutomationTagPicker } from "./automation-tag-picker.js";
 import { state } from "./state.js";
@@ -18,12 +19,16 @@ let context;
 let editing = null;
 let availableHarnesses = [];
 let availableModels = [];
+let autoReplyDefaults;
 const inputOf = ({ id, nextRun, lastRun, ...input }) => input;
 const command = (nodeId, value) => api("/api/cron", { method: "POST", body: JSON.stringify({ nodeId, command: value }) });
 
 const profilePicker = createAutomationProfilePicker(field("model").closest("label"), "cron-provider-profile", () => command(field("ownerNodeId").value, { action: "profiles", projectId: context.projectId }));
 const tagPicker = createAutomationTagPicker(document.querySelector("#cronAutomationTags"), "cron-tags");
-field("ownerNodeId").addEventListener("change", () => void profilePicker.refresh());
+const autoReplyProfilePicker = createAutomationProfilePicker(field("autoReplyHarness").closest("label"), "cron-auto-reply-profile", () => command(field("ownerNodeId").value, { action: "profiles", projectId: context.projectId }));
+field("ownerNodeId").addEventListener("change", () => {
+  void Promise.all([profilePicker.refresh(), autoReplyProfilePicker.refresh()]).catch(error => { errorText.textContent = error.message; });
+});
 
 export async function openScheduledTasks(projectId, session = null, assistant = null) {
   if (!state.harnesses.length) state.harnesses = (await api("/api/harnesses")).harnesses;
@@ -43,8 +48,8 @@ export async function openScheduledTasks(projectId, session = null, assistant = 
   newTaskButton.disabled = true;
   dialog.showModal();
   try {
-    const [body, harnessBody, modelBody] = await Promise.all([
-      api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`), api("/api/harnesses"), api("/api/models"),
+    const [body, harnessBody, modelBody, defaults] = await Promise.all([
+      api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`), api("/api/harnesses"), api("/api/models"), api("/api/auto-respond/defaults"),
     ]);
     field("ownerNodeId").replaceChildren(...body.nodes.map(node => {
       const option = new Option(`${node.name}${node.online ? "" : " (offline)"}`, node.id);
@@ -58,6 +63,7 @@ export async function openScheduledTasks(projectId, session = null, assistant = 
       field("ownerNodeId").value = ownerNodeId;
       field("ownerNodeId").disabled = true;
     }
+    autoReplyDefaults = defaults;
     availableHarnesses = harnessBody.harnesses;
     field("engine").replaceChildren(...availableHarnesses.map(harnessOption));
     availableModels = modelBody.models;
@@ -115,7 +121,7 @@ async function refreshTasks() {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
       ["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
-      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview ? "Counts toward review" : "Silent"], ["Conversation history", task.hideFromHistory ? "Hidden" : "Visible when Show scheduled is on"]];
+      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["Auto reply", task.autoRespond ? `${task.autoRespond.modelId} · ${task.autoRespond.maxResponses ?? "Unlimited"} replies` : "Off"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview ? "Counts toward review" : "Silent"], ["Conversation history", task.hideFromHistory ? "Hidden" : "Visible when Show scheduled is on"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -224,6 +230,45 @@ function renderExecutionFields(modelKey = "", reasoning = field("reasoning").val
   if ([...field("reasoning").options].some(option => option.value === reasoning)) field("reasoning").value = reasoning;
   document.querySelector("#cronReasoningLabel").childNodes[0].nodeValue = "Reasoning";
 }
+function fillAutoReplyModels(saved) {
+  const harness = availableHarnesses.find(candidate => candidate.id === field("autoReplyHarness").value);
+  if (harness) fillModelOptions(harness, availableModels, field("autoReplyModel"), field("autoReplyThinking"), saved);
+}
+function showAutoReplyFields() {
+  const section = document.querySelector("#cronAutoReply");
+  section.hidden = !field("autoReplyEnabled").checked;
+  section.disabled = section.hidden;
+  field("autoReplyInstructions").required = !section.hidden;
+}
+function editAutoReply(saved) {
+  const harnesses = availableHarnesses.filter(harness => harness.runtimeConfigured);
+  field("autoReplyHarness").replaceChildren(...harnesses.map(harnessOption));
+  field("autoReplyHarness").value = saved?.harnessId ?? field("engine").value;
+  fillAutoReplyModels(saved);
+  field("autoReplyEnabled").checked = Boolean(saved);
+  field("autoReplyInstructions").value = saved?.instructions ?? autoReplyDefaults.instructions;
+  field("autoReplyStopInstructions").value = saved?.stopInstructions ?? autoReplyDefaults.stopInstructions;
+  field("autoReplyLimit").value = saved ? saved.maxResponses ?? "" : autoReplyDefaults.maxResponses;
+  field("autoReplyUseTools").checked = saved?.useTools !== false;
+  void autoReplyProfilePicker.refresh(saved?.providerProfileId ?? null).catch(error => { errorText.textContent = error.message; });
+  showAutoReplyFields();
+}
+function autoReplyConfig() {
+  if (!field("autoReplyEnabled").checked) return null;
+  const harness = availableHarnesses.find(candidate => candidate.id === field("autoReplyHarness").value);
+  if (!harness) throw new Error("Choose an auto reply harness");
+  const { provider, modelId } = selectedModel(field("autoReplyModel"));
+  const instructions = field("autoReplyInstructions").value.trim();
+  if (!instructions) throw new Error("Write instructions for auto reply");
+  return {
+    providerProfileId: autoReplyProfilePicker.value(), harnessId: harness.id,
+    provider: provider || harness.configuration?.fixedProvider || harness.defaults.provider, modelId,
+    thinkingLevel: field("autoReplyThinking").value, instructions,
+    stopInstructions: field("autoReplyStopInstructions").value.trim(),
+    maxResponses: field("autoReplyLimit").value ? Number(field("autoReplyLimit").value) : null,
+    useTools: field("autoReplyUseTools").checked,
+  };
+}
 function editTask(task) {
   editing = task;
   const selectedEngine = context.assistant?.executionSettings?.harnessId || task?.engine || context.session?.harnessId || context.session?.engine
@@ -265,6 +310,7 @@ function editTask(task) {
     for (const checkbox of form.querySelectorAll('[name="days"]')) checkbox.checked = !task.schedule.days || task.schedule.days.includes(Number(checkbox.value));
   }
   field("engine").disabled = false;
+  editAutoReply(task?.autoRespond);
   updateCronContext();
   showScheduleFields(); field("name").focus();
 }
@@ -292,7 +338,7 @@ form.addEventListener("submit", async event => {
     const [provider, modelId] = field("model").value.split("|");
     const session = boundSession();
     const input = {
-      providerProfileId: profilePicker.value(), tags: tagPicker.getValue(),
+      providerProfileId: profilePicker.value(), tags: tagPicker.getValue(), autoRespond: autoReplyConfig(),
       projectId: context.projectId, name: field("name").value, prompt: field("prompt").value,
       ownerNodeId: field("ownerNodeId").value, engine: context.assistant?.executionSettings?.harnessId ?? field("engine").value,
       assistantId: context.assistant?.id ?? null,
@@ -313,6 +359,12 @@ form.addEventListener("submit", async event => {
     showList(); await refreshTasks();
   } catch (error) { errorText.textContent = error.message; }
   finally { submit.disabled = false; }
+});
+field("autoReplyEnabled").addEventListener("change", showAutoReplyFields);
+field("autoReplyHarness").addEventListener("change", () => fillAutoReplyModels());
+field("autoReplyModel").addEventListener("change", () => {
+  const harness = availableHarnesses.find(candidate => candidate.id === field("autoReplyHarness").value);
+  if (harness) fillThinkingOptions(harness, availableModels, field("autoReplyModel"), field("autoReplyThinking"), field("autoReplyThinking").value);
 });
 field("frequency").addEventListener("change", showScheduleFields);
 field("quietEnabled").addEventListener("change", showScheduleFields);

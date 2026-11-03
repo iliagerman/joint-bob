@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AutoRespondConfig } from "../../conversation-auto-respond.js";
 import { listLocalUsers, replicatedUserByAccount, type AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
 import { ensureConversationRecord, getConversationRecord, listConversationSegments } from "../../conversation-records.js";
@@ -166,6 +167,7 @@ export interface AssistantAutomationTurnOptions {
   automationProfile?: { accountId: string; profileId: string | null };
   images?: PromptAttachment[];
   files?: PromptAttachment[];
+  scheduledAutoRespond?: AutoRespondConfig;
   prepare?: (destination: AssistantDestination) => Promise<void>;
   onStarted?: (destination: AssistantDestination) => void;
   recentMessages?: () => Promise<string[]>;
@@ -178,7 +180,7 @@ async function executeAssistantTurn(accountId: string, entry: AssistantEntry, se
   if (!created) return (await getPersonalAssistantTurn(accountId, entry.id, input.requestId))!;
   try {
     await options?.prepare?.(destination);
-    await queueConversationPrompt({ projectId: entry.projectId, engine: destination.engine, sessionId: destination.sessionId, author: { accountId: session.accountId, email: session.email, username: session.username, homeNodeId: session.homeNodeId }, message: destination.message, requestId: input.requestId, label: options?.label ?? "Assistant", until: "completed", automationProfile: options?.automationProfile, images: options?.images, files: options?.files, onStarted: () => options?.onStarted?.(destination), ...(entry.executionSettings ? { queueSettings: () => entry.executionSettings! } : {}) });
+    await queueConversationPrompt({ projectId: entry.projectId, engine: destination.engine, sessionId: destination.sessionId, author: { accountId: session.accountId, email: session.email, username: session.username, homeNodeId: session.homeNodeId }, message: destination.message, requestId: input.requestId, label: options?.label ?? "Assistant", until: "completed", scheduledAutoRespond: options?.scheduledAutoRespond, automationProfile: options?.automationProfile, images: options?.images, files: options?.files, onStarted: () => options?.onStarted?.(destination), ...(entry.executionSettings ? { queueSettings: () => entry.executionSettings! } : {}) });
     const record = await getConversationRecord(entry.projectId, destination.engine, destination.sessionId);
     const segments = await listConversationSegments(entry.projectId, record?.conversationId ?? destination.sessionId);
     const active = segments.at(-1) ?? { engine: destination.engine, sessionId: destination.sessionId };

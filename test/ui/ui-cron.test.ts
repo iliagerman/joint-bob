@@ -37,6 +37,11 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");
     form.requestSubmit(); return true;
   })()`), true);
+    f.autoReplyEnabled.checked = true; f.autoReplyEnabled.dispatchEvent(new Event("change", { bubbles: true }));
+    f.autoReplyHarness.value = "claude"; f.autoReplyHarness.dispatchEvent(new Event("change", { bubbles: true }));
+    f.autoReplyInstructions.value = "Drive the task and verify the result";
+    f.autoReplyStopInstructions.value = "The requested checks pass";
+    f.autoReplyLimit.value = "12";
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("sonnet") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
   assert.equal(await page.getByTestId("cron-run").isVisible(), true, "Paused schedules need a Run now action");
   assert.match(await page.locator("#cronList").innerText(), /REVIEW\s+Silent/);
@@ -50,6 +55,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     f.frequency.dispatchEvent(new Event("change", { bubbles: true }));
     if (!document.querySelector("#cronWeekdayLabel").hidden) throw Error("Daily schedule shows weekday");
     form.requestSubmit(); return true;
+    if (!f.autoReplyEnabled.checked || f.autoReplyHarness.value !== "claude" || f.autoReplyInstructions.value !== "Drive the task and verify the result" || f.autoReplyStopInstructions.value !== "The requested checks pass" || f.autoReplyLimit.value !== "12") throw Error("Saved auto reply settings not restored");
   })()`), true);
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Edited project cron"));
   await page.locator('[data-testid="cron-toggle"]').click();

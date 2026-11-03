@@ -5,14 +5,16 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type WebSocket from "ws";
-import { assistantMessageKey, autoRespondInput, parseAutoRespondDecision, responderPrompt, type AutoRespondConfig } from "../src/conversation-auto-respond.js";
+import { enableAutoRespond, disableAutoRespond, retryAutoRespond, assistantMessageKey, autoRespondInput, parseAutoRespondDecision, responderPrompt, type AutoRespondConfig } from "../src/conversation-auto-respond.js";
 import { addProject } from "../src/store.js";
 import { runAutoResponder } from "../src/server/auto-respond-run.js";
 import { getSettings, updateSettings } from "../src/settings.js";
-import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
+import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
 import { claudeProjectDir } from "../src/session-paths.js";
 import type { ChatMessage } from "../src/types.js";
+import { getHarnessRuntime } from "../src/harnesses.js";
+import type { HarnessSession } from "../src/harnesses/runtime.js";
 
 const config: AutoRespondConfig = { harnessId: "kiro", provider: "kiro", modelId: "default", thinkingLevel: "medium", instructions: "Keep going.", stopInstructions: "- Stop when finished.", maxResponses: 2, useTools: true };
 
@@ -43,6 +45,23 @@ test("the prompt carries the rules, the opening request and the agent's last mes
   assert.match(prompt, /may use your tools/, "with tools on, the responder is told it may check the work");
   assert.match(prompt, /Do not change anything/);
   assert.doesNotMatch(responderPrompt({ ...config, useTools: false }, turns, 1), /may use your tools/);
+});
+
+test("custom stop rules are the only model-selected stopping conditions", () => {
+  const prompt = responderPrompt({ ...config, stopInstructions: "", maxResponses: null }, [{ role: "assistant", text: "No progress yet." }], 1);
+  assert.match(prompt, /No stop criteria.*must RESPOND/i);
+  assert.doesNotMatch(prompt, /or repeated recovery attempts with no progress/);
+  assert.doesNotMatch(prompt, /or proof of no progress/);
+});
+
+test("editing a running scheduled responder preserves its schedule identity", async () => {
+  const initial = await enableAutoRespond("schedule-project", "schedule-conversation", config, null, "creator", "queued-id", "run-id");
+  await retryAutoRespond(initial.projectId, initial.conversationId, "Provider is temporarily unavailable");
+  const saved = await enableAutoRespond(initial.projectId, initial.conversationId, { ...config, instructions: "Updated instructions" }, null, "creator");
+  assert.equal(saved.sourcePromptId, "queued-id");
+  assert.equal(saved.sourceRequestId, "run-id");
+  assert.equal(saved.retry, null);
+  await disableAutoRespond(initial.projectId, initial.conversationId);
 });
 
 test("an assistant message is keyed by what it says and how many user messages preceded it", () => {
@@ -281,6 +300,186 @@ test("an active auto respond resumes on its own after the node restarts", async 
     for (const socket of sockets) socket.close();
     if (server) await stopDevNode(server);
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("transient responder failures and malformed decisions retry without consuming turns", { timeout: 90_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "auto-respond-retry-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  let socket: WebSocket | undefined;
+  try {
+    const responder = path.join(root, "responder.mjs");
+    const { environment, node } = await prepareKiroNode(root, responder);
+    await writeFile(responder, `let attempts = 0;
+      export default async function () {
+        attempts++;
+        if (attempts === 1) throw new Error("Temporary provider failure");
+        if (attempts <= 3) return "not a decision";
+        return "DECISION: RESPOND\\nREASON: recovered\\n---\\nContinue safely.";
+      }`);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    const auth = await signIn(environment, node);
+    const chat = openChat(node.url, auth.cookie, projectNamed(node, "Joint Bob").id, "kiro:new");
+    socket = chat.socket;
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "ready"));
+    socket.send(JSON.stringify({ type: "prompt", message: "Complete the work" }));
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "agent_end"));
+    socket.send(JSON.stringify({ type: "autoRespond", autoRespond: { enabled: true, config: { ...config, maxResponses: 1 } } }));
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "autoRespond" && (message.state as { retry?: unknown })?.retry));
+    socket.send(JSON.stringify({ type: "abort" }));
+    await waitFor(chat.messages, () => autoStates(chat.messages).at(-1)?.stopKind === "user-stopped");
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    assert.equal(chat.messages.filter(message => message.type === "userMessage" && message.auto).length, 0, "Stop cancels a pending retry");
+    socket.send(JSON.stringify({ type: "autoRespond", autoRespond: { enabled: true, config: { ...config, maxResponses: 1 } } }));
+    await waitFor(chat.messages, () => autoStates(chat.messages).some(state => state?.stopKind === "limit"), 60_000);
+    assert.equal(chat.messages.filter(message => message.type === "userMessage" && message.auto).length, 1);
+    assert.ok(chat.messages.some(message => message.type === "autoRespond" && (message.state as { retry?: unknown })?.retry));
+    assert.equal(autoStates(chat.messages).some(state => state?.stopKind === "responder-failed"), false);
+  } finally {
+    socket?.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed agent turn is inspected and recovered rather than disabling auto reply", { timeout: 60_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "auto-reply-turn-failed-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  let socket: WebSocket | undefined;
+  try {
+    const responder = path.join(root, "responder.mjs");
+    const { environment, node } = await prepareKiroNode(root, responder);
+    await writeFile(path.join(environment.home, "bin", "kiro-fixture"), fixtureSource.replace('const text = request.params.prompt[0].text;', 'const text = request.params.prompt[0].text; if (text === "retry-trigger") return send({jsonrpc:"2.0",id:request.id,error:{code:-32603,message:"Temporary agent turn failure"}});'));
+    await writeFile(responder, `let attempts = 0;
+      export default async function (input) {
+        attempts++;
+        if (attempts === 1) return "DECISION: RESPOND\\nREASON: continue\\n---\\nretry-trigger";
+        if (!input.prompt.includes("Temporary agent turn failure")) throw new Error("Missing failed-turn evidence");
+        return "DECISION: RESPOND\\nREASON: recover safely\\n---\\nInspect partial results before continuing.";
+      }`);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    const auth = await signIn(environment, node);
+    const chat = openChat(node.url, auth.cookie, projectNamed(node, "Joint Bob").id, "kiro:new");
+    socket = chat.socket;
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "ready"));
+    socket.send(JSON.stringify({ type: "prompt", message: "Finish work" }));
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "agent_end"));
+    socket.send(JSON.stringify({ type: "autoRespond", autoRespond: { enabled: true, config } }));
+    await waitFor(chat.messages, () => autoStates(chat.messages).some(state => state?.stopKind === "limit"), 40_000);
+    assert.deepEqual(chat.messages.filter(message => message.type === "userMessage" && message.auto).map(message => message.text), ["retry-trigger", "Inspect partial results before continuing."]);
+    assert.equal(autoStates(chat.messages).some(state => state?.stopKind === "turn-failed"), false);
+  } finally {
+    socket?.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scheduled auto reply survives a restart without a browser and finishes its original run", { timeout: 90_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "scheduled-auto-reply-restart-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  let db: DatabaseSync | undefined;
+  try {
+    const responder = path.join(root, "responder.mjs");
+    const { environment, node } = await prepareKiroNode(root, responder);
+    await writeFile(responder, `export default async function () {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return "DECISION: RESPOND\\nREASON: continue verification\\n---\\nInspect current state and continue.";
+    }`);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    let auth = await signIn(environment, node);
+    const project = projectNamed(node, "Joint Bob");
+    const created = await api<{ task: { id: string } }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input: {
+      projectId: project.id, name: "Auto scheduled", prompt: "Complete and verify the work", engine: "kiro", ownerNodeId: node.nodeId,
+      sessionId: null, enabled: false, autoRespond: { ...config, maxResponses: 3 },
+      schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" },
+    } } });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const taskId = created.body.task.id;
+    assert.equal((await api(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "run", id: taskId, projectId: project.id } })).status, 200);
+    db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    const responderState = () => db!.prepare("SELECT status, stop_kind, responses FROM conversation_auto_responders WHERE project_id = ?").get(project.id) as { status: string; stop_kind: string; responses: number } | undefined;
+    const history = () => db!.prepare("SELECT status, error FROM cron_runs WHERE task_id = ?").all(taskId) as Array<{ status: string; error: string | null }>;
+    await waitFor([], () => responderState()?.responses === 1);
+    assert.equal(history()[0].status, "running", "first assistant completion does not settle the scheduled run");
+    await stopDevNode(server);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    await waitFor([], () => responderState()?.stop_kind === "limit", 60_000);
+    assert.equal(responderState()?.responses, 3, "restart preserves the turn allowance without opening a browser");
+    await waitFor([], () => history()[0].status === "succeeded");
+    assert.equal(history().length, 1, "restart resumes the original run, not a duplicate dispatch");
+  } finally {
+    db?.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scheduled auto-reply runs sharing a conversation do not replace each other's driver", { timeout: 90_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "scheduled-auto-reply-queue-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  let socket: WebSocket | undefined;
+  let db: DatabaseSync | undefined;
+  try {
+    const responder = path.join(root, "responder.mjs");
+    const { environment, node } = await prepareKiroNode(root, responder);
+    await writeFile(responder, `let calls = 0; export default async function () {
+      if (++calls === 1) throw new Error("Temporary responder outage");
+      return "DECISION: RESPOND\\nREASON: continue\\n---\\nVerify and continue.";
+    }`);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    const auth = await signIn(environment, node);
+    const project = projectNamed(node, "Joint Bob");
+    const chat = openChat(node.url, auth.cookie, project.id, "kiro:new");
+    socket = chat.socket;
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "ready"));
+    const sessionId = String(chat.messages.find(message => message.type === "ready")!.sessionId);
+    socket.send(JSON.stringify({ type: "prompt", message: "Prepare the conversation" }));
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "agent_end"));
+    const taskIds: string[] = [];
+    for (const name of ["First driver", "Second driver"]) {
+      const created = await api<{ task: { id: string } }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input: {
+        projectId: project.id, name, prompt: name, engine: "kiro", ownerNodeId: node.nodeId, sessionId, enabled: false,
+        autoRespond: { ...config, maxResponses: 1 }, schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" },
+      } } });
+      assert.equal(created.status, 200, JSON.stringify(created.body));
+      taskIds.push(created.body.task.id);
+    }
+    await api(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "run", id: taskIds[0], projectId: project.id } });
+    await waitFor(chat.messages, () => chat.messages.some(message => message.type === "autoRespond" && (message.state as { retry?: unknown })?.retry));
+    await api(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "run", id: taskIds[1], projectId: project.id } });
+    db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    const completed = () => db!.prepare("SELECT COUNT(*) AS count FROM cron_runs WHERE status = 'succeeded' AND task_id IN (?, ?)").get(...taskIds)!.count;
+    await waitFor(chat.messages, () => completed() === 2, 40_000);
+    assert.equal(chat.messages.filter(message => message.type === "userMessage" && message.auto).length, 2);
+  } finally {
+    db?.close(); socket?.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("responder timeout settles even when its prompt has not returned", async context => {
+  const runtime = await getHarnessRuntime("kiro");
+  let releasePrompt!: () => void;
+  const promptPending = new Promise<void>(resolve => { releasePrompt = resolve; });
+  let disposed = false;
+  context.mock.method(runtime, "open", async () => ({
+    settings: () => ({ provider: config.provider, modelId: config.modelId, reasoning: config.thinkingLevel }),
+    subscribe: () => () => {}, configure: async () => {}, preflight: async () => {},
+    prompt: async () => promptPending, cancel: async () => {}, isBusy: () => false,
+    dispose: () => { disposed = true; }, messages: [],
+  }) as unknown as HarnessSession);
+  context.mock.method(runtime, "validateSettings", async () => {});
+  const nativeSetTimeout = globalThis.setTimeout;
+  context.mock.method(globalThis, "setTimeout", ((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => nativeSetTimeout(callback, ms === 20 * 60_000 ? 0 : ms, ...args)) as typeof setTimeout);
+  const outcome = runAutoResponder({ projectId: "timeout-project", conversationId: "timeout-conversation", cwd: process.cwd(), creatorAccountId: "creator", config, prompt: "Decide", signal: new AbortController().signal, onStep: () => {} }).then(() => "completed", error => (error as Error).message);
+  try {
+    assert.equal(await Promise.race([outcome, new Promise<string>(resolve => nativeSetTimeout(() => resolve("still waiting for prompt"), 100))]), "The auto responder timed out");
+    assert.equal(disposed, true);
+  } finally {
+    releasePrompt();
+    await outcome;
   }
 });
 

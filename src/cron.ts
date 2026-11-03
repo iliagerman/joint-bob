@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { autoRespondConfigSchema } from "./conversation-auto-respond.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -37,6 +38,7 @@ export const cronInputSchema = z.object({
   engine: z.string().refine(isHarnessId, "Harness ID is invalid")
     .refine(id => listDiscoveredHarnesses().some(adapter => adapter.id === id && adapter.runtime), "Harness is not registered on this node"),
   model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
+  autoRespond: autoRespondConfigSchema.nullable().optional(),
   sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false), markForReview: z.boolean().default(false), hideFromHistory: z.boolean().default(false),
   schedule: scheduleSchema,
 }).strict().superRefine((input, context) => {
@@ -188,10 +190,10 @@ export class CronStore {
   finish(id: string, status: "succeeded" | "failed", error: string | null): void {
     this.db.prepare("UPDATE cron_runs SET status = ?, error = ?, finished_at = ? WHERE id = ?").run(status, error, Date.now(), id);
   }
-  recover(now = Date.now()): void {
+  recover(now = Date.now(), continuingTaskIds: ReadonlySet<string> = new Set()): void {
     // Never replay an uncertain dispatch. Settle interrupted runs, then let
     // enabled schedules without pause-on-failure continue at their next due time.
-    for (const task of this.list()) if (this.active(task.id)) {
+    for (const task of this.list()) if (this.active(task.id) && !continuingTaskIds.has(task.id)) {
       if (task.enabled && task.pauseOnFailure) {
         const { id, nextRun, lastRun, ...input } = task;
         this.update(id, { ...input, enabled: false }, now);

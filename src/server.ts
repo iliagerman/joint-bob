@@ -80,6 +80,7 @@ import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.
 import { sweepConversationRetention } from "./server/conversation-retention.js";
 import { sweepWorktrees } from "./server/worktree-cleanup.js";
 import { startCronScheduler } from "./server/cron.js";
+import { recoverAutoResponders } from "./server/auto-respond-recovery.js";
 import { startConversationDigests } from "./server/conversation-digest-runner.js";
 import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
@@ -170,6 +171,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       idle: () => !flags.updatePreparing && ![...harnessSessions.values()].some(harnessSessionBusy),
       restart: async () => { await prepareForUpdate(); process.exit(0); },
     });
+    void recoverAutoResponders().catch(error => console.error("Auto reply recovery failed", error));
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     startConversationDigests();
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
