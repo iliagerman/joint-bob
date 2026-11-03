@@ -15,7 +15,7 @@ The **Resources** tab lists what the assistant may use. Every topic it opens get
 - **MCP servers.** Choose which installed servers the assistant can call.
 - **Secrets.** Attach secret accounts. Values stay in Settings → Secrets and are never shown. The decision model's key can't be detached while that model is selected.
 
-Only your private chat and its topics use these resources. Groups and requests from other people never do.
+Your private chat, its topics and Telegram use these resources. Relay groups and direct requests from other people never do.
 
 ## Who can find you
 
@@ -41,31 +41,44 @@ Anyone on a relay can create a group and invite people or assistants. Nobody joi
 
 A member assistant reads new messages and tells its owner about what matters. Its owner can review what it saw and decided.
 
+When a message expects a reply from you, the assistant writes a draft and puts it in **Activity**. Choose **Post**, **Edit** or **Discard**; nothing is sent until you post it. Drafts are written from your instructions and memory, with every tool removed, so a message can't make the assistant run anything. The draft can't look things up, such as your calendar. Each draft counts as a decision check toward your daily limit. Direct requests work the same way.
+
 ## Direct requests
 
 You can ask someone's assistant for one of its public actions without sharing a group. Each requester gets their own thread. Asking for something that isn't listed gets a reply saying so.
 
-## Reach an assistant from Telegram
+## Telegram
 
-A webhook can route calls through an assistant. Each call becomes a message to it, with the same skills, MCP servers, files and memory as your own chat.
+An assistant can have its own Telegram bot. Connect it under **Resources → Telegram**:
 
-To use it from Telegram:
+1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot` and copy the token.
+2. Paste the token and choose **Connect**. Joint Bob sets up the bot for you. The machine needs an address Telegram can reach, such as a relay.
+3. Open the one-time link you get, to link your own Telegram account. It works once and expires after 10 minutes. Until you link one, the bot answers nobody.
 
-1. Create a bot with [@BotFather](https://t.me/BotFather), and save its token in Settings → Secrets as a secret account with the variable `TELEGRAM_BOT_TOKEN`.
-2. On the assistant's chat, choose **Webhook**. Under **Access**, select that secret account and turn on **Reply in Telegram**. To limit who can reach it, turn on **Only listed senders**, choose **Use Telegram bot fields**, and list the Telegram user IDs.
-3. Save, copy the webhook's address, and tell Telegram to use it:
+**Who shares what:**
 
-   ```
-   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<WEBHOOK_ADDRESS>"
-   ```
+- **Your own private chat with the bot** is the same assistant as the app, so it can continue what you started there.
+- **A Telegram group** is one shared context for everyone in it, separate from your private conversations. The decision model decides whether each message is for the assistant. If it is, the answer posts directly to the group; other messages stay as context.
+- **Someone else you approve** gets their own conversations in their private chat with the bot.
 
-The webhook's address must be reachable from the internet, for example through a relay.
+To let the bot read a whole group, turn off its privacy mode in @BotFather with `/setprivacy` and add it to the group again, or make it a group admin. Otherwise it only sees commands and replies to it.
 
-Each Telegram chat keeps its own conversations. For every message after the first, the decision model (Jev or Laya, as set in Settings) reads what was written and either continues one of that chat's conversations or starts a new one. It doesn't choose from your private chat's topics or from other chats. The answer goes back to the chat, formatted for Telegram. You can read every exchange in the assistant's chat, and a reply that can't be sent is listed in the webhook's Calls.
+**Who can reach it.** Code checks every message before the decision model or an agent runs:
 
-If the decision model can't answer, the message isn't handled and the chat is told to send it again.
+- Each call must carry a secret that Joint Bob gave Telegram when connecting. Anything else is refused.
+- A private chat works only for you and people you approve. Anyone else gets one "This bot is private" reply and appears under **Waiting for approval**.
+- A group works only if you approved it. Adding the bot to a group yourself approves it. If anyone else adds it, the bot leaves and the group waits for your approval.
+- Only Joint Bob uses the bot's token. The agent can't read it.
+- A message Telegram sends twice is handled once.
+- Removing or blocking someone applies from their next message.
 
-Other webhooks work the same way, without the reply: each sender on the list keeps their own conversations, or the whole webhook shares them when it has no list.
+Everyone in an approved group can use what the assistant can use, including its tools, secrets, files and memory, and can ask about them. That includes people who join later; you get a notice when someone joins. For a group with other people, connect a separate assistant that has only what you're happy to share. Anyone who takes over your Telegram account becomes you to the bot, so turn on Telegram's two-step verification.
+
+If the decision model can't answer, a private chat is told to send the message again, and a group gets no reply. Telegram can only be read as text for now; photos and voice messages aren't passed on.
+
+## Other webhooks
+
+A webhook can also route calls through an assistant, with the same skills, MCP servers, files and memory as your own chat. Each sender on its list keeps their own conversations, or the whole webhook shares them when it has no list. The decision model continues one of those conversations or starts a new one, and the answer stays in Joint Bob.
 
 ## Public actions
 
