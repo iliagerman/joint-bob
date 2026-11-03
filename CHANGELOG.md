@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.203.0 — 2026-11-02
+
+- Added Webhooks to each project's menu, opening its files, skills, memory, and calls directly without Settings. New webhooks target that project automatically.
+
 ## 2.202.0 — 2026-11-02
 
 - Cluster exceptions on Assignments: a profile or pool can now be chosen for the projects shared through one cluster or relay group. It is your own choice, syncs to your twins, and never asks the cluster or its members, so an offline member cannot fail it. Cluster pool attachment on the Pools tab is no longer offered; an older cluster-wide assignment still applies.

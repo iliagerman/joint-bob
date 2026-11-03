@@ -46,6 +46,7 @@ let secretAccounts = [];
 let selectedSecretIds = new Set();
 let deliveries = [];
 let assistantTarget = null;
+let projectTarget = null;
 let webhooksLoading = null;
 
 const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComponent(field.owner.value)}`;
@@ -154,7 +155,7 @@ async function refresh() {
   if (revision !== ownerRevision) return;
   webhooks = assistantTarget
     ? body.webhooks.filter(hook => hook.target.kind === "assistant" && hook.target.assistantId === assistantTarget.id)
-    : body.webhooks;
+    : projectTarget ? body.webhooks.filter(hook => hook.target.projectId === projectTarget.id) : body.webhooks;
   telegramSenderFields = body.telegramSenderFields ?? [];
   await list.reload();
 }
@@ -170,7 +171,8 @@ async function loadProjects() {
   const revision = ownerRevision;
   const body = await api(endpoint("/projects"));
   if (revision !== ownerRevision) return;
-  projects = body.projects;
+  projects = projectTarget ? body.projects.filter(project => project.id === projectTarget.id) : body.projects;
+  if (projectTarget && !projects.length) throw new Error("This project is unavailable on the selected webhook owner");
   projectNames = new Map(projects.map((project) => [project.id, project.name]));
 }
 
@@ -330,7 +332,7 @@ function syncKind() {
   field.conversationLabel.hidden = !conversation;
   byId("webhooksAssistantTargetLabel").hidden = !assistant;
   byId("webhooksTitleTemplateLabel").hidden = conversation || assistant;
-  field.project.disabled = assistant;
+  field.project.disabled = Boolean(projectTarget) || assistant;
   field.harness.disabled = conversation || assistant;
   field.harness.closest("label").hidden = assistant;
   field.model.closest("label").hidden = assistant;
@@ -344,7 +346,7 @@ function syncKind() {
 /** Puts a webhook's saved values (or the defaults for a new one) into the Setup and Access fields. */
 async function fillFields(hook) {
   const target = hook?.target ?? assistantTarget;
-  fillProjects(target?.projectId);
+  fillProjects(target?.projectId ?? projectTarget?.id);
   const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`);
   await tagPicker.setWorkspace(project.project.type ?? "personal");
   tagPicker.setValue(hook?.tags ?? { managedTagIds: [], manualTags: [] });
@@ -356,7 +358,6 @@ async function fillFields(hook) {
   const assistantOption = [...field.kind.options].find(option => option.value === "assistant");
   assistantOption.hidden = !assistantTarget && target?.kind !== "assistant";
   field.kind.disabled = Boolean(assistantTarget || target?.kind === "assistant");
-  field.project.disabled = field.kind.value === "assistant";
   if (field.kind.value === "assistant") byId("webhooksAssistantTargetLabel").textContent = assistantTarget?.name
     ? `Every call routes through ${assistantTarget.name}; its decision model chooses the conversation.`
     : `This webhook routes through personal assistant ${target?.kind === "assistant" ? target.assistantId : ""}.`;
@@ -655,6 +656,41 @@ export async function loadWebhooks() {
   })();
   webhooksLoading = loading;
   try { await loading; } finally { if (webhooksLoading === loading) webhooksLoading = null; }
+}
+
+export async function openProjectWebhooks(project) {
+  projectTarget = project;
+  assistantTarget = null;
+  const panel = byId("settingsPanel-webhooks");
+  const placeholder = document.createComment("Webhooks settings panel");
+  panel.replaceWith(placeholder);
+  const dialog = document.createElement("dialog");
+  dialog.dataset.testid = "project-webhooks-dialog";
+  dialog.setAttribute("aria-labelledby", "projectWebhooksHeading");
+  const card = document.createElement("form");
+  card.method = "dialog";
+  card.className = "dialog-card settings-card";
+  const heading = document.createElement("h2");
+  heading.id = "projectWebhooksHeading";
+  heading.textContent = `${project.name} webhooks`;
+  const close = makeButton("Close", "project-webhooks-close", () => dialog.close(), "ghost");
+  panel.hidden = false;
+  panel.setAttribute("role", "region");
+  panel.setAttribute("aria-labelledby", heading.id);
+  card.append(heading, panel, close);
+  dialog.append(card);
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => {
+    projectTarget = null;
+    closeDetail();
+    panel.hidden = true;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", "settingsTab-webhooks");
+    placeholder.replaceWith(panel);
+    dialog.remove();
+  }, { once: true });
+  dialog.showModal();
+  await loadWebhooks();
 }
 
 export async function openAssistantWebhook(assistant) {
