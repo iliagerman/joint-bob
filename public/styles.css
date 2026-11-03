@@ -1895,6 +1895,10 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .activity-body[hidden], .conversation-chat[hidden], .conversation-chat-selectors[hidden] { display: none; }
 .conversation-chat { display: flex; flex: 1 1 0; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 8px 12px; }
 .conversation-chat > p { margin: 0; }
+.conversation-chat-settings { flex: none; max-height: 50%; overflow-y: auto; }
+.conversation-chat-settings > summary { cursor: pointer; padding: 6px 0; font-size: 13px; font-weight: 600; }
+.conversation-chat-settings-body { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; }
+.conversation-chat-settings-body > p { margin: 0; }
 .conversation-chat-selectors { display: grid; grid-template-columns: 1fr; gap: 6px; }
 .conversation-chat-selectors label { display: grid; gap: 3px; font-size: 12px; min-width: 0; }
 .conversation-chat-selectors select { width: 100%; min-width: 0; }

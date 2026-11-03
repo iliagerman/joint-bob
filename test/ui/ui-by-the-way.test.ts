@@ -42,6 +42,7 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
       return { background: style.backgroundColor, underline: style.borderBottomWidth };
     });
     assert.deepEqual(tabStyle, { background: "rgba(0, 0, 0, 0)", underline: "2px" });
+    await page.getByTestId("conversation-chat-settings-toggle").click();
     const readOnly = page.getByTestId("conversation-chat-read-only");
     assert.equal(await readOnly.isChecked(), true);
     let releaseMode!: () => void;
@@ -87,12 +88,17 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     assert.equal(answered.status(), 202, await answered.text());
     assert.equal(answered.request().postDataJSON().model.thinkingLevel, "high");
     assert.equal(answered.request().postDataJSON().readOnly, true);
-    await page.locator("#conversationChatMessages article.assistant .md").getByText("stubbed", { exact: true }).waitFor({ timeout: 5000 });
+    await page.locator("#conversationChatMessages article.assistant .md").getByText("stubbed", { exact: true }).waitFor().catch(async error => {
+      console.log("Assistant reply diagnostic", await page.getByTestId("conversation-chat-status").textContent(), await page.getByTestId("conversation-chat-messages").textContent(), await readFile(path.join(root, "engine.log"), "utf8").catch(() => ""));
+      throw error;
+    });
     assert.match(await page.getByTestId("conversation-chat-status").textContent() ?? "", /Answering/);
     assert.equal(await page.getByTestId("conversation-chat-input").inputValue(), "next question draft");
     await page.reload();
+    await page.getByTestId("project-group").getByText("Internal Assistant", { exact: true }).click();
+    await page.locator(".session-card", { hasText: "Short one" }).first().click();
     await page.getByTestId("activity-chat-tab").click();
-    await page.locator("#conversationChatMessages article.assistant .md").getByText("stubbed", { exact: true }).waitFor({ timeout: 5000 });
+    await page.locator("#conversationChatMessages article.assistant .md").getByText("stubbed", { exact: true }).waitFor();
     await page.getByTestId("conversation-chat-input").fill("next question draft");
     await writeFile(path.join(hold, "claude.release"), "release");
     await page.getByTestId("conversation-chat-messages").getByText("stubbed response", { exact: true }).waitFor();
@@ -122,6 +128,7 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     await page.getByTestId("chat-message-input").waitFor();
     await open();
     await page.getByTestId("conversation-chat-messages").getByText("side-only question", { exact: true }).waitFor();
+    await page.getByTestId("conversation-chat-settings-toggle").click();
     await page.getByTestId("conversation-chat-clear").click();
     await page.waitForFunction(() => document.querySelector("#conversationChatMessages")?.textContent?.includes("Ask about this conversation"));
     assert.equal(await readOnly.isChecked(), true, "clear history resets action permission");
@@ -168,8 +175,10 @@ test("side-chat queues follow-ups, keeps them across reload, and updates automat
     await page.getByTestId("login-submit-button").click();
     await page.getByText("Internal Assistant", { exact: true }).click();
     await page.getByText("Short one", { exact: true }).click();
+    await page.locator("#messages").getByText("Single short line.", { exact: true }).waitFor();
     await page.getByTestId("activity-chat-tab").click();
     await page.waitForFunction(() => !(document.querySelector("#conversationChatSend") as HTMLButtonElement).disabled);
+    await page.getByTestId("conversation-chat-settings-toggle").click();
     await page.getByTestId("conversation-chat-harness").selectOption("claude");
     for (const question of ["first question", "second question", "third question"]) {
       await page.getByTestId("conversation-chat-input").fill(question);

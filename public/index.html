@@ -358,15 +358,20 @@
             <!-- One scrolling column: the overview (summary, statistics, skill suggestions), then the
                  steps, which open on demand and scroll inside their own list. -->
             <section id="conversationChat" class="conversation-chat" role="tabpanel" aria-labelledby="activityChatTab" data-testid="conversation-chat" hidden>
-              <p class="settings-hint" id="conversationChatModeHint">Read-only. Search this conversation and project files. Messages stay here.</p>
-              <label class="checkbox-row"><input type="checkbox" id="conversationChatReadOnly" data-testid="conversation-chat-read-only" checked /> Read-only</label>
-              <div id="conversationChatSelectors" class="conversation-chat-selectors">
-                <label>Harness<select id="conversationChatHarness" data-testid="conversation-chat-harness"></select></label>
-                <label>Model<select id="conversationChatModel" data-testid="conversation-chat-model"></select></label>
-                <label>Effort<select id="conversationChatEffort" data-testid="conversation-chat-effort"></select></label>
-              </div>
-              <button type="button" class="ghost compact" id="conversationChatSecrets" data-testid="conversation-chat-secrets" disabled>Secrets (0)</button>
-              <button type="button" class="ghost compact" id="conversationChatClear" data-testid="conversation-chat-clear">Clear history</button>
+              <details class="conversation-chat-settings" data-testid="conversation-chat-settings">
+                <summary data-testid="conversation-chat-settings-toggle">Chat settings</summary>
+                <div class="conversation-chat-settings-body">
+                  <p class="settings-hint" id="conversationChatModeHint">Read-only. Search this conversation and project files. Messages stay here.</p>
+                  <label class="checkbox-row"><input type="checkbox" id="conversationChatReadOnly" data-testid="conversation-chat-read-only" checked /> Read-only</label>
+                  <div id="conversationChatSelectors" class="conversation-chat-selectors">
+                    <label>Harness<select id="conversationChatHarness" data-testid="conversation-chat-harness"></select></label>
+                    <label>Model<select id="conversationChatModel" data-testid="conversation-chat-model"></select></label>
+                    <label>Effort<select id="conversationChatEffort" data-testid="conversation-chat-effort"></select></label>
+                  </div>
+                  <button type="button" class="ghost compact" id="conversationChatSecrets" data-testid="conversation-chat-secrets" disabled>Secrets (0)</button>
+                  <button type="button" class="ghost compact" id="conversationChatClear" data-testid="conversation-chat-clear">Clear history</button>
+                </div>
+              </details>
               <div id="conversationChatMessages" class="conversation-chat-messages" aria-live="polite" data-testid="conversation-chat-messages"></div>
               <p id="conversationChatStatus" role="status" data-testid="conversation-chat-status"></p>
               <form id="conversationChatForm" class="conversation-chat-form">

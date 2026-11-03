@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.208.4 — 2026-11-03
+
+- Activity Chat settings now collapse behind a keyboard-accessible Chat settings toggle, leaving more room to review messages on desktop and phones.
+
 ## 2.208.3 — 2026-11-03
 
 - Fixed the mobile conversation menu’s Add secret action to attach an existing secret with a searchable dropdown instead of creating an account.

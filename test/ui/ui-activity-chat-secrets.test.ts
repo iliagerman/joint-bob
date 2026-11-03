@@ -33,6 +33,7 @@ test("Activity Chat secret picker edits its own attachments and resets on clear"
   await page.getByText("Short one", { exact: true }).click();
   await page.getByTestId("chat-message-input").fill("/bob-btw");
   await page.locator("#composer").evaluate((form: HTMLFormElement) => form.requestSubmit());
+  await page.getByTestId("conversation-chat-settings-toggle").click();
   const secrets = page.getByTestId("conversation-chat-secrets");
   await page.waitForFunction(() => document.querySelector("#conversationChatSecrets")?.textContent === "Secrets (1)");
   await secrets.click();
