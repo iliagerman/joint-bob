@@ -282,6 +282,9 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   });
 }
 
+/** The pool and profile a turn runs on, as the reply label shows them. */
+const connectionState = ({ pool, profile }) => ({ poolName: pool?.name ?? "", profileLabel: profile.label });
+
 export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "guardianReviews" || payload.type === "guardianBlocked") {
     document.dispatchEvent(new CustomEvent("guardian-event", { detail: payload }));
@@ -330,6 +333,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     document.dispatchEvent(new CustomEvent("conversation-chat-reconnected"));
     state.conversationSegments = payload.segments || null;
     state.scheduledTurn = payload.scheduledTurn === true;
+    state.turnConnection = payload.turnConnection ? connectionState(payload.turnConnection) : null;
     state.scheduledAssistantText = "";
     state.assistantRawText = "";
     updateRoutingMode(payload.routing ?? null);
@@ -520,7 +524,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "turnConnection") {
-    state.turnConnection = { poolName: payload.pool?.name ?? "", profileLabel: payload.profile.label };
+    state.turnConnection = connectionState(payload);
     markPromptConnection(payload);
     return;
   }

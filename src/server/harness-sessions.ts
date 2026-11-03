@@ -9,10 +9,15 @@ import type { ChatMessage, HarnessId } from "../types.js";
 import { broadcastToProject, scheduleReviewNotifications, send } from "./realtime.js";
 import { idleSessionTimeoutMs, localWriteGraceMs } from "./state.js";
 
+/** A turn's connection as the page shows it: a pool and the profile in use, or a profile, or this machine's own sign-in. */
+export interface TurnConnectionView { pool?: { name: string }; profile: { label: string } }
+
 export interface SharedHarnessSession {
   engine: HarnessId; projectId: string; conversationId: string; cwd: string; session: HarnessSession;
   clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number; lastActivityAt: number; internalTurn?: boolean;
   liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void; watchdogStopping?: boolean;
+  /** The sign-in the running turn uses, so a page that opens mid-turn shows it on the reply. */
+  turnConnection?: TurnConnectionView | null;
   /** When the inactivity watchdog cancelled this turn; a turn still busy long after is a zombie. */
   watchdogStoppedAt?: number;
   /** Set while Joint Bob awaits a compaction; `abandon` releases that wait when the watchdog stops it. */

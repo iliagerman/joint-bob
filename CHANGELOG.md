@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.208.1 — 2026-11-03
+
+- Every Claude, Pi and Kiro turn now shows the sign-in it runs on, on the reply label and under the message: its pool and profile, its profile, or **this machine's sign-in** when no profile applies. A page opened while the turn runs shows it too.
+- Fixed the 2.208.0 build: scheduled auto reply's retry and restart code had landed in the wrong functions, so that version could not compile or ship.
+
 ## 2.208.0 — 2026-11-03
 
 - Added auto reply to scheduled tasks, with model selection, custom instructions and stop criteria. Runs continue until those criteria, the reply limit or manual Stop.

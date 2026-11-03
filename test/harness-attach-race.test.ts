@@ -77,6 +77,8 @@ function fixture(overrides: Record<string, any> = {}) {
     activeRoutingConfig: () => null, routingConfigDatabase: () => ({}),
     // No cluster subscription pool is assigned to the project.
     clusterV2Database: async () => ({}), resolveClusterSubscriptionPools: () => [],
+    // No profile is chosen, so a turn shows this machine's own sign-in.
+    projectProviderProfile: async () => undefined,
     summaryPolicyNow: async () => ({ updates: "manual", writer: { source: "automatic" }, from: { kind: "node" } }),
     summaryPolicyView: () => ({ updates: "manual", writer: "automatic", from: "this machine" }),
     storedDigest: () => undefined, requestDigestQuietly: () => {}, conversationLiveModel: () => ({ harnessId: "pi" }),
@@ -226,6 +228,19 @@ test("already attached client keeps one prompt through starting and claim", asyn
     assert.equal(visiblePromptCount(f.frames), 1);
     assert.equal(f.frames.filter(frame => frame.type === "promptStarted").length, 1);
   } finally { f.startRelease.release(); f.finish.release(); await dispatch; }
+});
+
+test("a turn without a pool says which sign-in it uses while it runs, then forgets it", async () => {
+  const f = fixture();
+  await f.exports.attachHarnessChat(f.options);
+  f.holdStart();
+  const dispatch = f.exports.dispatch(f.connection, f.queued);
+  await f.startEntered.promise;
+  try {
+    assert.deepEqual(f.frames.find(frame => frame.type === "turnConnection"), { type: "turnConnection", queueId: f.queued.id, profile: { label: "this machine's sign-in" } });
+    assert.deepEqual(f.connection.shared.turnConnection, { profile: { label: "this machine's sign-in" } }, "a page that opens mid-turn reads it from ready");
+  } finally { f.startRelease.release(); f.finish.release(); await dispatch; }
+  assert.equal(f.connection.shared.turnConnection, null, "cleared once the turn ends");
 });
 
 test("attach rebuilds when the turn completes before ready", async () => {

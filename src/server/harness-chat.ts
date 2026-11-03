@@ -14,6 +14,7 @@ import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { projectClusterIds, resolveClusterSubscriptionPools, type ClusterSubscriptionPoolAssignment } from "../provider-profiles/pool-sharing.js";
 import { poolCandidates, resolveSubscriptionChoice } from "../provider-profiles/pools.js";
+import { projectProviderProfile } from "../provider-profiles/service.js";
 import { withPoolProfile, type PoolProfileContext } from "../provider-profiles/context.js";
 import { classifyPoolAttemptFailure, resolvePoolModelSettings, runPoolAttempts } from "../provider-profiles/pool-execution.js";
 import type { ProfileProvider } from "../provider-profiles/store.js";
@@ -55,7 +56,7 @@ import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
 import { cancelGuardianReviews, decideGuardianReview, onGuardianEvent, pendingGuardianReviews } from "../guardian/reviews.js";
 import { conversationLiveModel, requestDigestQuietly, summaryPolicyNow, summaryPolicyView } from "./conversation-digest-runner.js";
 import { storedDigest } from "../conversation-digest.js";
-import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, historyBeforeLiveTurn, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
+import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, historyBeforeLiveTurn, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession, type TurnConnectionView } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
   automationProfile?: QueuedPrompt["automationProfile"];
@@ -231,12 +232,27 @@ async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, qu
   const usage = queued.automationProfile ? "automation" : "interactive";
   const choice = (engine === "pi" ? resolveSubscriptionChoice(accountId, "pi", scope, usage) : undefined)
     ?? resolveSubscriptionChoice(accountId, preferred, scope, usage);
-  if (choice?.kind === "profile") publish(connection, { type: "turnConnection", queueId: queued.id, profile: { label: choice.profile.label, provider: choice.profile.provider }, source: choice.source });
-  if (choice?.kind === "machine") publish(connection, { type: "turnConnection", queueId: queued.id, profile: { label: "this machine's sign-in", provider: preferred }, source: choice.source });
   if (choice?.kind !== "pool") return undefined;
   const profiles = poolCandidates(choice.pool, preferred);
   return { id: choice.pool.id, name: choice.pool.name, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",
     candidates: profiles.map((profile) => ({ profileId: profile.id, provider: profile.provider, label: profile.label, poolId: choice.pool.id, profile })) };
+}
+
+function announceConnection(connection: HarnessChatConnection, queueId: string, view: TurnConnectionView): void {
+  connection.shared.turnConnection = view;
+  publish(connection, { type: "turnConnection", queueId, ...view });
+}
+/**
+ * The sign-in a turn without a pool runs on, as the harness itself resolves it: the chosen or only
+ * profile, or this machine's own sign-in when none applies. Shown under the message and on the reply.
+ */
+async function announceTurnConnection(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
+  const engine = queued.settings?.harnessId ?? connection.engine;
+  // Only these harnesses run on Joint Bob profiles; any other keeps its own sign-in, unlabelled.
+  if (engine !== "claude" && engine !== "pi" && engine !== "kiro") return;
+  const provider = queued.settings?.provider ?? connection.shared.session.settings().provider;
+  const profile = await projectProviderProfile(connection.project.id, connection.conversationId, provider, engine);
+  announceConnection(connection, queued.id, { profile: { label: profile?.label ?? "this machine's sign-in" } });
 }
 
 async function writable(connection: HarnessChatConnection): Promise<void> {
@@ -484,6 +500,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
       }
     }
     pool = await resolveTurnSubscriptionPool(connection, queued);
+    if (!pool && !queued.systemEventId) await announceTurnConnection(connection, queued);
     if (queued.settings) await applyQueuedSettings(connection, queued.settings, Boolean(pool));
     const difficulty = await routePromptByDifficulty(connection, queued, Boolean(pool));
     await writable(connection);
@@ -550,7 +567,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
             if (["textDelta", "thinkingDelta", "toolStart", "assistantFinal"].includes(String(event.type))) started = true;
           });
           try {
-            if (!queued.systemEventId) publish(connection, { type: "turnConnection", queueId: queued.id, pool: { name: pool!.name }, profile: { label: candidate.label, provider: candidate.provider } });
+            if (!queued.systemEventId) announceConnection(connection, queued.id, { pool: { name: pool!.name }, profile: { label: candidate.label } });
             await withPoolProfile(candidate, async () => {
               await session.configure(settings);
               await session.preflight();
@@ -602,6 +619,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
   } finally {
     // switchHarness transfers the busy counter to the destination shared session.
     connection.shared.turnInFlight -= 1;
+    if (!connection.shared.turnInFlight) connection.shared.turnConnection = null;
     shared.internalTurn = previousInternalTurn;
     connection.shared.scheduledTurn = false;
     sendHarnessStatus(connection.shared);
@@ -1200,7 +1218,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     if (options.socket.readyState !== WebSocket.OPEN) return;
     if (inputs !== inputState() || liveTurn !== shared.liveEvents) continue;
     if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
-    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDecision: autoDecisionView(connection), autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), guardianReviews: pendingGuardianReviews(options.project.id, conversationId), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, turnConnection: shared.turnInFlight ? shared.turnConnection ?? null : null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDecision: autoDecisionView(connection), autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), guardianReviews: pendingGuardianReviews(options.project.id, conversationId), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
     for (const event of shared.liveEvents) send(options.socket, event);
     refreshHarnessPromptQueue(connection);
     // A summary that fell behind while nobody had this open catches up now; one is first written after the next answer.
