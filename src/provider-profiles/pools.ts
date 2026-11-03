@@ -65,7 +65,8 @@ export interface SubscriptionPool {
 }
 export type SubscriptionChoice =
   | { kind: "profile"; profile: ProviderProfile; source: ProfileSelection["scope"] }
-  | { kind: "pool"; pool: SubscriptionPool; source: ProfileSelection["scope"] };
+  | { kind: "pool"; pool: SubscriptionPool; source: ProfileSelection["scope"] }
+  | { kind: "machine"; source: ProfileSelection["scope"] };
 
 let prepared: DatabaseSync | undefined;
 export function ensureSubscriptionPoolSchema(db: DatabaseSync): void {
@@ -185,6 +186,7 @@ export function resolveSubscriptionChoice(owner: string, provider: ProfileProvid
   const match = matchingSelection(listSubscriptionSelections(owner).filter((entry) => entry.provider === profileProviderSchema.parse(provider)), scope);
   if (match?.entry.poolId) return { kind: "pool", pool: getSubscriptionPool(owner, match.entry.poolId), source: match.source };
   if (match?.entry.profileId) return { kind: "profile", profile: accessibleProviderProfile(owner, match.entry.profileId, usage), source: match.source };
+  if (match?.entry.machine) return { kind: "machine", source: match.source };
   const only = onlyPrivateProfile(owner, profileProviderSchema.parse(provider));
   return only ? { kind: "profile", profile: only, source: "default" } : undefined;
 }

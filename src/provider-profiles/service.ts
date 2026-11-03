@@ -11,7 +11,7 @@ import { claudeOAuthIdentity } from "./claude-identity.js";
 import { prepareClaudeProfile, readLegacyClaudeCredential, removeLegacyClaudeCredential } from "./claude.js";
 import { withProfileAuthority } from "./broker.js";
 import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
-import { accessibleProviderProfile, listProviderProfiles, providerProfile, resolveProviderProfile, type ProfileProvider, type ProfileScope, type ProviderProfile } from "./store.js";
+import { accessibleProviderProfile, listProviderProfiles, machineSignInChosen, providerProfile, resolveProviderProfile, type ProfileProvider, type ProfileScope, type ProviderProfile } from "./store.js";
 
 export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolSelection, updateSubscriptionPool } from "./pools.js";
 
@@ -95,7 +95,9 @@ export async function projectProviderProfile(projectId: string, conversationId: 
     if (selected) return selected.profile;
   }
   const subscription = targetProvider === "claude" || targetProvider === "openai-codex" || (engine === "kiro" && targetProvider === "kiro");
-  const profile = (subscription ? resolveProviderProfile(accountId, targetProvider, scope, automation ? "automation" : "interactive")?.profile : undefined)
+  // This machine's own sign-in chosen for the provider means no profile at all, Pi profiles included.
+  const machine = subscription && machineSignInChosen(accountId, targetProvider as ProfileProvider, scope);
+  const profile = machine ? undefined : (subscription ? resolveProviderProfile(accountId, targetProvider, scope, automation ? "automation" : "interactive")?.profile : undefined)
     ?? (engine === "pi" ? onlyPiProfileHolding(accountId, provider) : undefined);
   if (!subscription) return profile;
   if (!profile && accountId !== adminAccountId()) throw new Error("Select your own subscription profile on this node. No other user's account was used.");

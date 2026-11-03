@@ -21,9 +21,12 @@ export type ProfileProvider = z.infer<typeof profileProviderSchema>;
 export const profileInputSchema = z.object({ label: z.string().trim().min(1).max(80), provider: profileProviderSchema, kiro: kiroProfileConfigSchema.optional() }).strict().superRefine(kiroConfigRequired);
 /** "cluster": projects shared through one cluster. A personal choice, so it follows its owner and their twins only. */
 const scopeSchema = z.enum(["default", "workspace", "cluster", "project", "conversation"]);
-export const profileSelectionSchema = z.object({ provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable(), poolId: z.string().uuid().nullable().optional() }).strict().superRefine((value, ctx) => {
+/** `machine`: no profile at all; this machine's own sign-in serves the choice, and no single-profile default applies. */
+export const profileSelectionSchema = z.object({ provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable(), poolId: z.string().uuid().nullable().optional(), machine: z.boolean().optional() }).strict().superRefine((value, ctx) => {
   if ((value.scope === "default") !== (value.scopeId === "")) ctx.addIssue({ code: "custom", message: "Only the default scope has an empty scopeId" });
   if (value.profileId && value.poolId) ctx.addIssue({ code: "custom", message: "Choose either a profile or a pool" });
+  if (value.machine && (value.profileId || value.poolId)) ctx.addIssue({ code: "custom", message: "This machine's own sign-in is chosen alone, not with a profile or pool" });
+  if (value.machine && !["claude", "openai-codex"].includes(value.provider)) ctx.addIssue({ code: "custom", message: "Only Claude and ChatGPT can use this machine's own sign-in" });
   if (value.provider === "kiro" && value.poolId) ctx.addIssue({ code: "custom", message: "Kiro profiles are standalone and cannot use subscription pools" });
 });
 export type ProfileSelection = z.infer<typeof profileSelectionSchema>;
@@ -54,7 +57,7 @@ export function ensureProviderProfileSchema(db: DatabaseSync): void {
   // cleared choice (empty profile_id) stay as tombstones so an older copy cannot revive them.
   addColumns(db, "provider_profiles", [["shared", "INTEGER NOT NULL DEFAULT 0"], ["deleted", "INTEGER NOT NULL DEFAULT 0"], ["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"]]);
   addColumns(db, "provider_profiles", [["kiro_config", "TEXT NOT NULL DEFAULT ''"]]);
-  addColumns(db, "provider_profile_selections", [["pool_id", "TEXT NOT NULL DEFAULT ''"], ["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"]]);
+  addColumns(db, "provider_profile_selections", [["pool_id", "TEXT NOT NULL DEFAULT ''"], ["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"], ["machine", "INTEGER NOT NULL DEFAULT 0"]]);
 }
 function addColumns(db: DatabaseSync, table: string, columns: Array<[string, string]>): void {
   const present = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name));
@@ -106,15 +109,15 @@ function writeProfile(db: DatabaseSync, profile: ProviderProfile & { deleted: bo
     payload: { username: profile.owner, id: profile.id, label: profile.label, provider: profile.provider, createdAt: profile.createdAt, shared: profile.shared, deleted: profile.deleted, ...(profile.kiro ? { kiro: profile.kiro } : {}), ...at } });
 }
 function writeSelectionRow(db: DatabaseSync, owner: string, value: ProfileSelection, at: Stamp): void {
-  db.prepare(`INSERT INTO provider_profile_selections (owner,provider,scope,scope_id,profile_id,pool_id,updated_at,origin_node_id) VALUES(?,?,?,?,?,?,?,?)
-    ON CONFLICT(owner,provider,scope,scope_id) DO UPDATE SET profile_id=excluded.profile_id, pool_id=excluded.pool_id, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
-    .run(owner, value.provider, value.scope, value.scopeId, value.profileId ?? "", value.poolId ?? "", at.updatedAt, at.originNodeId);
+  db.prepare(`INSERT INTO provider_profile_selections (owner,provider,scope,scope_id,profile_id,pool_id,machine,updated_at,origin_node_id) VALUES(?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(owner,provider,scope,scope_id) DO UPDATE SET profile_id=excluded.profile_id, pool_id=excluded.pool_id, machine=excluded.machine, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
+    .run(owner, value.provider, value.scope, value.scopeId, value.profileId ?? "", value.poolId ?? "", value.machine ? 1 : 0, at.updatedAt, at.originNodeId);
 }
 function writeSelection(db: DatabaseSync, owner: string, value: ProfileSelection, at: Stamp, publish = true): void {
   writeSelectionRow(db, owner, { ...value, poolId: null }, at);
   if (!publish) return;
   enqueueReplicationEvent(db, { originNodeId: at.originNodeId, entityType: "provider.selection", entityKey: JSON.stringify([owner, value.provider, value.scope, value.scopeId]), operation: "upsert",
-    payload: { username: owner, provider: value.provider, scope: value.scope, scopeId: value.scopeId, profileId: value.profileId, ...at } });
+    payload: { username: owner, provider: value.provider, scope: value.scope, scopeId: value.scopeId, profileId: value.profileId, ...(value.machine ? { machine: true } : {}), ...at } });
 }
 function writePoolSelection(db: DatabaseSync, owner: string, value: ProfileSelection, at: Stamp, publish = true): void {
   writeSelectionRow(db, owner, { ...value, profileId: null }, at);
@@ -191,9 +194,9 @@ export function listProviderProfileSelections(owner: string): ProfileSelection[]
   return database().prepare("SELECT provider,scope,scope_id AS scopeId,profile_id AS profileId FROM provider_profile_selections WHERE owner=? AND profile_id<>''").all(owner) as unknown as ProfileSelection[];
 }
 export function listSubscriptionSelections(owner: string): Array<ProfileSelection & { poolId: string | null }> {
-  const rows = database().prepare("SELECT provider,scope,scope_id AS scopeId,profile_id AS profileId,pool_id AS poolId FROM provider_profile_selections WHERE owner=? AND (profile_id<>'' OR pool_id<>'')").all(owner) as Array<Record<string, unknown>>;
+  const rows = database().prepare("SELECT provider,scope,scope_id AS scopeId,profile_id AS profileId,pool_id AS poolId,machine FROM provider_profile_selections WHERE owner=? AND (profile_id<>'' OR pool_id<>'' OR machine=1)").all(owner) as Array<Record<string, unknown>>;
   return rows.map((row) => {
-    const selection = profileSelectionSchema.parse({ ...row, profileId: String(row.profileId) || null, poolId: String(row.poolId) || null });
+    const selection = profileSelectionSchema.parse({ ...row, profileId: String(row.profileId) || null, poolId: String(row.poolId) || null, machine: Number(row.machine) === 1 });
     return { ...selection, poolId: selection.poolId ?? null };
   });
 }
@@ -234,8 +237,13 @@ export function resolveProviderProfile(owner: string, provider: ProfileProvider,
   const match = matchingSelection(listSubscriptionSelections(owner).filter((entry) => entry.provider === provider), scope);
   if (match?.entry.poolId) throw new Error("Selected subscription pool requires pool-aware execution");
   if (match?.entry.profileId) return { profile: accessibleProviderProfile(owner, match.entry.profileId, usage), source: match.source };
+  if (match?.entry.machine) return undefined;
   const only = onlyPrivateProfile(owner, provider);
   return only ? { profile: only, source: "default" } : undefined;
+}
+/** True when the choice that applies to this scope is this machine's own sign-in, which uses no profile. */
+export function machineSignInChosen(owner: string, provider: ProfileProvider, scope: ProfileScope): boolean {
+  return matchingSelection(listSubscriptionSelections(owner).filter((entry) => entry.provider === provider), scope)?.entry.machine === true;
 }
 /**
  * With no choice at any level, a provider's only private profile is the one meant; with two or more
@@ -250,7 +258,7 @@ export function onlyPrivateProfile(owner: string, provider: ProfileProvider): Pr
 
 const stampSchema = { username: z.string().regex(/^[0-9a-f]{32}$/), updatedAt: z.string().datetime(), originNodeId: z.string().min(1).max(100) };
 const profileEventSchema = z.object({ ...stampSchema, id: z.string().uuid(), label: z.string().trim().min(1).max(80), provider: profileProviderSchema, createdAt: z.string().datetime(), shared: z.boolean(), deleted: z.boolean(), kiro: kiroProfileConfigSchema.optional() }).strict().superRefine(kiroConfigRequired);
-const selectionEventSchema = z.object({ ...stampSchema, provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable() }).strict();
+const selectionEventSchema = z.object({ ...stampSchema, provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable(), machine: z.literal(true).optional() }).strict();
 const poolSelectionEventSchema = z.object({ ...stampSchema, provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), poolId: z.string().uuid().nullable() }).strict();
 
 /** Only the administrator's own profiles arrive, from their twins. Returns false to reject. */
@@ -279,7 +287,7 @@ export function applyProviderSelectionEvent(db: DatabaseSync, event: Replication
   if (!value || (value.scope === "default") !== (value.scopeId === "")) return false;
   if (event.entityKey !== JSON.stringify([value.username, value.provider, value.scope, value.scopeId])) return false;
   const held = db.prepare("SELECT updated_at,origin_node_id FROM provider_profile_selections WHERE owner=? AND provider=? AND scope=? AND scope_id=?").get(value.username, value.provider, value.scope, value.scopeId) as { updated_at: string; origin_node_id: string } | undefined;
-  if (newer(value, held)) writeSelection(db, value.username, { provider: value.provider, scope: value.scope, scopeId: value.scopeId, profileId: value.profileId }, value, false);
+  if (newer(value, held)) writeSelection(db, value.username, { provider: value.provider, scope: value.scope, scopeId: value.scopeId, profileId: value.profileId, machine: value.machine }, value, false);
   return true;
 }
 

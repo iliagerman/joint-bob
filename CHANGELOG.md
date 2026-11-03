@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.204.0 — 2026-11-03
+
+- Added **This machine's own sign-in** to Assignments for Claude and ChatGPT: choose it as the default or as an exception to run on this machine's sign-in even when you have profiles. It stops the automatic single-profile default at that level, and a turn on it shows that connection under the message.
+
 ## 2.203.0 — 2026-11-02
 
 - Added Webhooks to each project's menu, opening its files, skills, memory, and calls directly without Settings. New webhooks target that project automatically.

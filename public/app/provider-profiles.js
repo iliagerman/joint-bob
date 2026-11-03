@@ -48,7 +48,7 @@ const providerOf = (id) => PROVIDERS.find((item) => item.id === id);
 const privateProfiles = (provider) => profiles.filter((item) => item.provider === provider && !item.shared);
 const profileNamed = (id) => profiles.find((item) => item.id === id);
 const poolNamed = (id) => pools.find((item) => item.id === id);
-const selectionValue = (entry) => entry?.poolId ? `pool:${entry.poolId}` : entry?.profileId ? `profile:${entry.profileId}` : null;
+const selectionValue = (entry) => entry?.poolId ? `pool:${entry.poolId}` : entry?.machine ? "machine" : entry?.profileId ? `profile:${entry.profileId}` : null;
 const saved = (provider, scope, scopeId) => selectionValue(selections.find((item) => item.provider === provider && item.scope === scope && item.scopeId === scopeId));
 
 function el(tag, { text, testid, className } = {}) {
@@ -579,17 +579,20 @@ function automaticDefault(provider) {
 }
 function choiceOptions(provider) {
   return [
+    ...(provider === "claude" || provider === "openai-codex" ? [{ value: "machine", label: "This machine's own sign-in", detail: "No profile: the sign-in on this machine" }] : []),
     ...privateProfiles(provider).map((profile) => ({ value: `profile:${profile.id}`, label: profile.label, detail: `${providerOf(provider).name} profile · ${profileStatusLabel(profile.id)}` })),
     ...(provider === "kiro" ? [] : pools.map((pool) => ({ value: `pool:${pool.id}`, label: pool.name, detail: `Pool · ${pool.members.length} profile${pool.members.length === 1 ? "" : "s"}` }))),
   ];
 }
 function choiceLabel(value) {
+  if (value === "machine") return "This machine's own sign-in";
   if (value.startsWith("pool:")) return poolNamed(value.slice(5))?.name ?? "Unavailable pool";
   return profileNamed(value.slice(8))?.label ?? "Unavailable profile";
 }
 /** A choice the provider can no longer use, such as a profile since shared for automation. */
 const usableChoice = (provider, value) => choiceOptions(provider).some((option) => option.value === value);
 function selectionPayload(provider, scope, scopeId, value) {
+  if (value === "machine") return { provider, scope, scopeId, profileId: null, machine: true };
   if (value?.startsWith("pool:")) return { provider, scope, scopeId, profileId: null, poolId: value.slice(5) };
   return { provider, scope, scopeId, profileId: value?.startsWith("profile:") ? value.slice(8) : null };
 }

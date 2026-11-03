@@ -134,3 +134,21 @@ test("a cluster choice covers only projects shared through that cluster, below a
   assert.equal(resolveProviderProfile(owner, "claude", { ...shared, clusterIds: [C1, C2] })?.profile.id, team.id, "two clusters agreeing is not a conflict");
   assert.equal(resolveProviderProfile("cluster-choice-other", "claude", shared), undefined, "a cluster choice is the user's own");
 });
+
+test("this machine's own sign-in is a choice that stops the single-profile default, only where it is chosen", async () => {
+  const { resolveSubscriptionChoice } = await import("../src/provider-profiles/pools.js");
+  const { machineSignInChosen } = await import("../src/provider-profiles/store.js");
+  const owner = "machine-choice-owner", scope = { projectId: "p", workspaceId: "w" }, elsewhere = { projectId: "q", workspaceId: "w" };
+  const only = createProviderProfile(owner, { label: "Only", provider: "claude" });
+  assert.equal(resolveProviderProfile(owner, "claude", scope)?.profile.id, only.id);
+  setProviderProfileSelection(owner, { provider: "claude", scope: "project", scopeId: "p", profileId: null, machine: true });
+  assert.equal(resolveProviderProfile(owner, "claude", scope), undefined, "the machine's own sign-in is chosen, so the only profile is not used");
+  assert.equal(machineSignInChosen(owner, "claude", scope), true);
+  assert.equal(resolveSubscriptionChoice(owner, "claude", scope)?.kind, "machine");
+  assert.equal(machineSignInChosen(owner, "claude", elsewhere), false, "other projects keep the default");
+  assert.equal(resolveProviderProfile(owner, "claude", elsewhere)?.profile.id, only.id);
+  assert.throws(() => profileSelectionSchema.parse({ provider: "pi", scope: "default", scopeId: "", profileId: null, machine: true }), /Only Claude and ChatGPT/);
+  assert.throws(() => profileSelectionSchema.parse({ provider: "claude", scope: "default", scopeId: "", profileId: only.id, machine: true }), /chosen alone/);
+  setProviderProfileSelection(owner, { provider: "claude", scope: "project", scopeId: "p", profileId: null });
+  assert.equal(resolveProviderProfile(owner, "claude", scope)?.profile.id, only.id, "clearing the exception brings the default back");
+});

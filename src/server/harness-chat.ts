@@ -207,6 +207,7 @@ async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, qu
   const choice = (engine === "pi" ? resolveSubscriptionChoice(accountId, "pi", scope, usage) : undefined)
     ?? resolveSubscriptionChoice(accountId, preferred, scope, usage);
   if (choice?.kind === "profile") publish(connection, { type: "turnConnection", queueId: queued.id, profile: { label: choice.profile.label, provider: choice.profile.provider }, source: choice.source });
+  if (choice?.kind === "machine") publish(connection, { type: "turnConnection", queueId: queued.id, profile: { label: "this machine's sign-in", provider: preferred }, source: choice.source });
   if (choice?.kind !== "pool") return undefined;
   const profiles = poolCandidates(choice.pool, preferred);
   return { id: choice.pool.id, name: choice.pool.name, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",
