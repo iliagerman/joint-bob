@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.210.1 — 2026-11-03
+
+- Fixed a conversation reconnecting moments after it opened when its transcript needed upgrading, which could refuse or lose a message sent in that window.
+- Fixed one agent that cannot load, such as a Pi package npm cannot install, breaking Settings and the chat controls. It now shows as not ready, with the reason.
+- Fixed the side chat staying on "Open a conversation first" when opened before its conversation connected.
+- Fixed the usage table showing an agent's raw ID instead of its name when no conversation had been opened yet.
+- Fixed the focus menu button losing its round background and the model picker losing its dropdown arrow in the focus controls.
+- Fixed the Resources list shifting between tabs, and the File sync project list overflowing in a short window.
+
 ## 2.210.0 — 2026-11-03
 
 - Telegram now has its own place under **Resources → Telegram**, replacing the webhook reply option: paste a bot token and open a one-time link. Your own chat with the bot is the same assistant as the app. A group shares one context, and the decision model chooses which messages to answer.
