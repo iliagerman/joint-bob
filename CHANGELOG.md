@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.208.2 — 2026-11-03
+
+- The personal assistant's message box now empties as soon as you send. If sending fails, your message returns to the box, and sending it again can't start a second turn.
+- Assistant replies now show formatted text in the private chat, direct requests and group chats, instead of raw Markdown markers.
+
 ## 2.208.1 — 2026-11-03
 
 - Every Claude, Pi and Kiro turn now shows the sign-in it runs on, on the reply label and under the message: its pool and profile, its profile, or **this machine's sign-in** when no profile applies. A page opened while the turn runs shows it too.
