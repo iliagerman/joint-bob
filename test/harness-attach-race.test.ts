@@ -99,6 +99,8 @@ function fixture(overrides: Record<string, any> = {}) {
     // No Guardian review is open on the conversation.
     onGuardianEvent: () => () => {}, pendingGuardianReviews: () => [], decideGuardianReview: () => false, cancelGuardianReviews: () => {},
     DEFAULT_AUTO_RESPOND_INSTRUCTIONS: "", DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS: "",
+    // Asking other assistants isn't part of attaching to a conversation.
+    JOINT_BOB_AGENT_TOOL_NAMES: [], promptStarted: () => {}, promptEnded: () => {},
     ...overrides,
   };
   const exports: any = {};
