@@ -1866,7 +1866,7 @@ select.chat-toolbar-control {
 .messages-wrap.activity-open > .messages { min-width: 0; }
 .messages-wrap.activity-open .jump-to-bottom { right: calc(var(--activity-width) + 18px); }
 .messages-wrap { --activity-width: clamp(280px, var(--activity-preferred-width, clamp(300px, 28vw, 420px)), 65%); }
-.activity-panel { position: relative; display: flex; flex: 0 0 var(--activity-width); flex-direction: column; width: var(--activity-width); min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
+.activity-panel { container: activity-panel / inline-size; position: relative; display: flex; flex: 0 0 var(--activity-width); flex-direction: column; width: var(--activity-width); min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
 .activity-panel[hidden] { display: none; }
 .activity-panel-resize { position: absolute; z-index: 5; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
 .activity-panel-resize:hover, .activity-panel-resize:focus-visible { background: var(--accent); outline: none; }
@@ -1879,6 +1879,9 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .activity-tabs button[aria-selected="true"] { background: transparent; color: var(--text); border-bottom: 2px solid var(--accent); }
 .activity-modes { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 4px; min-width: 0; }
 .activity-mode { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; white-space: nowrap; }
+@container activity-panel (max-width: 400px) {
+  .activity-tabs button > span, .activity-mode > span { display: none; }
+}
 /* Activity overview: shown while a movie is written, above the phone menu on small screens. */
 .overview-progress { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; align-items: center; gap: 10px; max-width: min(420px, calc(100vw - 32px)); padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); box-shadow: var(--shadow-soft); }
 .overview-progress-copy { display: grid; gap: 2px; min-width: 0; }

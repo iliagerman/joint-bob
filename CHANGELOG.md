@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.205.1 — 2026-11-03
+
+- Fixed overlapping Activity panel controls in narrow panels by showing icons without labels, while preserving accessible names and hover titles.
+
 ## 2.205.0 — 2026-11-03
 
 - Added editing, replacing, and reverting webhook files, plus a **Preserve files between runs** option that lets runs reuse the webhook's own files instead of starting fresh.
