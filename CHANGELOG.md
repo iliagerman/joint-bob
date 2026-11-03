@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.205.0 — 2026-11-03
 
-- Added editing, replacing, and reverting a webhook's files, plus a **Preserve files between runs** option: webhook runs now start in a fresh workspace unless it is on, in which case they reuse the webhook's own files.
+- Added editing, replacing, and reverting webhook files, plus a **Preserve files between runs** option that lets runs reuse the webhook's own files instead of starting fresh.
 
 ## 2.204.1 — 2026-11-03
 
