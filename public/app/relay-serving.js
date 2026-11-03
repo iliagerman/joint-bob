@@ -384,8 +384,57 @@ const sections = {
   serving: { section: byId("relayServingSection"), load: async () => {} },
   machines: { section: byId("relayMachinesSection"), load: refreshMachines },
   tokens: { section: byId("relayTokensSection"), load: async () => { try { await tokens.reload(); } catch (error) { showStatus(tokensStatus, `Could not load tokens: ${error.message}`, "error"); } } },
+  pools: { section: byId("relayPoolsSection"), load: async () => { try { await loadPools(); } catch (error) { showStatus(poolsStatus, `Could not load the relay's pool rule: ${error.message}`, "error"); } } },
   audit: { section: byId("relayAuditSection"), load: async () => { try { await audit.reload(); } catch (error) { showStatus(auditStatus, `Could not load the audit log: ${error.message}`, "error"); } } },
 };
+
+// ---- pools: the relay rule for this relay's group ----
+
+const poolRule = byId("relayPoolRule");
+const poolsStatus = byId("relayPoolsStatus");
+
+/** A rule names one pool, so a different pool replaces the current one. */
+async function saveRelayPool(group, assignment, poolId) {
+  const path = `/api/clusters/${encodeURIComponent(group.clusterId)}/subscription-pool`;
+  if (assignment) await api(path, { method: "DELETE", body: JSON.stringify({ poolId: assignment.poolId, expectedEpoch: group.managerEpoch }) });
+  if (poolId) await api(path, { method: "POST", body: JSON.stringify({ poolId, expectedEpoch: group.managerEpoch }) });
+}
+
+async function loadPools() {
+  showStatus(poolsStatus, "");
+  const [{ group, assignment }, { pools }] = await Promise.all([api("/api/relay/subscription-pool"), api("/api/provider-profiles/pools")]);
+  if (!group) {
+    poolRule.replaceChildren(makeNode("p", "relay-empty", "This machine serves no relay group yet. Once machines share projects through this relay, choose their pool here."));
+    return;
+  }
+  const select = makeNode("select", "");
+  select.dataset.testid = "relay-pool-select";
+  select.setAttribute("aria-label", `Pool for ${group.name}`);
+  select.append(new Option("No pool: each person's own choices", ""), ...pools.map((pool) => new Option(pool.name, pool.id)));
+  if (assignment && !pools.some((pool) => pool.id === assignment.poolId)) select.append(new Option(`${assignment.manifest?.name ?? "Assigned pool"} (another account's)`, assignment.poolId));
+  select.value = assignment?.poolId ?? "";
+  const save = makeButton("Save rule", "relay-pool-save", async () => {
+    const poolId = select.value;
+    if (poolId === (assignment?.poolId ?? "")) return;
+    save.disabled = true;
+    try {
+      await saveRelayPool(group, assignment, poolId);
+      await loadPools();
+      showStatus(poolsStatus, poolId ? "Saved. Every machine on this relay uses this pool in the group's projects." : "Removed. Each person's own choices apply again.");
+    } catch (error) {
+      save.disabled = false;
+      showStatus(poolsStatus, `Could not save the rule: ${error.message}`, "error");
+    }
+  }, "primary compact");
+  const main = makeNode("div", "relay-row-main");
+  main.append(makeNode("strong", "relay-row-name", group.name),
+    makeNode("p", "relay-row-meta", assignment ? `Rule: ${assignment.manifest?.name ?? "a pool"} wins over everyone's own choices in this group's projects.` : "No rule: each person's own choices apply."));
+  const actions = makeNode("div", "relay-row-actions");
+  actions.append(select, save);
+  const row = makeNode("div", "relay-row");
+  row.append(main, actions);
+  poolRule.replaceChildren(row);
+}
 
 function showRelayTab(name) {
   activeTab = name;

@@ -6,7 +6,7 @@ import { pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from
 import { applyMembershipSnapshot, closeMembershipCluster, createMembershipCluster, createMembershipInvitation, getMembershipSnapshot, removeMembershipMember, updateMembershipDescriptor, type MembershipInvitation, type SignedMembershipSnapshot } from "../../cluster-membership.js";
 import { getSharingCluster, listSharingClusterMembers, listSharingMemberships, setAutoShareProjects } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { poolProfileProviderSchema, applyClusterSubscriptionPoolEvent, getClusterSubscriptionPool, setClusterSubscriptionPool, clearClusterSubscriptionPool, clusterPoolProfileAuthorized, parseClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
+import { poolProfileProviderSchema, relayOfGroup, applyClusterSubscriptionPoolEvent, getClusterSubscriptionPool, setClusterSubscriptionPool, clearClusterSubscriptionPool, clusterPoolProfileAuthorized, parseClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
 import { getSubscriptionPool, listSubscriptionPools } from "../../provider-profiles/pools.js";
 import { providerProfile } from "../../provider-profiles/store.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
@@ -67,9 +67,15 @@ function handler(action: (request: Request, response: Response) => Promise<void>
 async function requirePoolSupport(db: Awaited<ReturnType<typeof clusterV2Database>>, localNodeId: string, clusterId: string): Promise<string[]> {
   const members = listSharingClusterMembers(db, clusterId).map(({ nodeId }) => nodeId);
   for (const nodeId of members) {
-    const reply = nodeId === localNodeId ? { features: ["subscription-pools-v1"] }
-      : poolSupportSchema.parse(await signedPost(db, localNodeId, nodeId, clusterId, "/api/cluster/v2/subscription-pools/capability", { clusterId }));
-    if (!reply.features.includes("subscription-pools-v1")) throw new ClusterV2HttpError(409, "Every cluster member must support subscription pools before assignment");
+    if (nodeId === localNodeId) continue;
+    let reply: z.infer<typeof poolSupportSchema>;
+    try { reply = poolSupportSchema.parse(await signedPost(db, localNodeId, nodeId, clusterId, "/api/cluster/v2/subscription-pools/capability", { clusterId })); }
+    catch (error) {
+      // An offline machine receives the rule when it next syncs; it never blocks the relay from setting it.
+      if (error instanceof ClusterV2HttpError && error.statusCode === 503) { console.warn(`Relay pool rule: ${nodeId} is offline and gets the rule when it returns`); continue; }
+      throw error;
+    }
+    if (!reply.features.includes("subscription-pools-v1")) throw new ClusterV2HttpError(409, "Every machine on this relay must support subscription pools before a pool is assigned; update the machines that do not");
   }
   return members;
 }
@@ -114,6 +120,12 @@ function poolManifest(owner: string, poolId: string): ClusterSubscriptionPoolMan
       return { profileId, provider: poolProfileProviderSchema.parse(profile.provider), label: profile.label, position };
     }),
   };
+}
+
+/** A pool for a whole group is set on its relay, signed in there; anywhere else a Cluster exception stays personal. */
+function requireRelayOfGroup(db: Awaited<ReturnType<typeof clusterV2Database>>, localNodeId: string, clusterId: string): void {
+  if (relayOfGroup(db, clusterId) !== localNodeId) throw new ClusterV2HttpError(403, "Only the relay assigns a pool to a whole group. Sign in on the relay, or add a Cluster exception under Assignments: it applies to you and your twins.");
+  if (clusterManager(db, clusterId) !== localNodeId) throw new ClusterV2HttpError(409, "This relay no longer manages its group");
 }
 
 async function assignPoolAtManager(db: Awaited<ReturnType<typeof clusterV2Database>>, localNodeId: string, clusterId: string, ownerNodeId: string, manifest: ClusterSubscriptionPoolManifest, expectedEpoch: number) {
@@ -185,6 +197,18 @@ app.get("/api/clusters", handler(async (_request, response) => {
   response.json({ clusters });
 }));
 
+/** This relay's own group and the pool it assigned it, for the relay's Pools tab. */
+app.get("/api/relay/subscription-pool", handler(async (_request, response) => {
+  const person = clusterPerson(response), local = await getClusterNode(), db = await clusterV2Database();
+  const clusterId = relayGroupOf(db, local.id);
+  if (!clusterId || !accountInCluster(db, person.accountId, clusterId)) { response.json({ group: null, assignment: null }); return; }
+  const cluster = getSharingCluster(db, clusterId);
+  response.json({ group: { clusterId, name: cluster.name, managerEpoch: cluster.managerEpoch }, assignment: getClusterSubscriptionPool(db, clusterId) ?? null });
+}));
+function relayGroupOf(db: Awaited<ReturnType<typeof clusterV2Database>>, relayNodeId: string): string | undefined {
+  return listSharingMemberships(db, relayNodeId, true).map(({ clusterId }) => clusterId).find((clusterId) => relayOfGroup(db, clusterId) === relayNodeId);
+}
+
 app.get("/api/clusters/:clusterId/subscription-pool", handler(async (request, response) => {
   const person = clusterPerson(response), clusterId = uuid.parse(request.params.clusterId), db = await clusterV2Database();
   if (!accountInCluster(db, person.accountId, clusterId)) throw new ClusterV2HttpError(404, "Not found");
@@ -196,12 +220,8 @@ app.post("/api/clusters/:clusterId/subscription-pool", handler(async (request, r
   const payload = poolAssignmentRequestSchema.parse(request.body);
   const local = await getClusterNode(), db = await clusterV2Database();
   if (!accountInCluster(db, person.accountId, clusterId)) throw new ClusterV2HttpError(404, "Not found");
-  const manifest = poolManifest(person.accountId, payload.poolId), manager = clusterManager(db, clusterId);
-  const assignment = manager === local.id
-    ? await assignPoolAtManager(db, local.id, clusterId, local.id, manifest, payload.expectedEpoch)
-    : acceptPoolAssignment(db, manager, clusterId, await signedPost<unknown>(db, local.id, manager, clusterId, "/api/cluster/v2/subscription-pools/assign", {
-      clusterId, expectedEpoch: payload.expectedEpoch, poolOwnerNodeId: local.id, manifest,
-    }));
+  requireRelayOfGroup(db, local.id, clusterId);
+  const assignment = await assignPoolAtManager(db, local.id, clusterId, local.id, poolManifest(person.accountId, payload.poolId), payload.expectedEpoch);
   response.json({ assignment });
 }));
 
@@ -211,12 +231,8 @@ app.delete("/api/clusters/:clusterId/subscription-pool", handler(async (request,
   const local = await getClusterNode(), db = await clusterV2Database();
   if (!accountInCluster(db, person.accountId, clusterId)) throw new ClusterV2HttpError(404, "Not found");
   getSubscriptionPool(person.accountId, payload.poolId);
-  const manager = clusterManager(db, clusterId);
-  const assignment = manager === local.id
-    ? await clearPoolAtManager(db, local.id, clusterId, local.id, payload.poolId, payload.expectedEpoch)
-    : acceptPoolAssignment(db, manager, clusterId, await signedPost<unknown>(db, local.id, manager, clusterId, "/api/cluster/v2/subscription-pools/clear", {
-      clusterId, expectedEpoch: payload.expectedEpoch, poolOwnerNodeId: local.id, poolId: payload.poolId,
-    }));
+  requireRelayOfGroup(db, local.id, clusterId);
+  const assignment = await clearPoolAtManager(db, local.id, clusterId, local.id, payload.poolId, payload.expectedEpoch);
   response.json({ assignment });
 }));
 
@@ -352,7 +368,8 @@ app.post("/api/cluster/v2/subscription-pools/snapshot", handler(async (request, 
 app.post("/api/cluster/v2/subscription-pools/assign", handler(async (request, response) => {
   const sender = machineOnly(response), payload = poolAssignMachineSchema.parse(request.body);
   const local = await getClusterNode(), db = await clusterV2Database();
-  if (sender !== payload.poolOwnerNodeId) throw new ClusterV2HttpError(403, "Only the pool owner node may assign it");
+  // A relay sets its group's pool on itself; no other machine can ask it to.
+  if (sender !== payload.poolOwnerNodeId || relayOfGroup(db, payload.clusterId) !== sender) throw new ClusterV2HttpError(403, "Only a relay assigns a pool to its group, on the relay itself");
   const assignment = await assignPoolAtManager(db, local.id, payload.clusterId, sender, payload.manifest as ClusterSubscriptionPoolManifest, payload.expectedEpoch);
   response.json(signedPoolAssignment(db, local.id, assignment));
 }));

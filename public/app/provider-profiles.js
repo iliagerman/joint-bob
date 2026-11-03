@@ -22,8 +22,8 @@ const PAGE_SIZE = { profiles: 4, pools: 4, exceptions: 6 };
 const HISTORY_WARNING = "The next turn may send conversation history under a different provider account. Running turns keep their current account.";
 
 let root;
-/** `clusters`: Settings' cluster list, with any cluster-wide pool. `scopeClusters`: what a cluster choice can name, relay groups included. */
-let profiles = [], pools = [], selections = [], projects = [], workspaces = [], clusters = [], scopeClusters = [], modelCatalog = [];
+/** `relayRules`: pools relays set for their whole groups, which win over these choices. `scopeClusters`: what a cluster choice can name, relay groups included. */
+let profiles = [], pools = [], selections = [], projects = [], workspaces = [], relayRules = [], scopeClusters = [], modelCatalog = [];
 let modelCatalogError = "";
 let modelCatalogLoad;
 let conversationDefaultProvider = "claude";
@@ -115,10 +115,10 @@ export async function loadProviderProfiles() {
     root.setAttribute("aria-labelledby", "providerProfilesTitle");
     document.querySelector("#settingsPanel-connections").append(root);
   }
-  const [body, poolBody, projectBody, workspaceBody, clusterBody, scopeClusterBody, settingsBody] = await Promise.all([
-    api("/api/provider-profiles"), api("/api/provider-profiles/pools"), api("/api/projects"), api("/api/workspaces"), api("/api/clusters"), api("/api/provider-profiles/clusters"), api("/api/settings"),
+  const [body, poolBody, projectBody, workspaceBody, relayRuleBody, scopeClusterBody, settingsBody] = await Promise.all([
+    api("/api/provider-profiles"), api("/api/provider-profiles/pools"), api("/api/projects"), api("/api/workspaces"), api("/api/provider-profiles/relay-rules"), api("/api/provider-profiles/clusters"), api("/api/settings"),
   ]);
-  profiles = body.profiles; pools = poolBody.pools; selections = body.selections; projects = projectBody.projects; workspaces = workspaceBody.workspaces; clusters = clusterBody.clusters; scopeClusters = scopeClusterBody.clusters;
+  profiles = body.profiles; pools = poolBody.pools; selections = body.selections; projects = projectBody.projects; workspaces = workspaceBody.workspaces; relayRules = relayRuleBody.rules; scopeClusters = scopeClusterBody.clusters;
   conversationDefaultProvider = settingsBody.conversationDefaults.pi.provider;
   for (const id of profileStatuses.keys()) if (!profiles.some((profile) => profile.id === id)) profileStatuses.delete(id);
   if (!profileProvider) profileProvider = assignmentProvider = (PROVIDERS.find(({ id }) => profiles.some((profile) => profile.provider === id)) ?? PROVIDERS[0]).id;
@@ -347,7 +347,7 @@ function sortedMembers(pool) { return [...pool.members].sort((left, right) => le
 /** Where a pool is chosen, in words, so a card says whether it does anything yet. */
 function poolUses(pool) {
   const uses = selections.filter((selection) => selection.poolId === pool.id).map((selection) => `${scopeName(selection)} (${providerOf(selection.provider).name})`);
-  for (const cluster of clusters) if (cluster.subscriptionPool?.poolId === pool.id) uses.push(`Cluster ${cluster.name}`);
+  for (const rule of relayRules) if (rule.ownedHere && rule.poolId === pool.id) uses.push(`Relay rule for ${rule.groupName}`);
   return uses;
 }
 function poolCard(pool) {
@@ -559,16 +559,15 @@ function assignmentsSection() {
   const section = el("section", { testid: "provider-assignments", className: "profile-section" });
   const tabs = providerTabs(assignmentProvider, (id) => { assignmentProvider = id; exceptionDraft = null; pages.exceptions = 0; rerender("assignments"); }, "provider-assignment-provider",
     (id) => selections.filter((item) => item.provider === id).length);
-  section.append(tabs, ...clusterOverrideNote(assignmentProvider), defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
+  section.append(tabs, ...relayRuleNote(assignmentProvider), defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
   return section;
 }
-/** A pool a member attached to a whole cluster (an older, cluster-wide kind) still wins in that cluster's projects. */
-function clusterOverrideNote(provider) {
-  const assigned = clusters.filter((cluster) => cluster.subscriptionPool);
-  if (provider === "kiro" || !assigned.length) return [];
-  const uses = assigned.map((cluster) => `${cluster.name} uses ${poolNamed(cluster.subscriptionPool.poolId)?.name ?? cluster.subscriptionPool.manifest?.name ?? "another member's pool"}`);
+/** A relay rule wins in its group's projects over every choice here; set on the relay, never on this page. */
+function relayRuleNote(provider) {
+  if (provider === "kiro" || !relayRules.length) return [];
+  const uses = relayRules.map((rule) => `${rule.groupName} uses ${rule.poolName}`);
   return [el("p", { testid: "provider-assignment-cluster-note", className: "assignment-cluster-note",
-    text: `A pool is attached to a whole cluster, for every member, so it is used in that cluster's projects whatever you choose here: ${uses.join("; ")}.` })];
+    text: `Set by relay: in projects shared through a relay group, its relay's pool is used whatever you choose here: ${uses.join("; ")}. Your choices apply everywhere else.` })];
 }
 /** What a turn uses when nothing is chosen at any level, as the server resolves it. */
 function automaticDefault(provider) {
@@ -641,6 +640,7 @@ function exceptionRow(entry) {
   const usable = usableChoice(entry.provider, value);
   const who = el("span", { className: `assignment-exception-choice${usable ? "" : " invalid"}`, testid: "provider-exception-choice" });
   who.append(providerMark(entry.provider), usable ? choiceLabel(value) : `${choiceLabel(value)} — unavailable, choose another`);
+  if (entry.scope === "cluster" && relayRules.some((rule) => rule.clusterId === entry.scopeId)) who.append(" — the relay's pool wins here");
   const remove = actionButton("Remove", "provider-exception-remove", async () => {
     if (!await confirmAction({ title: "Remove exception?", message: `${scopeName(entry)} goes back to the next matching choice. ${HISTORY_WARNING}`, confirmLabel: "Remove" })) return;
     await putSelection({ provider: entry.provider, scope: entry.scope, scopeId: entry.scopeId, profileId: null });

@@ -1524,6 +1524,7 @@
             <button class="settings-subtab" type="button" role="tab" id="relayTab-machines" data-relay-tab="machines" data-testid="relay-tab-machines" aria-controls="relayMachinesSection" aria-selected="false">Machines <span class="cluster-tab-count"></span></button>
             <button class="settings-subtab" type="button" role="tab" id="relayTab-tokens" data-relay-tab="tokens" data-testid="relay-tab-tokens" aria-controls="relayTokensSection" aria-selected="false">Tokens</button>
             <button class="settings-subtab" type="button" role="tab" id="relayTab-audit" data-relay-tab="audit" data-testid="relay-tab-audit" aria-controls="relayAuditSection" aria-selected="false">Audit log</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-pools" data-relay-tab="pools" data-testid="relay-tab-pools" aria-controls="relayPoolsSection" aria-selected="false">Pools</button>
           </div>
 
           <section class="relay-section relays-section" id="relayJoinedSection" role="tabpanel" aria-labelledby="relayTab-joined" data-testid="relay-joined-section">
@@ -1616,6 +1617,11 @@
             <p class="settings-hint relay-inline-status" id="relayAuditStatus" role="status" data-testid="relay-audit-status"></p>
             <div class="relay-list" id="relayAuditList" data-testid="relay-audit-list"></div>
             <div class="relay-pager" id="relayAuditPager" data-testid="relay-audit-pager" hidden></div>
+          </section>
+          <section class="relay-section" id="relayPoolsSection" role="tabpanel" aria-labelledby="relayTab-pools" data-testid="relay-pools-section" hidden>
+            <p class="settings-hint">A pool chosen here is a relay rule: every project shared through this relay's group uses it, on every machine, whatever each person chose for themselves. Make the pool under Connections on this relay. Anywhere else, choices stay personal.</p>
+            <div id="relayPoolRule" data-testid="relay-pool-rule"></div>
+            <p class="settings-hint relay-inline-status" id="relayPoolsStatus" role="status" data-testid="relay-pools-status"></p>
           </section>
         </section>
 

@@ -214,6 +214,18 @@ async function choosableClusters(accountId: string): Promise<Array<{ id: string;
   return listSharingMemberships(db, local.id, true).filter(({ clusterId }) => accountInCluster(db, accountId, clusterId))
     .flatMap(({ clusterId }) => { const row = named.get(clusterId) as { name: string } | undefined; return row ? [{ id: clusterId, name: row.name }] : []; });
 }
+/** Relay rules this machine follows: a pool a relay set for its whole group, which wins over everyone's own choices there. */
+app.get("/api/provider-profiles/relay-rules", route(async (_request, response) => {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  const named = db.prepare("SELECT name FROM sharing_clusters WHERE id=? AND closed=0");
+  const rules = listSharingMemberships(db, local.id, true).flatMap(({ clusterId }) => {
+    const assignment = getClusterSubscriptionPool(db, clusterId), row = named.get(clusterId) as { name: string } | undefined;
+    if (!assignment?.manifest || !row) return [];
+    return [{ clusterId, groupName: row.name, poolId: assignment.poolId, poolName: assignment.manifest.name,
+      providers: [...new Set(assignment.manifest.members.map(({ provider }) => provider))], ownedHere: assignment.poolOwnerNodeId === local.id }];
+  });
+  response.json({ rules });
+}));
 app.get("/api/provider-profiles/clusters", route(async (_request, response) => {
   response.json({ clusters: await choosableClusters(owner(response)) });
 }));

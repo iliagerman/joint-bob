@@ -102,6 +102,19 @@ function heldAssignment(db: DatabaseSync, clusterId: string): AssignmentRow | un
     FROM cluster_subscription_pool_assignments WHERE cluster_id=?`).get(clusterId) as AssignmentRow | undefined;
 }
 
+/** The relay that serves a relay group; undefined for an ordinary cluster. */
+export function relayOfGroup(db: DatabaseSync, clusterId: string): string | undefined {
+  ensureClusterSharingPolicySchema(db);
+  return (db.prepare("SELECT relay_node_id FROM relay_sharing_groups WHERE cluster_id=?").get(clusterId) as { relay_node_id: string } | undefined)?.relay_node_id;
+}
+/**
+ * A pool for a whole group is a relay rule: only the relay sets it, and it wins over every member's own choices.
+ * A cluster-wide row any other node made (before this rule) is ignored, so elsewhere choices stay personal.
+ */
+function relayRule(db: DatabaseSync, assignment: ClusterSubscriptionPoolAssignment): boolean {
+  return relayOfGroup(db, assignment.clusterId) === assignment.originNodeId;
+}
+
 function validateManager(db: DatabaseSync, actorNodeId: string, clusterId: string, expectedEpoch: number): void {
   const state = getSharingCluster(db, clusterId);
   if (state.closed || state.managerNodeId !== actorNodeId || state.managerEpoch !== expectedEpoch) {
@@ -151,6 +164,7 @@ export function setClusterSubscriptionPool(
 ): ClusterSubscriptionPoolAssignment {
   ensureClusterSubscriptionPoolSchema(db);
   validateManager(db, managerNodeId, clusterId, expectedEpoch);
+  if (relayOfGroup(db, clusterId) !== managerNodeId) throw new Error("Only a relay assigns a pool to a whole group. Here, add a Cluster exception: it applies to you and your twins.");
   const manifest = manifestSchema.parse(manifestInput);
   if (!listSharingClusterMembers(db, clusterId).some(({ nodeId }) => nodeId === poolOwnerNodeId)) {
     throw new Error("Pool owner must be a current cluster member");
@@ -188,7 +202,8 @@ export function clearClusterSubscriptionPool(
 export function getClusterSubscriptionPool(db: DatabaseSync, clusterId: string): ClusterSubscriptionPoolAssignment | undefined {
   ensureClusterSubscriptionPoolSchema(db);
   const row = heldAssignment(db, clusterId);
-  return row && row.deleted === 0 ? rowAssignment(row) : undefined;
+  const assignment = row && row.deleted === 0 ? rowAssignment(row) : undefined;
+  return assignment && relayRule(db, assignment) ? assignment : undefined;
 }
 
 export function assignedClusterPoolsForOwner(db: DatabaseSync, poolOwnerNodeId: string, poolId: string): ClusterSubscriptionPoolAssignment[] {
@@ -196,6 +211,7 @@ export function assignedClusterPoolsForOwner(db: DatabaseSync, poolOwnerNodeId: 
   return (db.prepare(`SELECT cluster_id,pool_owner_node_id,pool_id,manifest,manager_epoch,revision,updated_at,deleted,origin_node_id
     FROM cluster_subscription_pool_assignments WHERE pool_owner_node_id=? AND pool_id=? AND deleted=0 ORDER BY cluster_id`)
     .all(poolOwnerNodeId, poolId) as unknown as AssignmentRow[]).map(rowAssignment)
+    .filter((assignment) => relayRule(db, assignment))
     .filter((assignment) => listSharingClusterMembers(db, assignment.clusterId).some(({ nodeId }) => nodeId === poolOwnerNodeId));
 }
 

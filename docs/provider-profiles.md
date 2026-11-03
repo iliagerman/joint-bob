@@ -36,7 +36,7 @@ The most specific saved choice wins:
 4. Workspace
 5. Your default
 
-A project shared through two clusters with different cluster choices stops with an error naming the conflict; keep one cluster choice or add a project exception.
+A [relay rule](#relay-rules) beats all of these in its relay group's projects. A project shared through two clusters with different cluster choices stops with an error naming the conflict; keep one cluster choice or add a project exception.
 
 Choose the first option as the default, or remove an exception, to clear a choice at that level. When nothing is chosen at any level and you have exactly one private profile for the provider, that profile is used; the default picker shows it as **Automatic**. With two or more, none is guessed. To run on this machine's own sign-in while you have profiles, choose **This machine's own sign-in** (Claude and ChatGPT only), as the default or as an exception: it uses no profile at that level, and it stops the automatic single-profile default there. Only the node administrator can run on the machine's own sign-in; members are asked to select their own profile. A Pi profile holds several providers, so a single Pi profile is used only for turns whose provider it holds. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work. A choice that points at a profile shared for automation is marked in red as unavailable and must be changed before your next turn.
 
@@ -54,7 +54,13 @@ A retry is allowed only for a recognized subscription quota, authentication, or 
 
 To use a profile or pool in the projects shared through one cluster or relay group, add a **Cluster** exception on the **Assignments** tab. It is your own choice, like any other: it syncs to your twins and applies on your machines only. Other members keep their own choices, and no cluster member or manager is asked, so an offline member cannot block it. It applies wherever your turn runs with your choices, including when a teammate works through the relay on a project you own. Your other projects keep your other choices at the same time.
 
-A pool can also be attached to a whole cluster for every member, an older kind of assignment that the page no longer creates. If a member has made one, the **Assignments** tab names it, and it still wins in that cluster's projects. The pool owner made it after every member confirmed pool-protocol support; for a relay group, the relay signs it as the group's manager, and while it is attached a machine without pool support cannot join. Only the pool owner can change or clear it.
+### Relay rules
+
+A pool for a whole group is set only on a relay. Sign in on the relay, make the profiles and pool under **Connections** there, then open **Settings → Relay → Pools** and choose the pool for the relay's group. That is a relay rule: every project shared through the relay's group uses that pool on every machine using the relay, and it wins over every choice anyone made on their own machine, including project and conversation exceptions. Where no relay rule applies, each person's own choices apply. Choosing **No pool** removes the rule.
+
+The **Assignments** tab says when a relay rule applies, and marks a Cluster exception for that relay group as overridden. No other node can assign a pool to a whole cluster: an ordinary cluster's manager is refused, and a whole-cluster pool any machine saved before this rule is ignored. A machine that is offline when the relay saves the rule receives it when it returns; one that answers without pool support blocks the rule until it is updated. While a pool is attached, a machine without pool support cannot join the relay's group.
+
+The relay lends its pool's sign-ins: a member's turn borrows a short-lived token from the relay, so the relay must be online when a member needs a new token.
 
 Cluster members receive a signed, non-secret pool manifest, not provider credentials. When a turn needs a profile held on another node, the manager revalidates the current cluster assignment and membership before the holder lends a short-lived access token over the signed peer channel. The refresh credential stays on the profile holder; the borrowed token is kept in memory and never becomes a cluster manifest.
 
