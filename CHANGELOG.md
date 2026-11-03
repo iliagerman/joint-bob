@@ -3,6 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.210.0 — 2026-11-03
+
+- Telegram now has its own place under **Resources → Telegram**, replacing the webhook reply option: paste a bot token and open a one-time link. Your own chat with the bot is the same assistant as the app. A group shares one context, and the decision model chooses which messages to answer.
+- Telegram is closed by default: only you, people you approve and groups you approve can reach the assistant. Forged calls are refused, and the agent can't read the bot's token.
+- Assistants now write a draft when a message in a relay group or direct request expects your reply. Post, edit or discard it in Activity; nothing is sent until you post it.
+- Added skills only one assistant has, and a single **Findable** switch that hides you or an assistant from everyone at once.
+- Changed webhooks routed through an assistant: the decision model now always chooses the conversation, each sender keeps their own, and they run in the project folder.
+- Fixed assistant turns being recorded as failed after the agent had answered.
+- Fixed relay switches in assistant Settings showing as text on machines with a relay.
+
 ## 2.209.0 — 2026-11-03
 
 - Added assistant collaboration: your assistants can ask your other private assistants for help, and answer other people's requests with the public actions your other assistants publish.
