@@ -3,13 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.206.1 — 2026-11-03
+
+- Fixed slow or stuck connections between your machines: a peer that the relay reports online is now reached through the relay first, and its direct address is used only when the relay cannot reach it.
+- Fixed connections that open and then go silent on some VPNs: the machine now switches to polling, re-tests WebSockets every 30 minutes, and fails a connection that never opens after 15 seconds instead of hanging.
+- Fixed dialog action buttons scrolling out of view on tall dialogs; they now stay pinned at the bottom while the content scrolls.
+
 ## 2.206.0 — 2026-11-03
 
-- Added a GitHub secret picker to pull request and pipeline views, so you can choose an eligible saved account when GitHub denies access. The choice applies to all GitHub reads and actions, including on another machine, without changing project secret attachments. Tokens stay on the machine that owns them.
-
-## 2.205.1 — 2026-11-03
-
-- Fixed overlapping Activity panel controls in narrow panels by showing icons without labels, while preserving accessible names and hover titles.
+- Added a GitHub secret picker to pull request and pipeline views: when GitHub returns an access error, you can choose a saved GitHub account this project may use and try again, and the choice applies to every read and action, including on another machine. Tokens stay on the machine that owns them.
 
 ## 2.205.0 — 2026-11-03
 
