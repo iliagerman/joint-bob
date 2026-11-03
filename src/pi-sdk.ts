@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type * as Pi from "@earendil-works/pi-coding-agent";
 import { resolveDataDirectory } from "./data-directory.js";
+import { brandSignInPages } from "./harnesses/pi/sign-in-branding.js";
 
 /**
  * Pi conversations run on the app-managed Pi harness (`<data>/harnesses/pi`), which the daily
@@ -85,6 +86,8 @@ export async function loadPiSdk(dataDir: string, worker?: { entry: string | unde
   }
   try {
     const copy = await frozenCopy(dataDir, installed.version);
+    // Cosmetic: a sign-in page that keeps Pi's logo must never keep Pi from loading.
+    await brandSignInPages(copy).catch((error: unknown) => console.warn(`Pi ${installed.version} sign-in pages keep Pi's logo: ${reasonOf(error)}`));
     const entry = path.join(copy, path.relative(managedPiNodeModules(dataDir), installed.entry));
     const sdk = await import(pathToFileURL(entry).href) as PiModule;
     return { sdk, status: { source: "harness", version: installed.version, reason: null, harnessVersion: installed.version }, entry };

@@ -11,7 +11,7 @@ import { claudeOAuthIdentity } from "./claude-identity.js";
 import { prepareClaudeProfile, readLegacyClaudeCredential, removeLegacyClaudeCredential } from "./claude.js";
 import { withProfileAuthority } from "./broker.js";
 import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
-import { accessibleProviderProfile, listProviderProfiles, providerProfile, resolveProviderProfile, type ProfileProvider, type ProviderProfile } from "./store.js";
+import { accessibleProviderProfile, listProviderProfiles, providerProfile, resolveProviderProfile, type ProfileProvider, type ProfileScope, type ProviderProfile } from "./store.js";
 
 export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolSelection, updateSubscriptionPool } from "./pools.js";
 
@@ -61,7 +61,7 @@ export async function bootstrapPiProfile(projectId: string, conversationId: stri
   const project = await asNode(() => getProject(projectId));
   if (!project) throw new Error("Project not found");
   const { resolveSubscriptionChoice } = await import("./pools.js");
-  const choice = resolveSubscriptionChoice(accountId, "pi", { projectId, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive");
+  const choice = resolveSubscriptionChoice(accountId, "pi", await projectScope(project.id, project.type!, conversationId), automation ? "automation" : "interactive");
   return choice?.kind === "profile" ? choice.profile : undefined;
 }
 
@@ -89,16 +89,22 @@ export async function projectProviderProfile(projectId: string, conversationId: 
   if (!accountId) return undefined;
   const project = await asNode(() => getProject(projectId));
   if (!project) throw new Error("Project not found");
+  const scope = await projectScope(project.id, project.type!, conversationId);
   if (engine === "pi") {
-    const selected = resolveProviderProfile(accountId, "pi", { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive");
+    const selected = resolveProviderProfile(accountId, "pi", scope, automation ? "automation" : "interactive");
     if (selected) return selected.profile;
   }
   const subscription = targetProvider === "claude" || targetProvider === "openai-codex" || (engine === "kiro" && targetProvider === "kiro");
-  const profile = (subscription ? resolveProviderProfile(accountId, targetProvider, { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive")?.profile : undefined)
+  const profile = (subscription ? resolveProviderProfile(accountId, targetProvider, scope, automation ? "automation" : "interactive")?.profile : undefined)
     ?? (engine === "pi" ? onlyPiProfileHolding(accountId, provider) : undefined);
   if (!subscription) return profile;
   if (!profile && accountId !== adminAccountId()) throw new Error("Select your own subscription profile on this node. No other user's account was used.");
   return profile;
+}
+/** Where a turn runs, including the clusters its project is shared through for cluster choices. */
+async function projectScope(projectId: string, workspaceId: string, conversationId: string | undefined): Promise<ProfileScope> {
+  const [{ clusterV2Database }, { getClusterNode }, { projectClusterIds }] = await Promise.all([import("../cluster-v2-store.js"), import("../cluster.js"), import("./pool-sharing.js")]);
+  return { projectId, workspaceId, conversationId, clusterIds: projectClusterIds(await clusterV2Database(), (await getClusterNode()).id, projectId) };
 }
 /** A single Pi profile serves a Pi turn whose provider it holds; it is never guessed for a provider it lacks. */
 function onlyPiProfileHolding(owner: string, provider: string): ProviderProfile | undefined {

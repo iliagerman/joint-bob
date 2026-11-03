@@ -668,6 +668,10 @@ function appendMessageAttachments(bubble, attachments) {
 // live assistant attribution until the next user message starts a new turn.
 let pendingRoutingConfidence = null;
 
+function connectionLabel(connection) {
+  return connection.poolName ? `pool ${connection.poolName} · profile ${connection.profileLabel}` : `profile ${connection.profileLabel}`;
+}
+
 function assistantAttribution(attribution) {
   const live = attribution === undefined;
   const execution = attribution || {};
@@ -680,10 +684,12 @@ function assistantAttribution(attribution) {
   const label = document.createElement("span");
   label.className = "message-attribution";
   label.dataset.testid = "assistant-attribution";
+  const connection = live && state.turnConnection ? ` · ${connectionLabel(state.turnConnection)}` : "";
   const confidence = live && pendingRoutingConfidence !== null ? ` · ${Math.round(pendingRoutingConfidence * 100)}%` : "";
-  label.setAttribute("aria-label", `${harness} · ${model} · ${reasoning}${confidence}`);
-  label.title = `${harness} · ${model} · ${reasoning}${confidence}`;
-  label.append(brandIcon(harnessId, `message-attribution-icon ${harnessId}`), document.createTextNode(`${model} · ${reasoning}${confidence}`));
+  const summary = `${model} · ${reasoning}${connection}${confidence}`;
+  label.setAttribute("aria-label", `${harness} · ${summary}`);
+  label.title = `${harness} · ${summary}`;
+  label.append(brandIcon(harnessId, `message-attribution-icon ${harnessId}`), document.createTextNode(summary));
   return label;
 }
 
@@ -1047,6 +1053,18 @@ export function markPromptRouted(routing) {
   else if (routing.skipped) note.textContent = `Routing skipped: ${routing.skipped}`;
   else if (routing.mapped) note.textContent = `Routed: difficulty ${routing.level} → ${routing.provider}/${routing.modelId} (${routing.thinkingLevel})`;
   else note.textContent = `Difficulty ${routing.level}: no mapping, conversation model kept`;
+  if (!note.isConnected) bubble.append(note);
+}
+
+/** Which connection (and pool) this message's turn runs on. A pool retry replaces the note. */
+export function markPromptConnection({ queueId, pool, profile }) {
+  const bubble = (queueId && elements.messages.querySelector(`[data-queue-id="${CSS.escape(queueId)}"]`))
+    || [...elements.messages.querySelectorAll(".message.user")].at(-1);
+  if (!bubble) return;
+  const note = bubble.querySelector(".connection-note") || document.createElement("div");
+  note.className = "connection-note";
+  note.dataset.testid = "connection-note";
+  note.textContent = pool ? `Pool ${pool.name} · connection ${profile.label}` : `Connection ${profile.label}`;
   if (!note.isConnected) bubble.append(note);
 }
 

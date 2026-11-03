@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.202.0 — 2026-11-02
+
+- Cluster exceptions on Assignments: a profile or pool can now be chosen for the projects shared through one cluster or relay group. It is your own choice, syncs to your twins, and never asks the cluster or its members, so an offline member cannot fail it. Cluster pool attachment on the Pools tab is no longer offered; an older cluster-wide assignment still applies.
+- Profile and pool cards in a row now line their buttons up along the bottom.
+- Each message's turn shows the pool and profile it uses; a running reply's label shows them too.
+- The Claude and ChatGPT sign-in pages show their own logo instead of Pi's.
+- Chat wording no longer says Pi wherever the app is not specific to Pi.
+
 ## 2.201.3 — 2026-11-02
 
 - Fixed the assistant chat's send button turning grey with nothing to explain it: the sent message and a running "Working on it…" time now stay in the chat until the answer arrives.

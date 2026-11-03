@@ -19,7 +19,8 @@ function kiroConfigRequired(value: { provider: string; kiro?: unknown; shared?: 
 }
 export type ProfileProvider = z.infer<typeof profileProviderSchema>;
 export const profileInputSchema = z.object({ label: z.string().trim().min(1).max(80), provider: profileProviderSchema, kiro: kiroProfileConfigSchema.optional() }).strict().superRefine(kiroConfigRequired);
-const scopeSchema = z.enum(["default", "workspace", "project", "conversation"]);
+/** "cluster": projects shared through one cluster. A personal choice, so it follows its owner and their twins only. */
+const scopeSchema = z.enum(["default", "workspace", "cluster", "project", "conversation"]);
 export const profileSelectionSchema = z.object({ provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable(), poolId: z.string().uuid().nullable().optional() }).strict().superRefine((value, ctx) => {
   if ((value.scope === "default") !== (value.scopeId === "")) ctx.addIssue({ code: "custom", message: "Only the default scope has an empty scopeId" });
   if (value.profileId && value.poolId) ctx.addIssue({ code: "custom", message: "Choose either a profile or a pool" });
@@ -28,7 +29,8 @@ export const profileSelectionSchema = z.object({ provider: profileProviderSchema
 export type ProfileSelection = z.infer<typeof profileSelectionSchema>;
 export interface ProviderProfile { id: string; owner: string; label: string; provider: ProfileProvider; createdAt: string; shared: boolean; kiro?: z.infer<typeof kiroProfileConfigSchema> }
 export type ProfileUsage = "interactive" | "automation";
-export interface ProfileScope { projectId: string; workspaceId: string; conversationId?: string }
+/** `clusterIds`: the clusters the project is shared through, as this node sees them. */
+export interface ProfileScope { projectId: string; workspaceId: string; conversationId?: string; clusterIds?: readonly string[] }
 type Stamp = { updatedAt: string; originNodeId: string };
 
 let prepared: DatabaseSync | undefined;
@@ -210,17 +212,28 @@ export function setProviderPoolSelection(owner: string, input: unknown): void {
   if (!table || !db.prepare("SELECT 1 FROM subscription_pools WHERE owner=? AND id=? AND deleted=0").get(owner, value.poolId)) throw new Error("Subscription pool not found on this node");
   transaction(db, () => writePoolSelection(db, owner, value, stamp(db, origin(db))));
 }
-export function resolveProviderProfile(owner: string, provider: ProfileProvider, scope: ProfileScope, usage: ProfileUsage = "interactive"): { profile: ProviderProfile; source: ProfileSelection["scope"] } | undefined {
-  const selections = listSubscriptionSelections(owner).filter((entry) => entry.provider === provider);
-  const targets: Array<[ProfileSelection["scope"], string]> = [
-    ...(scope.conversationId ? [["conversation", JSON.stringify([scope.projectId, scope.conversationId])] as ["conversation", string]] : []),
-    ["project", scope.projectId], ["workspace", scope.workspaceId], ["default", ""],
-  ];
-  for (const [source, id] of targets) {
-    const match = selections.find((entry) => entry.scope === source && entry.scopeId === id);
-    if (match?.poolId) throw new Error("Selected subscription pool requires pool-aware execution");
-    if (match?.profileId) return { profile: accessibleProviderProfile(owner, match.profileId, usage), source };
+type SavedSelection = ProfileSelection & { poolId: string | null };
+/**
+ * The most specific saved choice: conversation, project, a cluster the project is shared through,
+ * workspace, then default. Two clusters with different choices for one project have no single
+ * answer, so that fails rather than picking one.
+ */
+export function matchingSelection(selections: readonly SavedSelection[], scope: ProfileScope): { entry: SavedSelection; source: ProfileSelection["scope"] } | undefined {
+  const at = (source: ProfileSelection["scope"], scopeId: string) => selections.find((entry) => entry.scope === source && entry.scopeId === scopeId);
+  const specific = at("conversation", scope.conversationId ? JSON.stringify([scope.projectId, scope.conversationId]) : "") ?? at("project", scope.projectId);
+  if (specific) return { entry: specific, source: specific.scope };
+  const clustered = selections.filter((entry) => entry.scope === "cluster" && scope.clusterIds?.includes(entry.scopeId));
+  if (new Set(clustered.map((entry) => entry.poolId ?? entry.profileId)).size > 1) {
+    throw new Error("This project is shared through several clusters with different choices. Keep one, or add a project exception.");
   }
+  if (clustered.length) return { entry: clustered[0], source: "cluster" };
+  const general = at("workspace", scope.workspaceId) ?? at("default", "");
+  return general ? { entry: general, source: general.scope } : undefined;
+}
+export function resolveProviderProfile(owner: string, provider: ProfileProvider, scope: ProfileScope, usage: ProfileUsage = "interactive"): { profile: ProviderProfile; source: ProfileSelection["scope"] } | undefined {
+  const match = matchingSelection(listSubscriptionSelections(owner).filter((entry) => entry.provider === provider), scope);
+  if (match?.entry.poolId) throw new Error("Selected subscription pool requires pool-aware execution");
+  if (match?.entry.profileId) return { profile: accessibleProviderProfile(owner, match.entry.profileId, usage), source: match.source };
   const only = onlyPrivateProfile(owner, provider);
   return only ? { profile: only, source: "default" } : undefined;
 }

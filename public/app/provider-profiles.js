@@ -14,6 +14,7 @@ const PROVIDERS = [
 const POOL_PROVIDERS = PROVIDERS.filter((provider) => provider.id !== "kiro");
 const SCOPES = [
   { id: "workspace", label: "Workspace", icon: "folder" },
+  { id: "cluster", label: "Cluster", icon: "share" },
   { id: "project", label: "Project", icon: "folder" },
   { id: "conversation", label: "Conversation", icon: "chat" },
 ];
@@ -21,7 +22,8 @@ const PAGE_SIZE = { profiles: 4, pools: 4, exceptions: 6 };
 const HISTORY_WARNING = "The next turn may send conversation history under a different provider account. Running turns keep their current account.";
 
 let root;
-let profiles = [], pools = [], selections = [], projects = [], workspaces = [], clusters = [], modelCatalog = [];
+/** `clusters`: Settings' cluster list, with any cluster-wide pool. `scopeClusters`: what a cluster choice can name, relay groups included. */
+let profiles = [], pools = [], selections = [], projects = [], workspaces = [], clusters = [], scopeClusters = [], modelCatalog = [];
 let modelCatalogError = "";
 let modelCatalogLoad;
 let conversationDefaultProvider = "claude";
@@ -113,10 +115,10 @@ export async function loadProviderProfiles() {
     root.setAttribute("aria-labelledby", "providerProfilesTitle");
     document.querySelector("#settingsPanel-connections").append(root);
   }
-  const [body, poolBody, projectBody, workspaceBody, clusterBody, settingsBody] = await Promise.all([
-    api("/api/provider-profiles"), api("/api/provider-profiles/pools"), api("/api/projects"), api("/api/workspaces"), api("/api/clusters"), api("/api/settings"),
+  const [body, poolBody, projectBody, workspaceBody, clusterBody, scopeClusterBody, settingsBody] = await Promise.all([
+    api("/api/provider-profiles"), api("/api/provider-profiles/pools"), api("/api/projects"), api("/api/workspaces"), api("/api/clusters"), api("/api/provider-profiles/clusters"), api("/api/settings"),
   ]);
-  profiles = body.profiles; pools = poolBody.pools; selections = body.selections; projects = projectBody.projects; workspaces = workspaceBody.workspaces; clusters = clusterBody.clusters;
+  profiles = body.profiles; pools = poolBody.pools; selections = body.selections; projects = projectBody.projects; workspaces = workspaceBody.workspaces; clusters = clusterBody.clusters; scopeClusters = scopeClusterBody.clusters;
   conversationDefaultProvider = settingsBody.conversationDefaults.pi.provider;
   for (const id of profileStatuses.keys()) if (!profiles.some((profile) => profile.id === id)) profileStatuses.delete(id);
   if (!profileProvider) profileProvider = assignmentProvider = (PROVIDERS.find(({ id }) => profiles.some((profile) => profile.provider === id)) ?? PROVIDERS[0]).id;
@@ -386,50 +388,14 @@ function poolsSection() {
   poolMode = "list";
   const create = actionButton("New pool", "subscription-pool-new", () => { poolEditor = emptyPoolEditor(); poolMode = "edit"; rerender("pools"); }, { icon: "plus", className: "primary profile-action" });
   const head = el("div", { className: "profile-section-toolbar" });
-  head.append(sectionHeader("Pools", "A pool is an ordered list of your private profiles. When the one in use runs out of quota or its sign-in fails, the next one takes over."), create);
+  head.append(sectionHeader("Pools", "A pool is an ordered list of your private profiles. When the one in use runs out of quota or its sign-in fails, the next one takes over. To use a pool only in one cluster's projects, add a Cluster exception under Assignments."), create);
   const list = el("div", { testid: "subscription-pool-list", className: "subscription-pool-grid" });
   list.append(...pageOf("pools", pools).map(poolCard));
   if (!pools.length) list.append(el("p", { className: "profile-empty", text: "No pools yet. Add profiles on the Profiles tab, then group them here so a turn can move to the next one when a quota runs out." }));
-  section.append(head, list, ...pager("pools", pools.length, "subscription-pool"), clustersSection());
+  section.append(head, list, ...pager("pools", pools.length, "subscription-pool"));
   return section;
 }
 
-function clustersSection() {
-  const section = el("section", { testid: "subscription-pool-clusters", className: "profile-section" });
-  if (!clusters.length) return section;
-  const list = el("div", { className: "cluster-pool-list" });
-  for (const cluster of clusters) list.append(clusterPoolRow(cluster));
-  section.append(sectionHeader("Cluster pools", "A pool assigned to a cluster is used by every member, whatever their own choices, but only in projects shared through that cluster; everyone's choices keep applying to their other projects. Every current member must support pools; for a relay group, so must the relay. To attach one profile, make a pool with just that profile."), list);
-  return section;
-}
-function clusterPoolRow(cluster) {
-  const assignment = cluster.subscriptionPool;
-  const ownPool = assignment && poolNamed(assignment.poolId);
-  const row = el("div", { testid: "cluster-pool-row", className: "cluster-pool-row" }); row.dataset.clusterId = cluster.id;
-  const options = [{ value: "", label: "No pool assigned" }, ...pools.filter((pool) => !assignment || pool.id === assignment.poolId).map((pool) => ({ value: pool.id, label: pool.name, detail: `${pool.members.length} profiles` }))];
-  if (assignment && !ownPool) options.push({ value: assignment.poolId, label: assignment.manifest?.name ?? "Pool assigned by another member", detail: "Only its owner can change this assignment" });
-  const picker = createSearchableSelect({ id: `clusterPool${cluster.id}`, testid: "cluster-pool-select", label: `Subscription pool for ${cluster.name}`, prompt: "No pool assigned", placeholder: "Search pools", emptyText: "No pools found" });
-  picker.setOptions(options); picker.setValue(assignment?.poolId ?? ""); picker.disabled = Boolean(assignment && !ownPool);
-  const save = actionButton("Save assignment", "cluster-pool-save", async () => {
-    const selected = picker.value;
-    if (selected === (assignment?.poolId ?? "")) return;
-    if (assignment && selected) throw new Error("Remove the current cluster pool before assigning a different one");
-    if (selected) {
-      const pool = poolNamed(selected);
-      if (!await confirmAction({ title: `Assign ${pool.name} to ${cluster.name}?`, message: `This overrides every member's personal profile choice only for projects shared through ${cluster.name}. The pool's sign-in remains on its holder node.`, confirmLabel: "Assign pool" })) return;
-      await api(`/api/clusters/${cluster.id}/subscription-pool`, { method: "POST", body: JSON.stringify({ poolId: selected, expectedEpoch: cluster.managerEpoch }) });
-    } else if (assignment) {
-      if (!await confirmAction({ title: `Remove the pool from ${cluster.name}?`, message: "Projects shared through this cluster will use each person's normal subscription choice again.", confirmLabel: "Remove pool" })) return;
-      await api(`/api/clusters/${cluster.id}/subscription-pool`, { method: "DELETE", body: JSON.stringify({ poolId: assignment.poolId, expectedEpoch: cluster.managerEpoch }) });
-    }
-    await loadProviderProfiles();
-  }, { icon: "check", className: "primary profile-action" });
-  const updateSaveState = () => { save.disabled = Boolean(assignment && !ownPool) || picker.value === (assignment?.poolId ?? ""); };
-  picker.onChange(updateSaveState); updateSaveState();
-  row.append(el("strong", { text: cluster.name }), picker.root, save);
-  if (assignment) row.append(el("span", { className: "profile-status-detail", text: ownPool ? `Assigned pool: ${ownPool.name}` : "This pool must be changed by its owner." }));
-  return row;
-}
 /** A dry run on the page only: marking a card unavailable never touches a real sign-in. */
 function simulationView(pool) {
   const back = actionButton("Back to pools", "subscription-pool-simulation-back", () => { poolMode = "list"; rerender("pools"); }, { icon: "back" });
@@ -596,13 +562,13 @@ function assignmentsSection() {
   section.append(tabs, ...clusterOverrideNote(assignmentProvider), defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
   return section;
 }
-/** A cluster's pool wins in projects shared through that cluster; these choices keep applying everywhere else. */
+/** A pool a member attached to a whole cluster (an older, cluster-wide kind) still wins in that cluster's projects. */
 function clusterOverrideNote(provider) {
   const assigned = clusters.filter((cluster) => cluster.subscriptionPool);
   if (provider === "kiro" || !assigned.length) return [];
   const uses = assigned.map((cluster) => `${cluster.name} uses ${poolNamed(cluster.subscriptionPool.poolId)?.name ?? cluster.subscriptionPool.manifest?.name ?? "another member's pool"}`);
   return [el("p", { testid: "provider-assignment-cluster-note", className: "assignment-cluster-note",
-    text: `In projects shared through a cluster with a pool, that pool is used whatever you choose here: ${uses.join("; ")}. Your choices below apply to every other project at the same time.` })];
+    text: `A pool is attached to a whole cluster, for every member, so it is used in that cluster's projects whatever you choose here: ${uses.join("; ")}.` })];
 }
 /** What a turn uses when nothing is chosen at any level, as the server resolves it. */
 function automaticDefault(provider) {
@@ -648,7 +614,7 @@ async function changeChoice(payload, title) {
   if (!await confirmAction({ title, message: HISTORY_WARNING, confirmLabel: "Save" })) { rerender("assignments"); return; }
   await putSelection(payload);
 }
-const SCOPE_RANK = { workspace: 0, project: 1, conversation: 2 };
+const SCOPE_RANK = { workspace: 0, cluster: 1, project: 2, conversation: 3 };
 function exceptionsBlock(provider) {
   const name = providerOf(provider).name;
   const exceptions = selections.filter((item) => item.provider === provider && item.scope !== "default")
@@ -660,7 +626,7 @@ function exceptionsBlock(provider) {
   list.append(...visible.map(exceptionRow));
   if (!exceptions.length) list.append(el("li", { className: "profile-empty", text: `No exceptions. Every ${name} conversation uses the profile above.` }));
   const add = exceptionDraft ? exceptionForm(provider) : actionButton("Add exception", "provider-exception-new", () => { exceptionDraft = { scope: "workspace" }; rerender("assignments"); }, { icon: "plus" });
-  block.append(sectionHeader("Exceptions", "Use a different profile or pool in one workspace, project, or conversation. When several match, the most specific wins: a conversation over its project, a project over its workspace."), list, ...pagination, add);
+  block.append(sectionHeader("Exceptions", "Use a different profile or pool in one workspace, in the projects shared through one cluster, in one project, or in one conversation. These are your choices: they apply on this machine and your twins, never to other members. When several match, the most specific wins: a conversation over its project, a project over its cluster, a cluster over its workspace."), list, ...pagination, add);
   void loadConversationTitles(visible).catch((error) => toast(error.message));
   return block;
 }
@@ -685,10 +651,12 @@ function exceptionForm(provider) {
   const scope = select("provider-exception-scope", SCOPES.map((item) => [item.id, item.label]), exceptionDraft.scope);
   scope.addEventListener("change", () => { exceptionDraft = { scope: scope.value }; rerender("assignments"); });
   const workspace = select("provider-exception-workspace", workspaces.map((item) => [item.id, item.label]));
+  const cluster = select("provider-exception-cluster", scopeClusters.map((item) => [item.id, item.name]));
   const project = select("provider-exception-project", projects.map((item) => [item.id, item.name]));
   const conversation = select("provider-exception-conversation", []);
   const targets = exceptionDraft.scope === "workspace" ? [labeled("Workspace", workspace)]
-    : [labeled("Project", project), ...(exceptionDraft.scope === "conversation" ? [labeled("Conversation", conversation)] : [])];
+    : exceptionDraft.scope === "cluster" ? [labeled("Cluster", cluster)]
+      : [labeled("Project", project), ...(exceptionDraft.scope === "conversation" ? [labeled("Conversation", conversation)] : [])];
   const fillConversations = async () => {
     const body = await api(`/api/projects/${encodeURIComponent(project.value)}/sessions`);
     conversation.replaceChildren(...body.sessions.map((item) => new Option(item.title, item.conversationId || item.id)));
@@ -699,7 +667,7 @@ function exceptionForm(provider) {
   }
   const account = createSearchableSelect({ id: "providerExceptionChoice", testid: "provider-exception-choice-select", label: "Profile or pool", prompt: "Choose a profile or pool", placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
   account.setOptions(choiceOptions(provider));
-  const scopeId = () => exceptionDraft.scope === "workspace" ? workspace.value : exceptionDraft.scope === "project" ? project.value : JSON.stringify([project.value, conversation.value]);
+  const scopeId = () => ({ workspace: workspace.value, cluster: cluster.value, project: project.value })[exceptionDraft.scope] ?? JSON.stringify([project.value, conversation.value]);
   const save = actionButton("Add exception", "provider-exception-add", async () => {
     if (!scopeId() || (exceptionDraft.scope === "conversation" && !conversation.value)) throw new Error(`Choose a ${exceptionDraft.scope} first`);
     if (!account.value) throw new Error(`Choose a ${providerOf(provider).name} profile or a pool first`);
@@ -715,6 +683,7 @@ function exceptionForm(provider) {
 function scopeName(entry) {
   if (entry.scope === "default") return "My default";
   if (entry.scope === "workspace") return workspaces.find((item) => item.id === entry.scopeId)?.label ?? "Unknown workspace";
+  if (entry.scope === "cluster") return scopeClusters.find((item) => item.id === entry.scopeId)?.name ?? "Unknown cluster";
   if (entry.scope === "project") return projects.find((item) => item.id === entry.scopeId)?.name ?? "Unknown project";
   const [projectId, conversationId] = JSON.parse(entry.scopeId);
   const project = projects.find((item) => item.id === projectId)?.name ?? "Unknown project";

@@ -12,7 +12,7 @@ import path from "node:path";
 import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { resolveClusterSubscriptionPools, type ClusterSubscriptionPoolAssignment } from "../provider-profiles/pool-sharing.js";
+import { projectClusterIds, resolveClusterSubscriptionPools, type ClusterSubscriptionPoolAssignment } from "../provider-profiles/pool-sharing.js";
 import { poolCandidates, resolveSubscriptionChoice } from "../provider-profiles/pools.js";
 import { withPoolProfile, type PoolProfileContext } from "../provider-profiles/context.js";
 import { classifyPoolAttemptFailure, resolvePoolModelSettings, runPoolAttempts } from "../provider-profiles/pool-execution.js";
@@ -179,7 +179,7 @@ function currentSettings(connection: HarnessChatConnection): QueuedSettings {
 }
 function selectedHarness(settings: QueuedSettings): HarnessId { return settings.harnessId ?? harnessForProvider(settings.provider).id; }
 
-interface TurnSubscriptionPool { id: string; fallbackModels: Partial<Record<ProfileProvider, string>>; candidates: PoolProfileContext[]; sameProviderOnly: boolean }
+interface TurnSubscriptionPool { id: string; name: string; fallbackModels: Partial<Record<ProfileProvider, string>>; candidates: PoolProfileContext[]; sameProviderOnly: boolean }
 function profileProviderForRuntime(provider: string): ProfileProvider | undefined {
   if (provider === "anthropic" || provider === "claude") return "claude";
   return provider === "openai-codex" ? provider : "pi";
@@ -195,20 +195,21 @@ async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, qu
     if (signatures.size > 1) throw new Error("This project has conflicting cluster subscription pools");
     const assignment = assignments[0];
     if (!assignment.manifest) throw new Error("The cluster pool manifest is unavailable");
-    return { id: assignment.poolId, fallbackModels: assignment.manifest.fallbackModels, sameProviderOnly: engine === "claude",
+    return { id: assignment.poolId, name: assignment.manifest.name, fallbackModels: assignment.manifest.fallbackModels, sameProviderOnly: engine === "claude",
       candidates: assignment.manifest.members.map((member) => ({ profileId: member.profileId, provider: member.provider, label: member.label,
         poolId: assignment.poolId, clusterId: assignment.clusterId, poolOwnerNodeId: assignment.poolOwnerNodeId })) };
   }
   if (queued.automationProfile?.profileId || !preferred) return undefined;
   const accountId = queued.automationProfile?.accountId ?? actingAccount()?.accountId ?? queued.author?.accountId ?? connection.author?.accountId;
   if (!accountId) return undefined;
-  const scope = { projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId };
+  const scope = { projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId, clusterIds: projectClusterIds(db, local.id, connection.project.id) };
   const usage = queued.automationProfile ? "automation" : "interactive";
   const choice = (engine === "pi" ? resolveSubscriptionChoice(accountId, "pi", scope, usage) : undefined)
     ?? resolveSubscriptionChoice(accountId, preferred, scope, usage);
+  if (choice?.kind === "profile") publish(connection, { type: "turnConnection", queueId: queued.id, profile: { label: choice.profile.label, provider: choice.profile.provider }, source: choice.source });
   if (choice?.kind !== "pool") return undefined;
   const profiles = poolCandidates(choice.pool, preferred);
-  return { id: choice.pool.id, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",
+  return { id: choice.pool.id, name: choice.pool.name, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",
     candidates: profiles.map((profile) => ({ profileId: profile.id, provider: profile.provider, label: profile.label, poolId: choice.pool.id, profile })) };
 }
 
@@ -511,6 +512,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
             if (["textDelta", "thinkingDelta", "toolStart", "assistantFinal"].includes(String(event.type))) started = true;
           });
           try {
+            if (!queued.systemEventId) publish(connection, { type: "turnConnection", queueId: queued.id, pool: { name: pool!.name }, profile: { label: candidate.label, provider: candidate.provider } });
             await withPoolProfile(candidate, async () => {
               await session.configure(settings);
               await session.preflight();

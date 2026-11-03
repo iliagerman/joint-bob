@@ -1769,7 +1769,7 @@ select.chat-toolbar-control {
 .queued-batch-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 6px; padding: 7px 9px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--muted); font-family: var(--mono); font-size: 11px; }
 .queued-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 7px; }
 .queued-badge { margin-right: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
-.routed-note { margin-top: 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; }
+.connection-note, .routed-note { margin-top: 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; }
 .routing-config-editor { display: grid; gap: 10px; }
 .routing-config-editor-title { margin: 4px 0 0; color: var(--text); font-size: 15px; }
 .routing-harness-picker { margin-top: 4px; }
@@ -4123,7 +4123,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .profile-actions .ghost, .profile-pager .ghost, .assignment-exception-row .ghost, .assignment-exception-form .ghost { border-color: var(--line-strong); background: var(--field); }
 .provider-profiles .ghost.danger { border-color: color-mix(in srgb, var(--danger) 40%, transparent); color: var(--danger); }
 .profile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
-.profile-card { --brand: var(--accent); display: grid; align-content: start; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--brand); border-radius: var(--radius-ctl); background: var(--panel); }
+.profile-card { --brand: var(--accent); display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--brand); border-radius: var(--radius-ctl); background: var(--panel); }
 .profile-card.claude { --brand: var(--claude); }
 .profile-card.openai-codex { --brand: #10a37f; }
 .profile-card.kiro { --brand: var(--kiro); }
@@ -4186,7 +4186,9 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .pool-fallback-field { display: grid; gap: 6px; min-width: 0; }
 .pool-fallback-field .searchable-select, .pool-fallback-field input { width: 100%; min-width: 0; }
 .subscription-pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
-.subscription-pool-card { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.subscription-pool-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+/* Cards in a row stretch to the tallest, so their buttons line up along the bottom. */
+:is(.profile-card, .subscription-pool-card) > .profile-actions { margin-top: auto; }
 .pool-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pool-card-head h4 { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 13px; }
 .pool-card-members { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: pool-member; }
@@ -4195,10 +4197,6 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .pool-card-uses { color: var(--text); }
 .pool-card-member strong { overflow-wrap: anywhere; font-size: 12px; }
 .pool-card-member .profile-pill { margin-left: auto; }
-.cluster-pool-list { display: grid; gap: 8px; }
-.cluster-pool-row { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(200px, 1fr) auto; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
-.cluster-pool-row .searchable-select { min-width: 0; }
-.cluster-pool-row > .profile-status-detail { grid-column: 2 / -1; }
 .pool-simulation-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
 .pool-simulation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 .pool-simulation-grid > li { display: grid; min-width: 0; }
@@ -4208,8 +4206,6 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .pool-simulation-card.unavailable { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); background: color-mix(in srgb, var(--amber) 8%, var(--panel)); }
 @media (max-width: 700px) {
   .pool-member-editor { grid-template-columns: auto minmax(0, 1fr) auto auto auto; }
-  .cluster-pool-row { grid-template-columns: minmax(0, 1fr); }
-  .cluster-pool-row > .profile-status-detail { grid-column: auto; }
 }
 @media (prefers-reduced-motion: reduce) { .profile-pill:is(.checking, .pending)::before { animation: none; } }
 .engine-overrides summary { cursor: pointer; color: var(--text); font-weight: 600; }

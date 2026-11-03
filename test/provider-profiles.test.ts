@@ -110,3 +110,27 @@ test("with nothing chosen, a provider's only private profile is used, and two or
   createProviderProfile(owner, { label: "Pi", provider: "pi" });
   assert.equal(resolveProviderProfile(owner, "pi", scope), undefined, "a Pi profile is never picked without a choice here");
 });
+
+test("a cluster choice covers only projects shared through that cluster, below a project choice and above a workspace", async () => {
+  const { resolveSubscriptionChoice } = await import("../src/provider-profiles/pools.js");
+  const owner = "cluster-choice-owner", C1 = "00000000-0000-4000-8000-0000000000c1", C2 = "00000000-0000-4000-8000-0000000000c2";
+  const personal = createProviderProfile(owner, { label: "Personal", provider: "claude" });
+  const team = createProviderProfile(owner, { label: "Team", provider: "claude" });
+  setProviderProfileSelection(owner, { provider: "claude", scope: "default", scopeId: "", profileId: personal.id });
+  setProviderProfileSelection(owner, { provider: "claude", scope: "workspace", scopeId: "w", profileId: personal.id });
+  setProviderProfileSelection(owner, { provider: "claude", scope: "cluster", scopeId: C1, profileId: team.id });
+  const shared = { projectId: "p", workspaceId: "w", clusterIds: [C1] };
+  assert.equal(resolveProviderProfile(owner, "claude", shared)?.profile.id, team.id, "the cluster choice beats the workspace");
+  assert.equal(resolveProviderProfile(owner, "claude", shared)?.source, "cluster");
+  const choice = resolveSubscriptionChoice(owner, "claude", shared);
+  assert.equal(choice?.kind === "profile" && choice.profile.id, team.id);
+  assert.equal(resolveProviderProfile(owner, "claude", { projectId: "q", workspaceId: "w" })?.profile.id, personal.id, "a project not shared through the cluster keeps the user's other choices");
+  setProviderProfileSelection(owner, { provider: "claude", scope: "project", scopeId: "p", profileId: personal.id });
+  assert.equal(resolveProviderProfile(owner, "claude", shared)?.source, "project", "a project exception is more specific than its cluster");
+  setProviderProfileSelection(owner, { provider: "claude", scope: "project", scopeId: "p", profileId: null });
+  setProviderProfileSelection(owner, { provider: "claude", scope: "cluster", scopeId: C2, profileId: personal.id });
+  assert.throws(() => resolveProviderProfile(owner, "claude", { ...shared, clusterIds: [C1, C2] }), /several clusters with different choices/);
+  setProviderProfileSelection(owner, { provider: "claude", scope: "cluster", scopeId: C2, profileId: team.id });
+  assert.equal(resolveProviderProfile(owner, "claude", { ...shared, clusterIds: [C1, C2] })?.profile.id, team.id, "two clusters agreeing is not a conflict");
+  assert.equal(resolveProviderProfile("cluster-choice-other", "claude", shared), undefined, "a cluster choice is the user's own");
+});

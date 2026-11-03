@@ -8,6 +8,7 @@ import {
   accessibleProviderProfile,
   ensureProviderProfileSchema,
   listSubscriptionSelections,
+  matchingSelection,
   onlyPrivateProfile,
   profileProviderSchema,
   profileSelectionSchema,
@@ -181,16 +182,9 @@ export function setSubscriptionPoolSelection(owner: string, input: unknown): voi
   setProviderPoolSelection(owner, value);
 }
 export function resolveSubscriptionChoice(owner: string, provider: ProfileProvider, scope: ProfileScope, usage: ProfileUsage = "interactive"): SubscriptionChoice | undefined {
-  const selections = listSubscriptionSelections(owner).filter((entry) => entry.provider === profileProviderSchema.parse(provider));
-  const targets: Array<[ProfileSelection["scope"], string]> = [
-    ...(scope.conversationId ? [["conversation", JSON.stringify([scope.projectId, scope.conversationId])] as ["conversation", string]] : []),
-    ["project", scope.projectId], ["workspace", scope.workspaceId], ["default", ""],
-  ];
-  for (const [source, scopeId] of targets) {
-    const match = selections.find((entry) => entry.scope === source && entry.scopeId === scopeId);
-    if (match?.poolId) return { kind: "pool", pool: getSubscriptionPool(owner, match.poolId), source };
-    if (match?.profileId) return { kind: "profile", profile: accessibleProviderProfile(owner, match.profileId, usage), source };
-  }
+  const match = matchingSelection(listSubscriptionSelections(owner).filter((entry) => entry.provider === profileProviderSchema.parse(provider)), scope);
+  if (match?.entry.poolId) return { kind: "pool", pool: getSubscriptionPool(owner, match.entry.poolId), source: match.source };
+  if (match?.entry.profileId) return { kind: "profile", profile: accessibleProviderProfile(owner, match.entry.profileId, usage), source: match.source };
   const only = onlyPrivateProfile(owner, profileProviderSchema.parse(provider));
   return only ? { kind: "profile", profile: only, source: "default" } : undefined;
 }

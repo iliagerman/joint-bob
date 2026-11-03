@@ -158,6 +158,8 @@ export const state = {
   routing: null,
   routingClassifiers: null,
   activeModelKey: "",
+  // The pool and profile the running turn uses; live replies show them until the turn ends.
+  turnConnection: null,
   activeModelLabel: "",
   thinkingLevel: "off",
   availableThinkingLevels: [],

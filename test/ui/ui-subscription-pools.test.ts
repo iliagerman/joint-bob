@@ -124,39 +124,31 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   await page.getByTestId("provider-profiles-tab-pools").click();
   assert.match(await editedPool.innerText(), /Used for My default \(Claude\)/);
   assert.equal(await editedPool.getByTestId("subscription-pool-delete").isDisabled(), true, "a pool in use cannot be deleted");
-  // Cluster pools are part of the Pools tab.
-  const clusterRow = page.locator('[data-testid="cluster-pool-row"]').filter({ hasText: "Pool test cluster" });
-  await clusterRow.waitFor();
-  const assignmentPath = `/api/clusters/${cluster.id}/subscription-pool`;
-  const assignResponse = page.waitForResponse((response) => new URL(response.url()).pathname === assignmentPath && response.request().method() === "POST");
-  await choose(clusterRow, "cluster-pool-select", "Team pool edited", "Team pool edited");
-  await clusterRow.getByTestId("cluster-pool-save").click();
-  await page.locator("#confirmDialog[open]").waitFor();
-  assert.match(await page.locator("#confirmDialog").innerText(), /overrides.*personal/i);
-  await page.getByTestId("confirm-accept-button").click();
-  const assigned = await assignResponse;
-  assert.equal(assigned.status(), 200, await assigned.text());
-  const assignmentStatus = clusterRow.locator(".profile-status-detail");
-  await assignmentStatus.waitFor();
-  assert.match(await assignmentStatus.innerText(), /Assigned pool: Team pool edited/);
-  // Assignments says the cluster's pool wins in its projects while personal choices cover the rest.
-  await page.getByTestId("provider-profiles-tab-assignments").click();
-  assert.match(await page.getByTestId("provider-assignment-cluster-note").innerText(), /Pool test cluster uses Team pool edited[\s\S]*every other project at the same time/);
-  await page.getByTestId("provider-profiles-tab-pools").click();
+  assert.equal(await page.locator('[data-testid="cluster-pool-row"]').count(), 0, "no cluster-wide assignment: a cluster choice is personal");
 
-  const clusterPicker = clusterRow.getByTestId("cluster-pool-select");
-  await clusterPicker.click();
-  await clusterRow.getByTestId("cluster-pool-select-search").fill("No pool");
-  await clusterRow.getByTestId("cluster-pool-select-option").filter({ hasText: "No pool" }).click();
-  assert.equal(await clusterPicker.getAttribute("data-value"), "");
-  assert.equal(await clusterRow.getByTestId("cluster-pool-save").isEnabled(), true);
-  const clearResponse = page.waitForResponse((response) => new URL(response.url()).pathname === assignmentPath && response.request().method() === "DELETE");
-  await clusterRow.getByTestId("cluster-pool-save").click();
+  // A cluster choice is one of the user's own exceptions; it never asks the cluster or its members.
+  const clusterRequests: string[] = [];
+  page.on("request", (request) => { if (/\/api\/clusters?\/[^/]+\/subscription-pool|\/api\/cluster\/v2\//.test(new URL(request.url()).pathname)) clusterRequests.push(request.url()); });
+  await page.getByTestId("provider-profiles-tab-assignments").click();
+  await page.getByTestId("provider-exception-new").click();
+  await page.getByTestId("provider-exception-scope").selectOption("cluster");
+  await page.getByTestId("provider-exception-cluster").selectOption(cluster.id);
+  await choose(page, "provider-exception-choice-select", "Team pool edited", "Team pool edited");
+  const clusterChoice = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/selection" && response.request().method() === "PUT");
+  await page.getByTestId("provider-exception-add").click();
   await page.getByTestId("confirm-accept-button").click();
-  const cleared = await clearResponse;
-  assert.equal(cleared.status(), 200, await cleared.text());
-  await assignmentStatus.waitFor({ state: "detached" });
-  assert.match(await clusterRow.innerText(), /No pool assigned/);
+  const clusterSaved = await clusterChoice;
+  assert.equal(clusterSaved.status(), 200, await clusterSaved.text());
+  assert.deepEqual(clusterSaved.request().postDataJSON(), { provider: "claude", scope: "cluster", scopeId: cluster.id, profileId: null, poolId: poolId });
+  const clusterException = page.getByTestId("provider-exception-row").filter({ hasText: "Pool test cluster" });
+  assert.match(await clusterException.innerText(), /cluster[\s\S]*Pool test cluster[\s\S]*uses[\s\S]*Team pool edited/i);
+  assert.deepEqual(clusterRequests, [], "no cluster or member request is made");
+  await page.getByTestId("provider-profiles-tab-pools").click();
+  assert.match(await editedPool.innerText(), /Pool test cluster \(Claude\)/);
+  await page.getByTestId("provider-profiles-tab-assignments").click();
+  await clusterException.getByTestId("provider-exception-remove").click();
+  await page.getByTestId("confirm-accept-button").click();
+  await clusterException.waitFor({ state: "detached" });
 
   await page.getByTestId("provider-profiles-tab-assignments").click();
   const personalChoiceResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/selection" && response.request().method() === "PUT");
@@ -165,7 +157,7 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   const personalChoice = await personalChoiceResponse;
   assert.equal(personalChoice.status(), 200, await personalChoice.text());
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Automatic: Claude work");
-  assert.equal(await page.getByTestId("provider-assignment-cluster-note").count(), 0, "no note once no cluster has a pool");
+  assert.equal(await page.getByTestId("provider-assignment-cluster-note").count(), 0, "no cluster-wide pool, so no note");
   const savedSelections = await (await page.request.get(`${node.url}/api/provider-profiles`)).json();
   assert.equal(savedSelections.selections.some((selection: { poolId?: string }) => selection.poolId === poolId), false);
   const savedClusters = await (await page.request.get(`${node.url}/api/clusters`)).json();

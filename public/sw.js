@@ -29,7 +29,7 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("push", (event) => {
   const payload = event.data ? event.data.json() : {};
-  event.waitUntil(self.registration.showNotification(payload.title || "Pi finished", {
+  event.waitUntil(self.registration.showNotification(payload.title || "Conversation finished", {
     body: payload.body || "Tap to open the conversation.",
     tag: payload.url || "/",
     renotify: true,

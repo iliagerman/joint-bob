@@ -6,7 +6,7 @@ import { getProject, listWorkspaces } from "../../store.js";
 import { latestConversationSegment } from "../../conversation-records.js";
 import { getClusterNode } from "../../cluster.js";
 import { pinnedClusterPublicKey, verifyClusterMessage } from "../../cluster-identity.js";
-import { isTrustedTwin } from "../../cluster-sharing-policy.js";
+import { isTrustedTwin, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { accountInCluster } from "../../cluster-accounts.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { clusterManager, signedPost } from "../cluster-v2.js";
@@ -188,8 +188,9 @@ app.delete("/api/provider-profiles/:id", route(async (request, response) => {
   response.json({ ok: true });
 }));
 
-async function scopeAllowed(selection: z.infer<typeof profileSelectionSchema>): Promise<boolean> {
+async function scopeAllowed(accountId: string, selection: z.infer<typeof profileSelectionSchema>): Promise<boolean> {
   if (selection.scope === "default") return true;
+  if (selection.scope === "cluster") return (await choosableClusters(accountId)).some(({ id }) => id === selection.scopeId);
   if (selection.scope === "workspace") return (await listWorkspaces()).some((item) => item.id === selection.scopeId);
   let projectId = selection.scopeId;
   if (selection.scope === "conversation") {
@@ -203,9 +204,22 @@ async function scopeAllowed(selection: z.infer<typeof profileSelectionSchema>): 
   const project = await getProject(projectId);
   return Boolean(project);
 }
+/**
+ * The clusters and relay groups a cluster choice can name: open ones this node is in that this person
+ * joined (unlisted, the admin). Relay groups count, because projects are shared through them too.
+ */
+async function choosableClusters(accountId: string): Promise<Array<{ id: string; name: string }>> {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  const named = db.prepare("SELECT name FROM sharing_clusters WHERE id=? AND closed=0");
+  return listSharingMemberships(db, local.id, true).filter(({ clusterId }) => accountInCluster(db, accountId, clusterId))
+    .flatMap(({ clusterId }) => { const row = named.get(clusterId) as { name: string } | undefined; return row ? [{ id: clusterId, name: row.name }] : []; });
+}
+app.get("/api/provider-profiles/clusters", route(async (_request, response) => {
+  response.json({ clusters: await choosableClusters(owner(response)) });
+}));
 app.put("/api/provider-profiles/selection", route(async (request, response) => {
   const selection = profileSelectionSchema.parse(request.body);
-  if (!await scopeAllowed(selection)) { sendError(response, 404, "Scope not found or not accessible to this account"); return; }
+  if (!await scopeAllowed(owner(response), selection)) { sendError(response, 404, "Scope not found or not accessible to this account"); return; }
   if (selection.poolId) setSubscriptionPoolSelection(owner(response), selection);
   else setProviderProfileSelection(owner(response), selection);
   response.json({ selections: listSubscriptionSelections(owner(response)) });

@@ -75,6 +75,8 @@ test("node-local profile API validates scopes, protects secrets, and refuses sel
     assert.equal(state.body.signedIn, false);
     const invalid = await api(node, session, "PUT", "/provider-profiles/selection", { provider: "openai-codex", scope: "project", scopeId: "nonexistent", profileId: id });
     assert.equal(invalid.status, 404);
+    const foreignCluster = await api(node, session, "PUT", "/provider-profiles/selection", { provider: "openai-codex", scope: "cluster", scopeId: "00000000-0000-4000-8000-0000000000c9", profileId: id });
+    assert.equal(foreignCluster.status, 404, "a cluster choice needs a cluster the account belongs to");
     const selected = await api(node, session, "PUT", "/provider-profiles/selection", { provider: "openai-codex", scope: "default", scopeId: "", profileId: id });
     assert.equal(selected.status, 200);
     assert.equal((await api(node, session, "DELETE", `/provider-profiles/${id}`)).status, 409);

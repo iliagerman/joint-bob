@@ -8,10 +8,11 @@ import { state } from "./state.js";
 import { focusTaskCard, renderBoardView } from "./tasks.js";
 
 export function shortSessionTitle(session) {
-  const title = session?.title || "Pi session";
+  // Pi names a session it could not title "Untitled Pi session"; any harness's untitled session reads the same.
+  const title = session?.title || "Conversation";
   if (!session?.path) return title;
   if (title && !title.endsWith(".jsonl") && title !== "Untitled Pi session") return title;
-  return `Pi session • ${formatDate(session.updatedAt || session.createdAt)}`;
+  return `Conversation • ${formatDate(session.updatedAt || session.createdAt)}`;
 }
 
 /**

@@ -265,7 +265,7 @@
         <div class="canvas-root" id="canvasRoot" data-testid="canvas-root"></div>
       </section>
 
-      <main class="panel view-panel chat" id="chatPanel" aria-label="Chat with Pi">
+      <main class="panel view-panel chat" id="chatPanel" aria-label="Conversation">
         <header class="chat-topbar">
           <button class="ghost icon-button back-button" id="backToSessionsButton" type="button" aria-label="Back to conversations" data-testid="chat-back-button">‹</button>
           <div class="chat-title-block">
@@ -333,7 +333,7 @@
           <section class="messages" id="messages" aria-live="polite">
             <div class="empty-state">
               <div class="orb" aria-hidden="true"><img src="/icon-mark.svg" alt="" width="56" height="56" /></div>
-              <h2>Your server-side Pi, in your pocket.</h2>
+              <h2>Your coding agents, in your pocket.</h2>
               <p>Select a project and start an agent conversation on any connected node.</p>
             </div>
           </section>
@@ -444,8 +444,8 @@
           <div class="composer-row" data-shortcut-hint="focusInput">
             <input class="sr-only" id="attachmentInput" type="file" multiple />
             <button class="ghost attach-button icon-button" id="attachButton" type="button" disabled aria-label="Attach files" data-testid="chat-attach-button">+</button>
-            <label class="sr-only" for="messageInput">Message Pi</label>
-            <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled role="combobox" aria-controls="commandAutocomplete" aria-autocomplete="list" aria-expanded="false" data-testid="chat-message-input"></textarea>
+            <label class="sr-only" for="messageInput">Message</label>
+            <textarea id="messageInput" rows="1" placeholder="Ask the agent to work..." disabled role="combobox" aria-controls="commandAutocomplete" aria-autocomplete="list" aria-expanded="false" data-testid="chat-message-input"></textarea>
             <button type="button" id="savedCommandsButton" data-testid="saved-commands-button" disabled aria-haspopup="dialog" aria-controls="savedCommandsDialog" aria-label="Custom commands" title="Custom commands"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5M13 17h6"/></svg></button>
             <button class="send" id="sendButton" type="submit" disabled aria-label="Send" data-testid="chat-send-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 21.7a.5.5 0 0 0 .94-.02l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="M21.85 2.15 10.91 13.09"/></svg></button>
           </div>

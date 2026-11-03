@@ -199,6 +199,13 @@ export function assignedClusterPoolsForOwner(db: DatabaseSync, poolOwnerNodeId: 
     .filter((assignment) => listSharingClusterMembers(db, assignment.clusterId).some(({ nodeId }) => nodeId === poolOwnerNodeId));
 }
 
+/** The clusters a project is shared through. A project this node never registered for sharing has none. */
+export function projectClusterIds(db: DatabaseSync, localNodeId: string, projectId: string): string[] {
+  ensureClusterSharingPolicySchema(db);
+  if (!db.prepare("SELECT 1 FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(projectId)) return [];
+  return resourceClusterIds(db, localNodeId, "project", projectId);
+}
+
 export function resolveClusterSubscriptionPools(db: DatabaseSync, localNodeId: string, projectId: string): ClusterSubscriptionPoolAssignment[] {
   ensureClusterSubscriptionPoolSchema(db);
   const clusterIds = resourceClusterIds(db, localNodeId, "project", projectId);

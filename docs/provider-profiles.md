@@ -26,14 +26,17 @@ Profiles start private. The owner can choose **Share for automation** to make a 
 
 ## Select a profile
 
-On **Assignments**, pick the provider tab, then choose the profile or pool that **every conversation** on that provider uses. To use a different one in a single workspace, project, or conversation, choose **Add exception**, pick where it applies, and pick the profile or pool. Remove an exception to go back to the next matching choice. Each change is saved when you confirm it. These choices belong to **you**, not the project owner, even on a shared project. Assigning your profile to a workspace, project, or conversation never shares the profile with another user. Queued human turns retain their author's identity when another user's connection drains the queue.
+On **Assignments**, pick the provider tab, then choose the profile or pool that **every conversation** on that provider uses. To use a different one in a single workspace, in the projects shared through one cluster or relay group, in one project, or in one conversation, choose **Add exception**, pick where it applies, and pick the profile or pool. Remove an exception to go back to the next matching choice. Each change is saved when you confirm it. These choices belong to **you**, not the project owner, even on a shared project. Assigning your profile to a workspace, project, or conversation never shares the profile with another user. Queued human turns retain their author's identity when another user's connection drains the queue.
 
 The most specific saved choice wins:
 
 1. Conversation
 2. Project
-3. Workspace
-4. Your default
+3. Cluster (any cluster or relay group the project is shared through)
+4. Workspace
+5. Your default
+
+A project shared through two clusters with different cluster choices stops with an error naming the conflict; keep one cluster choice or add a project exception.
 
 Choose the first option as the default, or remove an exception, to clear a choice at that level. When nothing is chosen at any level and you have exactly one private profile for the provider, that profile is used; the default picker shows it as **Automatic**. With two or more, none is guessed. A Pi profile holds several providers, so a single Pi profile is used only for turns whose provider it holds. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work. A choice that points at a profile shared for automation is marked in red as unavailable and must be changed before your next turn.
 
@@ -49,7 +52,9 @@ A retry is allowed only for a recognized subscription quota, authentication, or 
 
 ## Cluster assignments and relay
 
-A pool owner can assign their pool to a cluster, under **Cluster pools** on the **Pools** tab, after every current member confirms pool-protocol support. That assignment overrides personal choices, including an automatic single profile, only for work shared through that cluster; other work continues to use each person's normal scope precedence at the same time. The **Assignments** tab names each cluster whose pool wins this way. To attach a single profile, make a pool with just that profile. A relay group takes a pool the same way: the relay, as the group's manager, signs the assignment, so the relay and every member must run a version that supports it, and while the pool is attached a machine that does not cannot join the group. Only the pool owner can change or clear the assignment. New members must support pools while an assignment is active.
+To use a profile or pool in the projects shared through one cluster or relay group, add a **Cluster** exception on the **Assignments** tab. It is your own choice, like any other: it syncs to your twins and applies on your machines only. Other members keep their own choices, and no cluster member or manager is asked, so an offline member cannot block it. It applies wherever your turn runs with your choices, including when a teammate works through the relay on a project you own. Your other projects keep your other choices at the same time.
+
+A pool can also be attached to a whole cluster for every member, an older kind of assignment that the page no longer creates. If a member has made one, the **Assignments** tab names it, and it still wins in that cluster's projects. The pool owner made it after every member confirmed pool-protocol support; for a relay group, the relay signs it as the group's manager, and while it is attached a machine without pool support cannot join. Only the pool owner can change or clear it.
 
 Cluster members receive a signed, non-secret pool manifest, not provider credentials. When a turn needs a profile held on another node, the manager revalidates the current cluster assignment and membership before the holder lends a short-lived access token over the signed peer channel. The refresh credential stays on the profile holder; the borrowed token is kept in memory and never becomes a cluster manifest.
 

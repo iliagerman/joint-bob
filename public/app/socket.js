@@ -8,7 +8,7 @@ import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, syncTurnBusy, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { activityConversationChanged, activityDigestEvent, activityProgressed, activityReady } from "./activity-panel.js";
-import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncLiveActivity, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
+import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, markPromptConnection, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncLiveActivity, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { refreshBudgetNotice } from "./budget-dialog.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
@@ -519,6 +519,15 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     markPromptRouted(payload);
     return;
   }
+  if (payload.type === "turnConnection") {
+    state.turnConnection = { poolName: payload.pool?.name ?? "", profileLabel: payload.profile.label };
+    markPromptConnection(payload);
+    return;
+  }
+  if (payload.type === "promptCompleted") {
+    state.turnConnection = null;
+    return;
+  }
   if (payload.type === "routingMode") {
     updateRoutingMode({ active: payload.active !== false, mode: payload.mode === "manual" ? "manual" : "auto", ...(payload.classifierId ? { classifierId: payload.classifierId } : {}), ...(payload.editable !== undefined ? { editable: payload.editable } : {}), warning: payload.warning || "" });
     return;
@@ -526,6 +535,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   // The harness refused to start this prompt (quota, auth, crash). It stays
   // queued for a retry, so the reason belongs on the bubble, not only in a toast.
   if (payload.type === "promptFailed") {
+    state.turnConnection = null;
     markQueuedMessageFailed(payload.queueId, payload.error);
     appendErrorMessage(payload.error);
     if (/Budget reached/.test(String(payload.error))) refreshBudgetNotice();
