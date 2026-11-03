@@ -49,10 +49,10 @@ test("personal assistant stores instructions and paired source images, scoped to
     const switchedTools = await personalAssistantToolBaseline("owner", profile.id, "claude", "claude-session", ["browser", "shell", "mcp__calendar__list", "mcp__drive__read"]);
     assert.deepEqual(filterPersonalAssistantTools(switchedTools, switchedSettings!), ["mcp__calendar__list"], "new segment uses current assistant tool restrictions");
     assert.ok((await listPersonalAssistantTopics("owner", profile.id))?.some(topic => topic.engine === "claude" && topic.sessionId === "claude-session" && !topic.source));
-    const started = await beginPersonalAssistantTurn("owner", profile.id, "request-a", "pi:session", "Compare phones");
+    const started = await beginPersonalAssistantTurn("owner", profile.id, "request-a", "pi:session", "Compare phones", "chat");
     assert.equal(started.turn.status, "running");
-    assert.equal((await beginPersonalAssistantTurn("owner", profile.id, "request-a", "pi:session", "Compare phones")).created, false);
-    await assert.rejects(beginPersonalAssistantTurn("owner", profile.id, "request-a", "pi:session", "Different message"), /already used/);
+    assert.equal((await beginPersonalAssistantTurn("owner", profile.id, "request-a", "pi:session", "Compare phones", "chat")).created, false);
+    await assert.rejects(beginPersonalAssistantTurn("owner", profile.id, "request-a", "pi:session", "Different message", "chat"), /already used/);
     assert.equal(await finishPersonalAssistantTurn("owner", profile.id, "request-a", "Phone A wins", false, { userId: "source-user", responseId: "source-answer" }), true);
     assert.deepEqual(await listPersonalAssistantTurnSourceIds("owner", profile.id), ["source-user", "source-answer"]);
     assert.deepEqual(await listPersonalAssistantTurns("owner", profile.id), [{ ...started.turn, response: "Phone A wins", status: "completed" }]);

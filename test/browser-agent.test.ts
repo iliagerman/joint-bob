@@ -164,7 +164,8 @@ console.log(JSON.stringify({type:'result',is_error:false}));
   } finally {
     for (const socket of sockets) socket.terminate();
     if (child) await stopDevNode(child);
-    await rm(root, { recursive: true, force: true });
+    // The stopping node's last writes can land while this runs; rm's retries cover ENOTEMPTY.
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 });
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { actingAccount, type ActingAccount } from "../account-context.js";
+import { JOINT_BOB_TOOL_SERVER, reservedMcpServerName } from "../assistant-collaboration/bridge-tools.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import type { HarnessId } from "../types.js";
 import { ManagedMcpStore } from "./store.js";
@@ -21,7 +22,7 @@ function db() {
 export function managedMcpStore(accountId: string) { return new ManagedMcpStore(resolveDataDirectory(), accountId); }
 export function mcpAgentEnvironment(projectId: string, engine: HarnessId, conversationId: string): NodeJS.ProcessEnv {
   const account = actingAccount();
-  if (!account || !Object.keys(managedMcpStore(account.accountId).servers()).length) return {};
+  if (!account) return {};
   const token = randomBytes(32).toString("hex"), identity: McpAgentIdentity = { account, projectId, engine, conversationId };
   db().prepare("DELETE FROM mcp_agent_tokens WHERE expires <= ?").run(Date.now());
   db().prepare("INSERT INTO mcp_agent_tokens VALUES (?,?,?)").run(createHash("sha256").update(token).digest("hex"), JSON.stringify(identity), Date.now() + 30 * 86400_000);
@@ -41,5 +42,7 @@ export function managedMcpBridgeConfigs(): Record<string, { command: string; arg
   const account = actingAccount();
   if (!account) return {};
   const bridge = fileURLToPath(new URL("../../bin/joint-bob-mcp.mjs", import.meta.url));
-  return Object.fromEntries(Object.keys(managedMcpStore(account.accountId).servers()).map(name => [name, { command: process.execPath, args: [bridge, name] }]));
+  // Joint Bob's own tools ride the same bridge, so every account's agents get it. A stored server by a reserved name never does.
+  const names = [...Object.keys(managedMcpStore(account.accountId).servers()).filter(name => !reservedMcpServerName(name)), JOINT_BOB_TOOL_SERVER];
+  return Object.fromEntries(names.map(name => [name, { command: process.execPath, args: [bridge, name] }]));
 }

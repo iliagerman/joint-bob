@@ -194,7 +194,10 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   state.conversationDurationMs = 0;
   state.conversationStartedAt = null;
   if (!preserveTask) state.activeTaskId = null;
-  if (!preserveChat) state.conversationReadOnly = false;
+  if (!preserveChat) {
+    state.conversationReadOnly = false;
+    state.conversationReadOnlyReason = null;
+  }
   if (state.activeTaskId) {
     const task = state.tasks.find((candidate) => candidate.id === state.activeTaskId);
     if (task) state.activeNodeId = task.currentNodeId;
@@ -312,6 +315,8 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const openingDraft = state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
     state.conversationReadOnly = payload.readOnly === true;
+    state.conversationReadOnlyReason = payload.readOnly === true ? payload.readOnlyReason ?? null : null;
+    state.conversationNodeName = payload.executionNodeName || null;
     document.dispatchEvent(new CustomEvent("guardian-event", { detail: { type: "guardianReviews", reviews: payload.guardianReviews || [] } }));
     setAutoRespond(payload.autoRespond ?? null, payload.autoRespondDecision ?? null, payload.autoRespondDefaults);
     state.conversationCommands = payload.conversationCommands || null;
@@ -393,9 +398,11 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     } else {
       restoreChatScrollTop(resumeFromTop);
     }
-    if (!payload.messages?.length) {
+    // A scheduled run's prompt is not shown, so its conversation has no message until the
+    // report arrives. While a turn runs the thread shows it working, not an invitation to start.
+    if (!payload.messages?.length && !state.sessionBusy && !payload.turnStartedAt) {
       const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
-      showChatEmptyState("Ready for your first message", `${harnessLabel(state.harnesses, state.engine)} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
+      showChatEmptyState("Ready for your first message", `${harnessLabel(state.harnesses, state.engine)} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`).dataset.firstMessage = "";
     }
     renderSessions();
     sendSocket({ type: "models" });

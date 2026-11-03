@@ -26,7 +26,9 @@ export interface SecretConversation { engine: ConversationEngineId; sessionId?: 
 export interface SecretVariable { name: string; kind: SecretKind; configured: true }
 /** `projectId` marks an account owned by one project: attached on creation and usable only
     in that project. Twins preserve this restriction; cluster export requires an explicit grant. */
-export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; github?: GithubAccountSummary; websiteOrigin?: string; projectId?: string; shared?: boolean; readOnly?: boolean; ownerNodeId?: string }
+export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; github?: GithubAccountSummary; websiteOrigin?: string; projectId?: string; shared?: boolean; readOnly?: boolean; ownerNodeId?: string;
+  /** Read-only because it came from one of this node's twins: the same person's, edited on that machine. */
+  ownerTwin?: boolean; ownerNodeName?: string }
 export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }>; websiteOrigin?: string | null; projectId?: string }
 export interface WebsiteCredentialAccount { id: string; origin: string; variables: Array<{ name: string; kind: SecretKind; value: string }> }
 type StoredVariable = { name: string; kind: SecretKind; value: string };
@@ -167,6 +169,16 @@ function storedVariables(row: AccountRow): StoredVariable[] {
   return value as StoredVariable[];
 }
 
+/** One variable from the first of these accounts that has it, for code that sends on an account's behalf. */
+export function secretAccountVariable(accountIds: string[], name: string): string | undefined {
+  for (const id of accountIds) {
+    const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
+    const variable = row && storedVariables(row).find(candidate => candidate.name === name && candidate.kind === "value");
+    if (variable) return variable.value;
+  }
+  return undefined;
+}
+
 function accountRow(id: string): AccountRow {
   assertAccountId(id);
   const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
@@ -234,11 +246,15 @@ function scopeVisible(scopeType: SecretScopeType, scopeId: string, account: Acti
 function publicAccount(row: AccountRow): SecretAccount {
   const local = hasTable('cluster_node') ? db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined : undefined;
   const readOnly = Boolean(row.origin_node_id && row.origin_node_id !== local?.id);
+  // From a twin it is not someone else's share: it is this person's own, edited where it was made.
+  const ownerTwin = readOnly && Boolean(local) && UUID_PATTERN.test(row.origin_node_id) && hasTable('sharing_twins') && isTrustedTwin(db(), local!.id, row.origin_node_id);
+  const ownerNodeName = ownerTwin && hasTable('cluster_v2_peer_endpoints')
+    ? (db().prepare("SELECT name FROM cluster_v2_peer_endpoints WHERE node_id=? ORDER BY context_kind='twin' DESC LIMIT 1").get(row.origin_node_id) as { name: string } | undefined)?.name : undefined;
   const shared = readOnly
     || hasTable('cluster_v2_secret_grants') && Boolean(db().prepare('SELECT 1 FROM cluster_v2_secret_grants WHERE account_id=? LIMIT 1').get(row.id))
     || hasTable('cluster_v2_share_selections') && Boolean(db().prepare("SELECT 1 FROM secret_assignments a JOIN cluster_v2_share_selections s ON s.kind='workspace' AND s.resource_id=a.scope_id WHERE a.account_id=? AND a.scope_type='workspace' LIMIT 1").get(row.id))
     || Boolean(row.replicate && hasTable('sharing_resource_shares') && db().prepare("SELECT 1 FROM secret_assignments a JOIN sharing_resource_shares s ON s.kind='project' AND s.resource_id=a.scope_id WHERE a.account_id=? AND a.scope_type='project' LIMIT 1").get(row.id));
-  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.provider === "github" ? { github: githubAccountSummary(githubAccount(row.id, row.label, storedVariables(row))) } : {}), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}), ...(row.project_id ? { projectId: row.project_id } : {}), ...(shared ? {shared:true} : {}), ...(readOnly ? {readOnly:true,ownerNodeId:row.origin_node_id} : {}) };
+  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.provider === "github" ? { github: githubAccountSummary(githubAccount(row.id, row.label, storedVariables(row))) } : {}), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}), ...(row.project_id ? { projectId: row.project_id } : {}), ...(shared ? {shared:true} : {}), ...(readOnly ? {readOnly:true,ownerNodeId:row.origin_node_id} : {}), ...(ownerTwin ? { ownerTwin: true, ...(ownerNodeName ? { ownerNodeName } : {}) } : {}) };
 }
 
 export function clearSecretAccountFiles(id: string): void {

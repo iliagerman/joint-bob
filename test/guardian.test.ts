@@ -57,6 +57,42 @@ test("secret removal takes out project secrets and common token formats", () => 
   assert.ok(!removed.includes("ghp_aaaa"));
 });
 
+test("secret removal takes out Stripe secret and restricted keys and leaves publishable ones", () => {
+  const live = "sk_live_51H" + "q4XYZabcdEFGHijklMNOPqrstUVWxyz0123456789";
+  const testMode = "sk_test_" + "4eC39HqLyjWDarjtT1zdp7dc";
+  const restricted = ["rk_live_51H" + "q4XYZabcdEFGHijklMNOPqrs", "rk_test_" + "Ab12Cd34Ef56Gh78Ij90Kl12"];
+  const publishable = "pk_live_51H" + "q4XYZabcdEFGHijklMNOPqrstUVWxyz0123456789";
+  const removed = removeSecrets(`charge with ${live}, retry on ${testMode}\nreports read ${restricted.join(" and ")}\ncheckout page uses ${publishable}`, []);
+  for (const key of [live, testMode, ...restricted]) assert.ok(!removed.includes(key), `${key.slice(0, 8)}… is removed: ${removed}`);
+  assert.ok(removed.includes(`charge with ${REMOVED}, retry on ${REMOVED}`), removed);
+  assert.ok(removed.includes(publishable), "a publishable key is public by design and stays");
+});
+
+test("a named secret whose value a format or a project secret already removed reads as one removal", () => {
+  const github = "ghp_" + "a".repeat(36);
+  const stripe = "sk_live_51H" + "q4XYZabcdEFGHijklMNOPqrstUVWxyz0123456789";
+  const text = [
+    `GITHUB_TOKEN=${github}`,
+    `STRIPE_SECRET_KEY=${stripe}`,
+    "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "aws configure set aws_access_key_id AKIAABCDEFGHIJKLMNOP",
+    `"api_key": "${stripe}"`,
+    "DB_PASSWORD=pre-my-project-secret-value",
+  ].join("\n");
+  const expected = [
+    `GITHUB_TOKEN=${REMOVED}`,
+    `STRIPE_SECRET_KEY=${REMOVED}`,
+    `AWS_SECRET_ACCESS_KEY=${REMOVED}`,
+    `aws configure set aws_access_key_id ${REMOVED}`,
+    `"api_key": "${REMOVED}"`,
+    `DB_PASSWORD=${REMOVED}`,
+  ].join("\n");
+  const removed = removeSecrets(text, ["my-project-secret-value"]);
+  assert.equal(removed, expected);
+  // A fix that did not satisfy the rules runs again on its own output.
+  assert.equal(removeSecrets(removed, ["my-project-secret-value"]), expected, "removing twice changes nothing more");
+});
+
 function fakeModel(answer: (state: string) => number): Promise<{ server: Server; url: string; requests: Array<Record<string, unknown>> }> {
   const requests: Array<Record<string, unknown>> = [];
   const server = createServer((request, response) => {

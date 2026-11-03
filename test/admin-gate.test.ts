@@ -2,11 +2,12 @@
 // member exactly like a route that was never registered, settings show a member only their
 // own values, and the terminal follows the admin's policy.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import WebSocket from "ws";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode, type SignedIn } from "./dev-nodes.js";
 import { addMember, runOnNode } from "./node-script.js";
@@ -40,8 +41,8 @@ function terminalReply(node: SeededNode, session: SignedIn, projectId: string): 
 
 /** Every route the server registers, with sample values for its parameters. Listed by a
     throwaway process with its own data directory, so no server state lingers here. */
-function registeredRoutes(root: string): Array<{ method: string; path: string }> {
-  const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+async function registeredRoutes(root: string): Promise<Array<{ method: string; path: string }>> {
+  const { stdout: output } = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
     const { app } = await import("./src/server.ts");
     const routes = [];
     for (const layer of app._router.stack) {
@@ -61,10 +62,10 @@ test("every admin route answers a member like an unknown route, and the admin st
   const child = await startDevNode(environment, node);
   try {
     const admin = await signIn(environment, node);
-    const member = addMember(environment, node, "noam", "noam@example.test");
+    const member = await addMember(environment, node, "noam", "noam@example.test");
     const noam = await memberSession(node, "noam", member.oneTimePassword);
     const { isAdminRoute } = await import("../src/server/admin.js");
-    const adminRoutes = registeredRoutes(root).filter((route) => isAdminRoute(route.method, route.path.slice(4)));
+    const adminRoutes = (await registeredRoutes(root)).filter((route) => isAdminRoute(route.method, route.path.slice(4)));
     assert.ok(adminRoutes.length >= 25, `expected the admin routes to be registered, found ${adminRoutes.length}`);
 
     const unknown = await fetch(`${node.url}/api/no-such-route`, { headers: { Cookie: noam.cookie } });
@@ -106,7 +107,7 @@ test("the terminal follows the admin's policy, per person, with a limit", { time
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   // An upgraded node: it has an admin but no terminal setting yet.
-  runOnNode(environment, node, `
+  await runOnNode(environment, node, `
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(process.env.JOINT_BOB_DATA_DIR + "/node.db");
     db.exec("DELETE FROM node_settings WHERE key LIKE 'terminalAccess.%'");
@@ -120,7 +121,7 @@ test("the terminal follows the admin's policy, per person, with a limit", { time
     assert.equal(policy.body.noticePending, true, "and its admin is told once");
     assert.deepEqual(await terminalReply(node, admin, projectId), { type: "terminalError", error: "Not available" });
 
-    const member = addMember(environment, node, "dana", "dana@example.test");
+    const member = await addMember(environment, node, "dana", "dana@example.test");
     const dana = await memberSession(node, "dana", member.oneTimePassword);
     const danaFolder = path.join(root, "dana-project");
     await mkdir(danaFolder, { recursive: true });

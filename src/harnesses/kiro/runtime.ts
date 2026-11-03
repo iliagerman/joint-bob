@@ -21,7 +21,7 @@ import type {
   HarnessTool,
 } from "../runtime.js";
 import { configuredRuntime } from "../runtime-configuration.js";
-import { expandKiroPrompt, kiroAgentProfile, kiroToolCategories } from "./resources.js";
+import { expandKiroPrompt, kiroAgentProfile, kiroToolCategories, kiroTrustedTools } from "./resources.js";
 import type { GuardianIdentity } from "../../guardian/check.js";
 import { guardKiroPrompt, kiroChecksTools, kiroPermission } from "../../guardian/kiro.js";
 import { appendKiroRecord, initializeKiroSession, readKiroSession } from "./storage.js";
@@ -272,7 +272,7 @@ class KiroSession implements HarnessSession {
     // With Guardian on, Kiro trusts no tool and asks before each call; serverRequest answers with
     // Guardian's decision. The profile already leaves out disabled tools.
     this.guarded = await kiroChecksTools();
-    if (!this.guarded) args.push(this.trustedTools === undefined ? "--trust-all-tools" : `--trust-tools=${this.trustedTools.join(",")}`);
+    if (!this.guarded) args.push(this.trustedTools === undefined ? "--trust-all-tools" : `--trust-tools=${kiroTrustedTools(profile, this.trustedTools).join(",")}`);
     if (this.model.modelId !== "default") args.push("--model", this.model.modelId);
     const selectedProfileId = this.profile?.id ?? null;
     if (this.nativeProfileId !== selectedProfileId) {

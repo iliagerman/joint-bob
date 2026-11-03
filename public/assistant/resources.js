@@ -1,14 +1,16 @@
 import { del, post, put, request } from "./api.js";
 import { app, closeOverlay, fail, isMobile, notify, openSheet } from "./context.js";
-import { chip, fitPage, h, icon, rowText, siteBox, switchButton } from "./dom.js";
+import { chip, fitPage, formatTime, h, icon, rowText, siteBox, switchButton } from "./dom.js";
 import { saveAssistant } from "./settings.js";
 
 // Resources: what this assistant can use in its owner's private chat and every topic it opens.
 
-const SECTIONS = [["browser", "Browser logins", "globe"], ["skills", "Skills", "book"], ["plugins", "Plugins", "puzzle"], ["mcp", "MCP servers", "plug"], ["secrets", "Secrets", "key"]];
+const SECTIONS = [["browser", "Browser logins", "globe"], ["files", "Files", "file"], ["memory", "Memory", "note"], ["skills", "Skills", "book"], ["plugins", "Plugins", "puzzle"], ["mcp", "MCP servers", "plug"], ["secrets", "Secrets", "key"]];
 const COPY = {
   browser: "Sites this assistant stays signed in to. You sign in yourself, and it never sees your password or codes. One topic uses a login at a time.",
-  skills: "Every topic this assistant opens can use the skills you turn on.",
+  files: "A folder this assistant keeps across all its topics, however a topic started. It can read and save files here.",
+  memory: "Notes this assistant keeps between topics. It reads them before work and adds what's worth keeping. You can edit them anytime.",
+  skills: "Every topic this assistant opens can use the skills you turn on, and the ones you add just for it.",
   plugins: "A plugin adds a set of skills and MCP servers. While it is off, none of them load.",
   mcp: "Servers this assistant can call. Install new servers in Joint Bob Resources first.",
   secrets: "Accounts this assistant can use. Values stay in Settings → Secrets and are never shown here.",
@@ -25,7 +27,11 @@ export async function loadResources() {
     request("/api/secrets").catch(error => ({ accounts: [], error: error.message })),
     request(`/api/secrets/scopes/conversation/${scope()}`).catch(() => ({ accountIds: [] })),
   ]);
-  app.resources = resources;
+  const local = resources.executionNode.local;
+  const [files, memory, own] = local
+    ? await Promise.all([request(`${base()}/files`), request(`${base()}/memory`), request(`${base()}/own-skills`)])
+    : [{ files: [] }, null, { skills: [] }];
+  app.resources = { ...resources, files: files.files, memory, ownSkills: own.skills };
   secrets = { accounts: accounts.accounts, attached: attached.accountIds, error: accounts.error };
   return resources;
 }
@@ -36,7 +42,7 @@ const mcpEnabled = name => app.assistant.mcpServerNames === null || app.assistan
 
 function items(section) {
   const resources = app.resources;
-  return { browser: resources.logins, skills: resources.skills, plugins: resources.plugins, mcp: resources.mcpServers, secrets: secrets.accounts }[section];
+  return { browser: resources.logins, files: resources.files, memory: [], skills: [...resources.ownSkills.map(skill => ({ ...skill, own: true, enabled: true })), ...resources.skills], plugins: resources.plugins, mcp: resources.mcpServers, secrets: secrets.accounts }[section];
 }
 
 function summary(section) {
@@ -45,6 +51,8 @@ function summary(section) {
     const attention = list.filter(login => login.state === "needs-sign-in").length;
     return `${list.length} login${list.length === 1 ? "" : "s"}${attention ? ` · ${attention} need${attention === 1 ? "s" : ""} you` : ""}`;
   }
+  if (section === "files") return `${list.length} file${list.length === 1 ? "" : "s"}`;
+  if (section === "memory") return !app.resources.memory ? "On its machine" : !app.resources.memory.enabled ? "Off" : app.resources.memory.content.trim() ? "On" : "On · Empty";
   if (section === "secrets") return `${list.filter(account => secrets.attached.includes(account.id)).length} of ${list.length} attached`;
   if (section === "mcp") return `${list.filter(server => mcpEnabled(server.name)).length} of ${list.length} on`;
   return `${list.filter(item => item.enabled).length} of ${list.length} on`;
@@ -99,8 +107,109 @@ function loginRow(login) {
   return resRow({ glyph: siteBox((login.label[0] || "?").toUpperCase()), title: login.label, chips: [states[login.state]], detail, control, off: !app.assistant.allowBrowser });
 }
 
+const fileSize = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+const toBase64 = file => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
+
+function confirmDelete(title, detail, action) {
+  openSheet({ title, body: h("p", { style: "font-size:13.5px;color:#c9cdd1" }, detail), foot: [h("button", { type: "button", onclick: closeOverlay }, "Cancel"),
+    h("button", { type: "button", class: "danger", "data-testid": "assistant-resource-delete-confirm", onclick: async () => {
+      try { await action(); closeOverlay(); renderResources(); } catch (error) { fail(error); }
+    } }, "Delete")] });
+}
+
+function fileRow(file) {
+  const remove = () => confirmDelete(`Delete ${file.path}?`, "The assistant won't be able to use this file anymore.", async () => {
+    const { files } = await del(`${base()}/files?path=${encodeURIComponent(file.path)}`);
+    app.resources.files = files;
+  });
+  return resRow({ glyph: siteBox(icon("file")), title: file.path, detail: `${fileSize(file.bytes)} · ${formatTime(file.modifiedAt)}`,
+    control: h("span", { class: "res-actions" }, h("a", { href: `${base()}/files/download?path=${encodeURIComponent(file.path)}`, download: "" }, "Download"), h("button", { type: "button", class: "ghost", onclick: remove }, "Delete")) });
+}
+
+function uploadControl() {
+  const input = h("input", { type: "file", multiple: true, class: "hidden", "data-testid": "assistant-file-input" });
+  input.addEventListener("change", async () => {
+    try {
+      for (const file of input.files) app.resources.files = (await post(`${base()}/files`, { name: file.name, data: await toBase64(file) })).files;
+      notify("Saved to this assistant's folder.");
+      renderResources();
+    } catch (error) { fail(error); }
+  });
+  return h("span", {}, input, h("button", { type: "button", class: "primary", "data-testid": "assistant-upload-file", disabled: !app.resources.executionNode.local, onclick: () => input.click() }, icon("plus"), "Upload"));
+}
+
+function memoryPanel() {
+  const memory = app.resources.memory;
+  if (!memory) return h("div", { class: "notice" }, icon("alert"), h("span", {}, "Open this assistant on its execution machine to manage its memory."));
+  const box = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Keep memory", "data-testid": "assistant-memory-switch" });
+  box.checked = memory.enabled;
+  box.addEventListener("change", async () => {
+    try { app.resources.memory = await put(`${base()}/memory/enabled`, { enabled: box.checked }); notify(box.checked ? "Memory is on." : "Memory is off. Its notes stay saved."); renderResources(); }
+    catch (error) { fail(error); box.checked = !box.checked; }
+  });
+  const text = h("textarea", { class: "memory-text", maxlength: 200000, "aria-label": "Memory notes", "data-testid": "assistant-memory-text", placeholder: "Nothing yet. Write what this assistant should always remember, or let it add notes as it works." });
+  text.value = memory.content;
+  const save = h("button", { type: "button", class: "primary", "data-testid": "assistant-memory-save", onclick: async () => {
+    try { app.resources.memory = await put(`${base()}/memory`, { content: text.value, expectedRevision: app.resources.memory.revision }); notify("Memory saved."); }
+    catch (error) { fail(error); }
+  } }, "Save memory");
+  return [h("div", { class: "res-bar" }, h("span", {}, memory.enabled ? "Keeps notes between topics" : "Memory is off. Its notes stay saved."), box), text, h("div", { class: "actions" }, save)];
+}
+
+async function reloadOwnSkills(message) {
+  app.resources.ownSkills = (await request(`${base()}/own-skills`)).skills;
+  closeOverlay();
+  notify(message);
+  renderResources();
+}
+
+function openAddSkill() {
+  const folder = h("input", { type: "file", webkitdirectory: true, multiple: true, class: "hidden", "data-testid": "assistant-skill-folder" });
+  folder.addEventListener("change", async () => {
+    try {
+      const files = await Promise.all([...folder.files].map(async file => ({ relativePath: file.webkitRelativePath.split("/").slice(1).join("/") || file.name, data: await toBase64(file) })));
+      const { skill } = await post(`${base()}/own-skills`, { action: "upload", files });
+      await reloadOwnSkills(`Added ${skill.name}. Only this assistant has it.`);
+    } catch (error) { fail(error); }
+  });
+  const found = h("div");
+  const url = h("input", { required: true, maxlength: 2048, placeholder: "https://github.com/org/skills", autocomplete: "off" });
+  const form = h("form", { id: "add-skill-git" }, h("label", { class: "field" }, "Git repository", url));
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const { commit, skills } = await post(`${base()}/own-skills`, { action: "discover-git", url: url.value.trim() });
+      found.replaceChildren(...(skills.length ? skills.map(skill => h("div", { class: "work", style: "align-items:center" }, h("div", {}, h("strong", {}, skill.name), h("small", {}, skill.description)),
+        h("button", { type: "button", onclick: async () => {
+          try { await post(`${base()}/own-skills`, { action: "import-git", url: url.value.trim(), commit, key: skill.key }); await reloadOwnSkills(`Added ${skill.name}. Only this assistant has it.`); }
+          catch (error) { fail(error); }
+        } }, "Add"))) : [h("p", { class: "fine" }, "No skills in this repository.")]));
+    } catch (error) { fail(error); }
+  });
+  openSheet({ title: "Add a skill", body: [
+    h("p", { class: "fine", style: "margin-bottom:10px" }, "Only this assistant gets it. Files are stored as they are and never run on upload."),
+    folder, h("button", { type: "button", class: "primary", style: "width:100%;margin-bottom:16px", onclick: () => folder.click() }, "Choose a folder with SKILL.md"),
+    form, found, h("a", { href: "/", class: "fine" }, "Install for every conversation in Joint Bob Resources")],
+    foot: [h("button", { type: "button", onclick: closeOverlay }, "Cancel"), h("button", { type: "submit", form: "add-skill-git" }, "Find skills")] });
+}
+
+function ownSkillRow(skill) {
+  const remove = () => confirmDelete(`Delete ${skill.name}?`, "This assistant won't have this skill anymore.", async () => {
+    await del(`${base()}/own-skills/${skill.id}`);
+    app.resources.ownSkills = app.resources.ownSkills.filter(item => item.id !== skill.id);
+  });
+  return resRow({ glyph: siteBox(icon("book")), title: skill.name, chips: [chip("Only this assistant", "ok")], detail: skill.description, control: h("button", { type: "button", class: "ghost", onclick: remove }, "Delete") });
+}
+
 function row(section, item) {
   if (section === "browser") return loginRow(item);
+  if (section === "files") return fileRow(item);
+  if (item.own) return ownSkillRow(item);
   if (section === "secrets") {
     const names = variableNames(item);
     const locked = names.includes(decisionVariable());
@@ -115,6 +224,9 @@ function row(section, item) {
 }
 
 function topAction(section) {
+  if (section === "memory") return null;
+  if (section === "files") return uploadControl();
+  if (section === "skills") return h("button", { type: "button", "data-testid": "assistant-add-skill", disabled: !app.resources.executionNode.local, onclick: openAddSkill }, icon("plus"), "Add skill");
   if (section === "browser") return h("button", { type: "button", class: "primary", "data-testid": "assistant-add-login", disabled: !app.resources.executionNode.local, onclick: () => openAddLogin("new") }, icon("plus"), "Add login");
   if (section === "secrets") return h("a", { href: "/", class: "fine" }, "Manage secrets in Settings → Secrets");
   return h("a", { href: "/", class: "fine" }, "Install more in Joint Bob Resources");
@@ -141,9 +253,9 @@ function detail() {
   const node = h("div", { class: "res-detail" },
     isMobile() ? h("button", { type: "button", class: "link", style: "align-self:flex-start;margin-bottom:10px", onclick: () => { view.open = false; renderResources(); } }, "Back to resources") : null,
     h("div", { class: "res-top" }, h("div", {}, h("h2", {}, label), h("p", {}, COPY[section])), topAction(section)),
-    notices, section === "browser" ? browserBar() : null, list, pager);
-  const empty = section === "browser" ? "No logins yet. Add one and sign in yourself. Every topic can use it." : section === "secrets" ? "Create a secret account in Settings → Secrets first." : "Nothing installed yet. Add some in Joint Bob Resources.";
-  return { node, paint: () => { view.pages[section] = fitPage({ list, pager, items: items(section), rowHeight: 58, page: view.pages[section] ?? 0, renderRow: item => row(section, item), empty: h("div", { class: "empty" }, empty), onPage: next => { view.pages[section] = next; renderResources(); } }); } };
+    notices, section === "browser" ? browserBar() : null, section === "memory" ? memoryPanel() : [list, pager]);
+  const empty = section === "files" ? "No files yet. Upload some, or ask the assistant to save one here." : section === "browser" ? "No logins yet. Add one and sign in yourself. Every topic can use it." : section === "secrets" ? "Create a secret account in Settings → Secrets first." : "Nothing installed yet. Add some in Joint Bob Resources.";
+  return { node, paint: () => { if (section === "memory") return; view.pages[section] = fitPage({ list, pager, items: items(section), rowHeight: 58, page: view.pages[section] ?? 0, renderRow: item => row(section, item), empty: h("div", { class: "empty" }, empty), onPage: next => { view.pages[section] = next; renderResources(); } }); } };
 }
 
 function sideList() {

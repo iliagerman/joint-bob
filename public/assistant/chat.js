@@ -7,11 +7,24 @@ import { h, markdownBubble } from "./dom.js";
 let pendingTurn = null;
 let timelineTexts = [];
 
+/** A webhook's message holds its instructions and raw payload, so it stays folded behind who sent it. */
+function userBubble(text) {
+  const webhook = /^(?:[^\n]*\n)*?\[Joint Bob webhook: (.+)\]/.exec(text);
+  if (!webhook) return h("div", { class: "chat-bubble user" }, text);
+  const sender = /^Sender: (.+?)\. This sender/m.exec(text)?.[1];
+  const said = /"(?:text|caption)":\s*"((?:[^"\\]|\\.)*)"/.exec(text)?.[1];
+  let words = said;
+  try { words = said === undefined ? undefined : JSON.parse(`"${said}"`); } catch { words = said; }
+  return h("details", { class: "chat-bubble user webhook" },
+    h("summary", {}, `From ${webhook[1]}${sender ? ` · ${sender}` : ""}`, words ? h("small", {}, words) : null),
+    h("pre", {}, text));
+}
+
 export async function showTranscript() {
   const target = document.querySelector("#timeline");
   const { timeline } = await request(`/api/personal-assistants/${app.assistant.id}/transcript`);
   timelineTexts = timeline.map(item => item.text);
-  target.replaceChildren(...timeline.map(item => item.role === "user" ? h("div", { class: "chat-bubble user" }, item.text) : markdownBubble("chat-bubble assistant", item.text)));
+  target.replaceChildren(...timeline.map(item => item.role === "user" ? userBubble(item.text) : markdownBubble("chat-bubble assistant", item.text)));
   const scroll = document.querySelector("#chat-scroll");
   scroll.scrollTop = scroll.scrollHeight;
 }

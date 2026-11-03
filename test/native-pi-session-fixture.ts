@@ -24,6 +24,7 @@ export function nativePiSessionFixture(options: FixtureOptions = {}) {
     sessionFile: options.file,
     sessionName: undefined,
     messages: [],
+    sessionManager: { getHeader: () => ({ type: "session", id }), getBranch: () => [] },
     model: { provider: "test", id: "test", name: "test" },
     thinkingLevel: "off",
     isStreaming: options.busy ?? false,

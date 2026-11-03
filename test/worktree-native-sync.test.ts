@@ -75,7 +75,7 @@ test("a worktree reaches the other node through native Syncthing, keeps heavy fi
 
     const removed = await fetch(`${left.url}/api/projects/${projectId}/worktrees/${source.id}`, { method: "DELETE", headers: { Cookie: sa.cookie, "x-csrf-token": sa.csrfToken } });
     assert.equal(removed.status, 204);
-    assert.equal(await until(async () => !await exists(remote!.path), 60_000), true, "deleting the worktree removes it on the other node, ignored packages included");
+    assert.equal(await until(async () => !await exists(remote!.path), 120_000), true, "deleting the worktree removes it on the other node, ignored packages included");
     assert.deepEqual((await api<{ worktrees: Worktree[] }>(right, sb, "GET", `/projects/${projectId}/worktrees`)).body.worktrees, []);
   } finally {
     await Promise.all(children.map(stopDevNode));

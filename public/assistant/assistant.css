@@ -98,6 +98,12 @@ label.check{display:flex;gap:9px;align-items:center;margin:4px 0 14px;font-size:
 .chat-bubble.assistant{align-self:flex-start;border-left:2px solid var(--accent)}
 .chat-bubble.user.pending{opacity:.7}
 .chat-working{align-self:flex-start;color:var(--muted);font-size:12px}
+.chat-bubble.webhook{white-space:normal}
+.chat-bubble.webhook summary{cursor:pointer;font-size:13px}
+.chat-bubble.webhook summary small{display:block;margin-top:2px;font-size:13.5px;color:var(--text)}
+.chat-bubble.webhook pre{margin:8px 0 0;font:12px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
+.res-actions{display:flex;align-items:center;gap:10px;font-size:13px}
+.memory-text{width:100%;min-height:280px;margin-top:6px;font:13px/1.55 var(--mono)}
 /* An assistant's answer: the main chat's Markdown look, scaled to a bubble. */
 .md{white-space:normal}
 .md>:first-child{margin-top:0}

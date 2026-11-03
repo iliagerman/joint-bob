@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
-import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { guardianAskSettings, guardianDecisionModel, installGuardianClaude } from "../guardian-claude-fixture.js";
 
 async function choose(page: Page, testid: string, text: string): Promise<void> {
   await page.getByTestId(testid).click();
@@ -87,5 +88,70 @@ test("Guardian rules are switched, edited with searchable dropdowns and reviewed
     await browser?.close();
     await stopDevNode(server);
     if (!process.env.KEEP_GUARDIAN_UI) await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a review on a new Claude conversation's first turn shows its card until it is answered", { timeout: 240_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-guardian-first-turn-"));
+  const model = await guardianDecisionModel();
+  const environment = await seedDevEnvironment(root, 1);
+  const node = environment.nodes[0];
+  const capture = path.join(root, "claude-runs.jsonl");
+  await installGuardianClaude(root, node, capture);
+  const server = await startDevNode(environment, node);
+  let browser: Browser | undefined;
+  try {
+    const admin = await signIn(environment, node);
+    assert.equal((await api(node, admin, "PUT", "/guardian", { settings: guardianAskSettings(model) })).status, 200);
+    browser = await launchChrome({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, serviceWorkers: "block" });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(node.url);
+    await page.getByTestId("login-username-input").fill(environment.username);
+    await page.getByTestId("login-password-input").fill(environment.password);
+    await page.getByTestId("login-submit-button").click();
+    await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+
+    await page.getByTestId("session-create-claude-button").click();
+    await page.getByTestId("new-session-name-input").fill("Release clean-up");
+    await page.getByTestId("new-session-name-start-button").click();
+    await page.locator("#messageInput:not([disabled])").waitFor();
+    await page.locator("#messageInput").fill("Please delete the 2023 exports");
+    await page.locator("#sendButton").click();
+
+    const card = page.getByTestId("guardian-review");
+    await card.waitFor({ timeout: 30_000 });
+    assert.equal(await page.getByTestId("guardian-review-subject").textContent(), "rm -rf exports/2023");
+    // A running turn refreshes the conversation list every few seconds, and each refresh redraws the
+    // chat controls, which announce "activeConversationChanged". None of those may take the card away.
+    const redrawn = await page.evaluate(`(async () => {
+      let redraws = 0;
+      document.addEventListener("activeConversationChanged", () => { redraws += 1; });
+      const { renderSessions } = await import("/app/session-list.js");
+      const { refreshSessionsQuietly } = await import("/app/socket.js");
+      renderSessions();
+      await refreshSessionsQuietly();
+      return { redraws, card: document.querySelectorAll('[data-testid="guardian-review"]').length };
+    })()`) as { redraws: number; card: number };
+    assert.ok(redrawn.redraws >= 1, `the list redraw announced a conversation change (${redrawn.redraws})`);
+    assert.equal(redrawn.card, 1, "the card stays while its review waits");
+
+    // A reload while the review waits brings the card back with the conversation.
+    await page.reload();
+    await card.waitFor({ timeout: 30_000 });
+    assert.equal(await page.getByTestId("guardian-review-subject").textContent(), "rm -rf exports/2023");
+
+    await page.getByTestId("guardian-review-block").click();
+    await card.waitFor({ state: "detached" });
+    await page.getByText("Nothing was deleted.").first().waitFor({ timeout: 30_000 });
+    const runs = (await readFile(capture, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { verdict: { action: string } | null });
+    assert.equal(runs.at(-1)?.verdict?.action, "block", "the person's Block reaches Claude");
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser?.close();
+    await stopDevNode(server);
+    model.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined);
   }
 });

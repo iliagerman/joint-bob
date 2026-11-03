@@ -8,7 +8,7 @@ import { queueConversationPrompt, type PromptAttachment } from "../conversation-
 import { ensureSessionTitle } from "../../names.js";
 import { sharedProjectSessions } from "../sessions-helpers.js";
 import { getProject, projectVisible } from "../../store.js";
-import { addPersonalAssistantTopic, beginPersonalAssistantTurn, deleteItem, deletePersonalAssistant, finishPersonalAssistantTurn, getPersonalAssistant, getPersonalAssistantSourceHistory, getPersonalAssistantTurn, listPersonalAssistantTopics, listPersonalAssistantTurnSourceIds, listPersonalAssistantTurns, listPersonalAssistants, listSavedItems, saveItem, savePersonalAssistant, savePersonalAssistantSourceHistory, savedImage, type PersonalAssistantExecutionSettings } from "../../personal-assistants.js";
+import { addPersonalAssistantTopic, beginPersonalAssistantTurn, deleteItem, deletePersonalAssistant, finishPersonalAssistantTurn, getPersonalAssistant, getPersonalAssistantSourceHistory, getPersonalAssistantTurn, listPersonalAssistantTopics, listPersonalAssistantTurnSourceIds, listPersonalAssistantTurns, listPersonalAssistants, listSavedItems, saveItem, savePersonalAssistant, savePersonalAssistantSourceHistory, savedImage, type PersonalAssistantExecutionSettings, type TurnOrigin } from "../../personal-assistants.js";
 import { routeAssistantMessage, type AssistantRoute } from "../../classifiers/conversation-routing.js";
 import { getHarness, getHarnessRuntime, listHarnessModels, listHarnesses, listHarnessSessions } from "../../harnesses.js";
 import { isHarnessId } from "../../types.js";
@@ -17,6 +17,9 @@ import { getConversationOwnership } from "../../conversation-ownership.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
 import { syncAssistantLoginGrants } from "./assistant-resources.js";
+import { announceAssistantChanges, registerTwinAssistantRoutes } from "../../assistant-collaboration/twin-sync.js";
+
+registerTwinAssistantRoutes();
 
 const profileSchema = z.object({
   projectId: z.string().min(1).max(200), engine: z.string().min(1).max(50),
@@ -26,6 +29,14 @@ const profileSchema = z.object({
   classifierId: z.enum(["typesafe", "laya"]).optional(),
   executionSettings: z.object({ harnessId: z.string().min(1).max(50), provider: z.string().min(1).max(100), modelId: z.string().min(1).max(200), reasoning: z.string().min(1).max(100) }).strict().nullable().optional(),
 }).strict();
+import { addRoutingScopeTopic, personalAssistantDatabase, routingScopeTopicIds } from "../../personal-assistants.js";
+import { removeAssistantCapabilities } from "../../assistant-capabilities.js";
+
+/** What the person wrote, without the instructions and context added to the agent's copy of a turn. */
+function withoutAssistantContext(text: string): string {
+  return text.replace(/^Personal assistant instructions \(set by its owner\):[\s\S]*?\n\nPersonal assistant tool policy: [^\n]*\n\n/, "");
+}
+
 const routeSchema = z.object({ message: z.string().trim().min(1).max(20000), recentMessages: z.array(z.string().max(4000)).max(6) }).strict();
 const turnSchema = routeSchema.extend({ requestId: z.string().uuid() }).strict();
 const assistantTurnQueues = new Map<string, Promise<void>>();
@@ -109,9 +120,9 @@ async function validateExecutionSettings(settings: PersonalAssistantExecutionSet
   if (!model || !model.thinkingLevels.includes(settings.reasoning)) throw new Error("Model or effort is unavailable for the selected agent");
   await runtime.validateSettings({ provider: settings.provider, modelId: settings.modelId, reasoning: settings.reasoning });
 }
-async function classifyAssistantMessage(entry: AssistantEntry, input: z.infer<typeof routeSchema>, context: AssistantRoutingContext, fetchImpl: typeof fetch = fetch): Promise<AssistantRoute | null> {
+async function classifyAssistantMessage(entry: AssistantEntry, input: z.infer<typeof routeSchema>, context: AssistantRoutingContext, fetchImpl: typeof fetch = fetch, allowRecall = true): Promise<AssistantRoute | null> {
   const environment = genericSecretEnvironment(entry.projectId, { engine: entry.engine, sessionId: entry.sessionId });
-  return routeAssistantMessage({ classifierId: entry.classifierId, apiKey: environment[entry.classifierId === "typesafe" ? "TYPESAFE_AI_API_KEY" : "LAYA_API_KEY"] ?? "", message: input.message, recentMessages: input.recentMessages, topics: context.candidates, history: context.history }, fetchImpl);
+  return routeAssistantMessage({ classifierId: entry.classifierId, apiKey: environment[entry.classifierId === "typesafe" ? "TYPESAFE_AI_API_KEY" : "LAYA_API_KEY"] ?? "", message: input.message, recentMessages: input.recentMessages, topics: context.candidates, history: context.history, allowRecall }, fetchImpl);
 }
 export interface AssistantDestination { engine: string; sessionId: string; message: string; isNew: boolean }
 async function shareAssistantAccess(entry: AssistantEntry, engine: string, sessionId: string): Promise<void> {
@@ -121,6 +132,7 @@ async function shareAssistantAccess(entry: AssistantEntry, engine: string, sessi
   const accountIds = [...new Set([...source.accountIds, ...target.accountIds])];
   if (accountIds.length !== target.accountIds.length) await setScopeSecretAccounts("conversation", targetScope, accountIds);
   await syncAssistantLoginGrants(entry.id, entry.accountId);
+  announceAssistantChanges();
 }
 async function resumeAssistantTopic(accountId: string, entry: AssistantEntry, context: AssistantRoutingContext, route: Extract<AssistantRoute, { kind: "continue" }>, input: z.infer<typeof routeSchema>, localId: string): Promise<AssistantDestination> {
   const [topicEngine, ...parts] = route.topicId.split(":");
@@ -163,20 +175,32 @@ async function assistantDestination(accountId: string, entry: AssistantEntry, co
     : startAssistantTopic(accountId, entry, route, input, localId, context.history);
 }
 export interface AssistantAutomationTurnOptions {
+  scheduledAutoRespond?: AutoRespondConfig;
   label: string;
+  origin: TurnOrigin;
   automationProfile?: { accountId: string; profileId: string | null };
   images?: PromptAttachment[];
   files?: PromptAttachment[];
-  scheduledAutoRespond?: AutoRespondConfig;
   prepare?: (destination: AssistantDestination) => Promise<void>;
   onStarted?: (destination: AssistantDestination) => void;
   recentMessages?: () => Promise<string[]>;
   classifierFetch?: typeof fetch;
-  forceNewConversation?: boolean;
+  /** A caller from outside: its conversations are its own, and the decision model reads only its words. */
+  routing?: { scope: string; message: string };
 }
-async function executeAssistantTurn(accountId: string, entry: AssistantEntry, session: AuthSession, input: z.infer<typeof turnSchema>, destination: AssistantDestination, project: AssistantProject, options?: AssistantAutomationTurnOptions): Promise<Awaited<ReturnType<typeof getPersonalAssistantTurn>> & {}> {
+/** New or continue, among only what this caller already started. The owner's private topics and history aren't candidates. */
+async function routeOutsideCaller(accountId: string, entry: AssistantEntry, context: AssistantRoutingContext, routing: NonNullable<AssistantAutomationTurnOptions["routing"]>, classifierFetch?: typeof fetch): Promise<AssistantRoute | null> {
+  const own = await routingScopeTopicIds(entry.id, routing.scope);
+  const candidates = await assistantTopicCandidates(context.project, context.topics.filter(topic => own.has(`${topic.engine}:${topic.sessionId}`)), context.listed);
+  if (!candidates.length) return { kind: "new" };
+  const turns = await listPersonalAssistantTurns(accountId, entry.id);
+  if (!turns) throw new Error("Assistant not found");
+  const recentMessages = turns.filter(turn => own.has(turn.topicId)).slice(-3).flatMap(turn => [turn.message, ...(turn.response ? [turn.response] : [])]).slice(-6);
+  return classifyAssistantMessage(entry, { message: routing.message, recentMessages }, { ...context, candidates, history: [] }, classifierFetch, false);
+}
+async function executeAssistantTurn(accountId: string, entry: AssistantEntry, session: AuthSession, input: z.infer<typeof turnSchema>, destination: AssistantDestination, project: AssistantProject, origin: TurnOrigin, options?: AssistantAutomationTurnOptions): Promise<Awaited<ReturnType<typeof getPersonalAssistantTurn>> & {}> {
   const topicId = `${destination.engine}:${destination.sessionId}`;
-  const { created } = await beginPersonalAssistantTurn(accountId, entry.id, input.requestId, topicId, input.message);
+  const { created } = await beginPersonalAssistantTurn(accountId, entry.id, input.requestId, topicId, input.message, origin);
   if (!created) return (await getPersonalAssistantTurn(accountId, entry.id, input.requestId))!;
   try {
     await options?.prepare?.(destination);
@@ -193,7 +217,8 @@ async function executeAssistantTurn(accountId: string, entry: AssistantEntry, se
       ? transcript.path
       : transcript?.segments?.find(segment => segment.engine === active.engine && segment.sessionId === active.sessionId)?.path;
     const messages = activePath ? await getHarness(active.engine).sessions.loadMessages(project, activePath) : [];
-    const userMessage = [...messages].reverse().find(message => message.role === "user" && message.text === destination.message);
+    // The agent's copy of the message also holds the assistant's instructions and context.
+    const userMessage = [...messages].reverse().find(message => message.role === "user" && message.text.includes(destination.message));
     const userIndex = userMessage ? messages.lastIndexOf(userMessage) : -1;
     const responseMessage = userIndex < 0 ? undefined : [...messages.slice(userIndex + 1)].reverse().find(message => message.role === "assistant");
     if (!userMessage || !responseMessage) throw new Error("Assistant response could not be confirmed");
@@ -204,7 +229,7 @@ async function executeAssistantTurn(accountId: string, entry: AssistantEntry, se
   }
   return (await getPersonalAssistantTurn(accountId, entry.id, input.requestId))!;
 }
-async function processAssistantTurn(accountId: string, entry: AssistantEntry, session: AuthSession, input: z.infer<typeof turnSchema>, options?: AssistantAutomationTurnOptions): Promise<Awaited<ReturnType<typeof getPersonalAssistantTurn>> & {}> {
+async function processAssistantTurn(accountId: string, entry: AssistantEntry, session: AuthSession, input: z.infer<typeof turnSchema>, origin: TurnOrigin, options?: AssistantAutomationTurnOptions): Promise<Awaited<ReturnType<typeof getPersonalAssistantTurn>> & {}> {
   return serializeAssistantTurn(entry.id, async () => {
     const repeated = await getPersonalAssistantTurn(accountId, entry.id, input.requestId);
     if (repeated) {
@@ -215,10 +240,13 @@ async function processAssistantTurn(accountId: string, entry: AssistantEntry, se
     if (entry.nodeId && entry.nodeId !== local.id) throw new Error("Open this assistant on its execution node");
     const context = await assistantRoutingContext(accountId, entry, session, true);
     const routingInput = options?.recentMessages ? { ...input, recentMessages: await options.recentMessages() } : input;
-    const route = options?.forceNewConversation ? { kind: "new" as const } : await classifyAssistantMessage(entry, routingInput, context, options?.classifierFetch);
+    const route = options?.routing
+      ? await routeOutsideCaller(accountId, entry, context, options.routing, options.classifierFetch)
+      : await classifyAssistantMessage(entry, routingInput, context, options?.classifierFetch);
     if (!route) throw new Error("Assistant could not classify this message. Retry without losing the conversation.");
     const destination = await assistantDestination(accountId, entry, context, route, routingInput, local.id);
-    return executeAssistantTurn(accountId, entry, session, input, destination, context.project, options);
+    if (options?.routing) await addRoutingScopeTopic(entry.id, options.routing.scope, destination.engine, destination.sessionId);
+    return executeAssistantTurn(accountId, entry, session, input, destination, context.project, origin, options);
   });
 }
 
@@ -243,9 +271,9 @@ export async function runPersonalAssistantAutomationTurn(accountId: string, assi
     const source = await sourceHistory(accountId, entry.id, entry, session, project, false);
     const turns = await listPersonalAssistantTurns(accountId, entry.id);
     if (!turns) throw new Error("Assistant not found");
-    return [...source.map(item => item.text), ...turns.slice(-3).flatMap(turn => [turn.message, ...(turn.response ? [turn.response] : [])])].slice(-6);
+    return [...source.map(item => withoutAssistantContext(item.text)), ...turns.slice(-3).flatMap(turn => [turn.message, ...(turn.response ? [turn.response] : [])])].slice(-6);
   };
-  return processAssistantTurn(accountId, entry, session, { requestId, message, recentMessages: [] }, { ...options, recentMessages });
+  return processAssistantTurn(accountId, entry, session, { requestId, message, recentMessages: [] }, options.origin, { ...options, recentMessages });
 }
 
 const itemSchema = z.object({
@@ -280,7 +308,9 @@ app.post("/api/personal-assistants", async (request, response, next) => {
       try { await validateExecutionSettings(input.executionSettings); }
       catch (error) { sendError(response, 400, error instanceof Error ? error.message : "Invalid assistant execution settings"); return; }
     }
-    response.status(201).json({ assistant: await savePersonalAssistant(actor(response), { ...input, nodeId: local }) });
+    const created = await savePersonalAssistant(actor(response), { ...input, nodeId: local });
+    announceAssistantChanges();
+    response.status(201).json({ assistant: created });
   } catch (error) {
     if (error instanceof Error && /UNIQUE constraint/.test(error.message)) { sendError(response, 409, "Conversation already has a personal assistant"); return; }
     next(error);
@@ -326,12 +356,12 @@ app.get("/api/personal-assistants/:id/transcript", async (request, response, nex
     const turnIds = new Set(sourceIds);
     const external = current.filter(message => !savedIds.has(message.id) && !turnIds.has(message.id));
     const timeline = [
-      ...messages.map(item => ({ ...item, createdAt: item.timestamp ?? "" })),
+      ...messages.map(item => ({ ...item, text: withoutAssistantContext(item.text), createdAt: item.timestamp ?? "" })),
       ...turns.flatMap(turn => [
         { id: turn.requestId, role: "user", text: turn.message, createdAt: turn.createdAt },
         { id: `${turn.requestId}:response`, role: "assistant", text: turn.response ?? (turn.status === "running" ? "Working…" : turn.status === "failed" ? "This turn failed. Send a new message to continue." : ""), createdAt: turn.createdAt, status: turn.status },
       ]),
-      ...external.map(item => ({ ...item, createdAt: item.timestamp ?? "" })),
+      ...external.map(item => ({ ...item, text: withoutAssistantContext(item.text), createdAt: item.timestamp ?? "" })),
     ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     response.json({ messages: messages.slice(-500), turns, timeline: timeline.slice(-500) });
   } catch (error) { next(error); }
@@ -355,7 +385,7 @@ app.post("/api/personal-assistants/:id/turn", async (request, response, next) =>
       response.status(prior.status === "running" ? 202 : 200).json({ turn: prior });
       return;
     }
-    const result = await processAssistantTurn(accountId, entry, response.locals.authSession as AuthSession, input);
+    const result = await processAssistantTurn(accountId, entry, response.locals.authSession as AuthSession, input, "chat");
     response.status(result.status === "running" ? 202 : 200).json({ turn: result });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Assistant request ID")) { sendError(response, 409, error.message); return; }
@@ -375,13 +405,17 @@ app.put("/api/personal-assistants/:id", async (request, response, next) => {
       try { await validateExecutionSettings(input.executionSettings); }
       catch (error) { sendError(response, 400, error instanceof Error ? error.message : "Invalid assistant execution settings"); return; }
     }
-    response.json({ assistant: await savePersonalAssistant(actor(response), input, existing.id) });
+    const saved = await savePersonalAssistant(actor(response), input, existing.id);
+    announceAssistantChanges();
+    response.json({ assistant: saved });
   } catch (error) { next(error); }
 });
 app.delete("/api/personal-assistants/:id", async (request, response, next) => {
   try {
     if (!await visible(actor(response), request.params.id)) { sendError(response, 404, "Assistant not found"); return; }
     await deletePersonalAssistant(actor(response), request.params.id);
+    await removeAssistantCapabilities(await personalAssistantDatabase(), request.params.id);
+    announceAssistantChanges();
     response.status(204).end();
   } catch (error) { next(error); }
 });

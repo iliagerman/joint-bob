@@ -3,7 +3,7 @@ import { lstat, readFile, rename, rm, writeFile } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { ensureWebhookResourceDirectory, setWebhookMemoryEnabled as setEnabled, type WebhookResourceOptions, WebhookResourceError } from "./webhook-resources.js";
-import { ensureWebhookResourceSchema } from "./webhook-resources.js";
+import { assertResourceOwner, ensureWebhookResourceSchema } from "./webhook-resources.js";
 
 export const WEBHOOK_MEMORY_MAX_BYTES = 200_000;
 const memoryLocks = new Map<string, Promise<void>>();
@@ -51,7 +51,7 @@ async function withMemoryLock<T>(webhookId: string, work: () => Promise<T>): Pro
 
 export async function writeWebhookMemory(db: DatabaseSync, webhookId: string, expectedRevision: string, content: string, options: WebhookResourceOptions = {}): Promise<WebhookMemory> {
   ensureWebhookResourceSchema(db);
-  if (!db.prepare("SELECT 1 FROM webhooks WHERE id=?").get(webhookId)) throw new WebhookResourceError("Webhook not found", 404);
+  assertResourceOwner(db, webhookId);
   const bytes = Buffer.from(content, "utf8");
   if (bytes.byteLength > WEBHOOK_MEMORY_MAX_BYTES) throw new WebhookResourceError("Webhook memory must be at most 200,000 bytes");
   const directory = await ensureWebhookResourceDirectory(webhookId, options);

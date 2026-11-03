@@ -157,6 +157,19 @@ test("people and assistants find each other on a relay, request public actions a
     assert.equal(JSON.stringify(found).includes("Ask me first"), false, "private instructions never reach a listing");
     assert.equal(found.some(result => result.kind === "person" && result.id === meB.account.accountId), false, "searchers don't find themselves");
 
+    // One switch hides an assistant from everyone and stops new requests, and turns it back on.
+    const findable = (value: boolean) => api<{ discovery: Array<{ subjectId: string; relayNodeId: string }> }>(a, sa, "PUT", "/social/findable", { subjectKind: "assistant", subjectId: assistantId, findable: value });
+    const hidden = await findable(false);
+    assert.equal(hidden.status, 200, JSON.stringify(hidden.body));
+    assert.equal(hidden.body.discovery.some(item => item.subjectId === assistantId), false);
+    const whileHidden = await api<{ results: Result[] }>(b, sb, "GET", "/social/search?q=");
+    assert.equal(whileHidden.body.results.some(result => result.kind === "assistant"), false, "a hidden assistant can't be found");
+    const refusedThread = await api<{ error: string }>(b, sb, "POST", "/social/threads", { assistantId: listedAssistant.id, nodeId: listedAssistant.nodeId, relayNodeId });
+    assert.notEqual(refusedThread.status, 200, "a hidden assistant takes no new requests");
+    assert.match(refusedThread.body.error, /isn't taking new requests/);
+    assert.equal((await api(a, sa, "PUT", "/social/findable", { subjectKind: "assistant", subjectId: meB.account.accountId, findable: false })).status, 404, "nobody can change someone else's assistant");
+    assert.deepEqual((await findable(true)).body.discovery.filter(item => item.subjectId === assistantId).map(item => item.relayNodeId), [relayNodeId], "turning it on lists it on every relay");
+
     // A direct request without a shared group, approved by the owner, then executed by code.
     const opened = await api<{ threadId: string; catalog: unknown[] }>(b, sb, "POST", "/social/threads", { assistantId: listedAssistant.id, nodeId: listedAssistant.nodeId, relayNodeId });
     assert.equal(opened.status, 200, JSON.stringify(opened.body));

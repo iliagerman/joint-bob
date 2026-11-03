@@ -165,9 +165,18 @@ export async function removeWebhookResource(db: DatabaseSync, webhookId: string,
   if (!result.changes) throw new WebhookResourceError("Webhook resource not found", 404);
 }
 
+/** Assistants keep their skills and memory in the same stores as webhooks, under their own ID. */
+export function assertResourceOwner(db: DatabaseSync, id: string): void {
+  for (const table of ["webhooks", "personal_assistants"]) {
+    const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+    if (exists && db.prepare(`SELECT 1 FROM ${table} WHERE id=?`).get(id)) return;
+  }
+  throw new WebhookResourceError("Webhook not found", 404);
+}
+
 export function setWebhookMemoryEnabled(db: DatabaseSync, webhookId: string, enabled: boolean): void {
   ensureWebhookResourceSchema(db);
-  if (!db.prepare("SELECT 1 FROM webhooks WHERE id=?").get(webhookId)) throw new WebhookResourceError("Webhook not found", 404);
+  assertResourceOwner(db, webhookId);
   db.prepare(`INSERT INTO webhook_memory_settings(webhook_id,enabled) VALUES(?,?)
     ON CONFLICT(webhook_id) DO UPDATE SET enabled=excluded.enabled`).run(webhookId, enabled ? 1 : 0);
 }

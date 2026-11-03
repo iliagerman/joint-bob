@@ -10,6 +10,7 @@ import { getSettings } from "./settings.js";
 import { backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, unlinkSkillAliases, unmarkReceived } from "./skill-sharing-files.js";
 import { validateSkillName } from "./skill-sharing.js";
 import { markReceivedResource } from "./resource-activation.js";
+import { reservedMcpServerMessage, reservedMcpServerName } from "./assistant-collaboration/bridge-tools.js";
 import { parseResourceFrontmatter } from "./skills.js";
 import { gitlabGitEnvironment } from "./secrets.js";
 
@@ -484,6 +485,7 @@ async function installItem(store: Store, source: GitResourceSource, checkout: st
     if (!prior && await exists(location)) throw new GitResourceError(`A managed plugin named ${item.name} already exists on this node`, 409);
     await copyPlugin(path.join(checkout, item.path), location, item, result.backups, options);
   } else {
+    if (reservedMcpServerName(item.name)) throw new GitResourceError(reservedMcpServerMessage(item.name), 409);
     const config = await readMcpConfig(options);
     const servers = { ...record(config.mcpServers) };
     const value = await mcpServerValue(checkout, item);

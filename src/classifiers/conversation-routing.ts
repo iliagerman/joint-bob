@@ -19,6 +19,8 @@ export async function routeAssistantMessage(input: {
   recentMessages: string[];
   topics: AssistantRouteCandidate[];
   history?: AssistantRouteCandidate[];
+  /** Off for callers from outside, who must not be answered from the owner's other conversations. */
+  allowRecall?: boolean;
 }, fetchImpl: typeof fetch = fetch): Promise<AssistantRoute | null> {
   if (!input.message.trim()) return null;
   const target = input.classifierId === "typesafe" ? TYPESAFE : await layaTarget(input.apiKey);
@@ -27,7 +29,7 @@ export async function routeAssistantMessage(input: {
     `topic_${index}`, `Resume saved conversation ${topic.id}, titled ${topic.title}. ${topic.summary}`,
   ]));
   criteria.new_topic = "Start a fresh saved conversation because the user introduces a distinct subject or task.";
-  criteria.recall_history = "Search prior conversation history to answer what happened, was decided, or said, without replacing the active work topic.";
+  if (input.allowRecall !== false) criteria.recall_history = "Search prior conversation history to answer what happened, was decided, or said, without replacing the active work topic.";
   const state = JSON.stringify({ user_message: input.message, recent_assistant_chat: input.recentMessages.slice(-6), saved_topics: input.topics.slice(0, 40).map(({ id, title, summary }) => ({ id, title, summary })), accessible_history: (input.history ?? []).slice(0, 12).map(({ id, title, summary }) => ({ id, title, summary })) });
   const answer = await classifyConversationChoiceWithSystemOne(target, state, "route", criteria, input.classifierId === "laya" && !getGuardianSettings().layaUrl ? "" : input.apiKey, fetchImpl);
   if (!answer) return null;

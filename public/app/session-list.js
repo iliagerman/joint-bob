@@ -349,10 +349,20 @@ function sessionPinToggle(session) {
   });
 }
 
+/** Whether the machine that runs this conversation refuses runs from this one (its Settings → Node).
+    The open conversation's own socket says so for sure; a row goes by the Runs on probe, and an
+    offline machine is not counted as refusing. */
+function runnerRefusesThisMachine(session, sessionActive) {
+  if (sessionActive && state.conversationReadOnly && state.conversationReadOnlyReason === "runnerAccess") return true;
+  const node = session.executionNodeId ? state.sessionNodes.find((candidate) => candidate.id === session.executionNodeId) : undefined;
+  return Boolean(node && !node.local && node.online && node.runner === false);
+}
+
 /** Every other row action lives in the overflow menu, so the row itself stays one tap target. */
 function sessionMenuItems(session, sessionActive) {
   const name = shortSessionTitle(session);
-  const readOnly = session.readOnly === true || sessionTicketTask(session)?.status === "done";
+  const runnerRefused = runnerRefusesThisMachine(session, sessionActive);
+  const readOnly = runnerRefused || session.readOnly === true || sessionTicketTask(session)?.status === "done";
   return [
     {
       label: "Add to canvas",
@@ -367,13 +377,14 @@ function sessionMenuItems(session, sessionActive) {
       title: "Limit what this conversation may spend",
       onSelect: () => openBudgetDialog(conversationBudgetTarget(state.activeProjectId, session.conversationId || session.id, name)).catch((error) => toast(error.message)),
     },
-    {
+    // A fork is made where its source runs: a refusing machine would hold one this machine can't write in either.
+    ...(runnerRefused ? [] : [{
       label: "Fork conversation",
       icon: "copy",
       testid: "session-fork-button",
       title: "Copy history and settings into an independent conversation",
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
-    },
+    }]),
     {
       label: "Move or copy to project…",
       icon: "copy",

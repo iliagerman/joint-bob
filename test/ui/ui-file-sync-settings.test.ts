@@ -545,7 +545,7 @@ test("the differing files page, and Repair names the folder and the machine", as
 });
 
 test("a member sees no File sync tab and never asks for it", { timeout: 150_000 }, async () => {
-  const member = addMember(environment, node, "noam", "noam@example.test");
+  const member = await addMember(environment, node, "noam", "noam@example.test");
   const memberContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
   try {
     const asked: string[] = [];

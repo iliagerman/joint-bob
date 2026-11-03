@@ -10,6 +10,7 @@ import { relaySkillDirective, relayResourceDirective, relayPolicyLabel, relayPol
 import { receivedOwnerSync } from "./skill-sharing-files.js";
 import { unavailableSkillNames, type SkillScopeContext } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
+import { withoutReservedMcpServers } from "./assistant-collaboration/bridge-tools.js";
 
 export type ActivatableResource = "skill" | "plugin" | "mcp";
 export type ActivationDecision = { enabled: boolean; reason: string; preference: boolean | null; shared: boolean };
@@ -281,7 +282,8 @@ export function assertNoBlockedNativeResources(harness: HarnessId, kind: "plugin
 export function activeMcpConfig(harness: HarnessId, file = agentResourcePaths().mcpConfig): string {
   if (!existsSync(file)) return file;
   const content = JSON.parse(readFileSync(file, "utf8")) as { mcpServers?: Record<string, unknown> };
-  const mcpServers = activeMcpServers(harness, content.mcpServers ?? {});
+  // A shared server can't take the name of Joint Bob's own tools, however it got into the file.
+  const mcpServers = activeMcpServers(harness, withoutReservedMcpServers(content.mcpServers ?? {}));
   const json = JSON.stringify({ ...content, mcpServers });
   const destination = path.join(resolveDataDirectory(), "runtime", "active-mcp", harness,
     `${createHash("sha256").update(json).digest("hex")}.json`);

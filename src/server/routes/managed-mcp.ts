@@ -4,6 +4,7 @@ import { actingAccount, runAsAccount } from "../../account-context.js";
 import { runtimeCommand, runtimeEnvironment } from "../../account-runtime.js";
 import { runtimeForAccount } from "../../project-runtime.js";
 import { ManagedMcpClient } from "../../mcp/client.js";
+import { callJointBobTool, JOINT_BOB_TOOL_SERVER, listJointBobTools } from "../../assistant-collaboration/bridge-tools.js";
 import { managedMcpStore, type McpAgentIdentity } from "../../mcp/agent.js";
 import { parseMcpServers } from "../../mcp/store.js";
 import { activationDecision } from "../../resource-activation.js";
@@ -74,6 +75,8 @@ app.post("/api/resources/mcp/managed/auth/sign-out", async (request, response) =
 const agentSchema = z.object({ server: nameSchema, action: z.enum(["tools", "call"]), tool: z.string().min(1).max(300).optional(), arguments: z.record(z.unknown()).optional() }).strict();
 export async function authorizeMcpServer(identity: McpAgentIdentity, name: string): Promise<boolean> {
   if (!await getProject(identity.projectId)) return false;
+  // Joint Bob's own tools decide for themselves who may use them.
+  if (name === JOINT_BOB_TOOL_SERVER) return true;
   if (!Object.hasOwn(managedMcpStore(identity.account.accountId).servers(), name)) return false;
   if (!activationDecision("mcp", name, identity.engine, false).enabled) return false;
   const policy = await personalAssistantSettings(identity.account.accountId, identity.projectId, identity.engine, identity.conversationId);
@@ -86,9 +89,13 @@ app.post("/api/mcp/agent", async (request, response) => {
     try {
       const body = agentSchema.parse(request.body);
       if (!await authorizeMcpServer(identity, body.server)) { sendError(response, 403, "MCP server is unavailable or disabled for this conversation"); return; }
-      const client = accountClient(identity.account.accountId);
       const abort = new AbortController();
       response.once("close", () => { if (!response.writableEnded) abort.abort(); });
+      if (body.server === JOINT_BOB_TOOL_SERVER) {
+        response.json(body.action === "tools" ? { tools: await listJointBobTools(identity) } : await callJointBobTool(identity, z.string().min(1).parse(body.tool), body.arguments ?? {}, abort.signal));
+        return;
+      }
+      const client = accountClient(identity.account.accountId);
       response.json(body.action === "tools" ? { tools: await client.tools(body.server) }
         : await client.call(body.server, z.string().min(1).parse(body.tool), body.arguments ?? {}, abort.signal));
     } catch (error) {

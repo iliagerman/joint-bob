@@ -23,6 +23,9 @@ export function setComposerEnabled(enabled) {
   const allowed = enabled && !state.conversationLock && !conversationIsReadOnly();
   const auto = state.routing?.active && state.routing.mode === "auto";
   elements.messageInput.disabled = !allowed;
+  // No conversation is open before the first socket connects, so there is no harness to name yet.
+  // Pi runs any provider's model, so naming Pi would mislead; Claude and Kiro each run their own.
+  elements.messageInput.placeholder = state.engine && state.engine !== "pi" ? `Ask ${harnessLabel(state.harnesses, state.engine)} to work...` : "Ask the agent to work...";
   elements.sendButton.disabled = !allowed;
   elements.savedCommandsButton.disabled = !allowed;
   elements.attachButton.disabled = !allowed;
@@ -38,11 +41,36 @@ export function setComposerEnabled(enabled) {
   if (!allowed) hideCommandAutocomplete();
 }
 
+/** Why the open conversation is read-only, as its node said. A Done ticket this page knows of
+    wins; a node too old to say is read the way the page read it before: its row, else Done. */
+function readOnlyReason() {
+  if (conversationTask()?.status === "done") return "doneTicket";
+  return state.conversationReadOnlyReason || (activeChatSession()?.readOnly === true ? "transcript" : "doneTicket");
+}
+
+/** Says why the conversation is read-only. Only a Done ticket offers its follow-up chat; the
+    other reasons say what can be done instead, and a refused machine where that changes. */
+function renderReadOnlyNotice(readOnly) {
+  const reason = readOnly ? readOnlyReason() : "doneTicket";
+  const machine = state.conversationNodeName;
+  const notice = reason === "runnerAccess" ? {
+    title: "Read-only here",
+    detail: `${machine || "The machine this conversation runs on"} does not let other machines run work on it, so you can read this conversation here but not write in it. To allow it, turn on “Allow other nodes to pick this node in Runs on” in Settings → Node on ${machine || "that machine"}.`,
+  } : reason === "transcript" ? {
+    title: "Sub-agent conversation",
+    detail: "A sub-agent wrote this while working on another conversation. You can read it, but it can't be continued. To do more, write in the conversation that started it.",
+  } : { title: "Done ticket", detail: "This conversation is read-only. Continue in a new project chat to do more work." };
+  elements.doneConversationTitle.textContent = notice.title;
+  elements.doneConversationDetail.textContent = notice.detail;
+  elements.doneConversationContinueButton.hidden = reason !== "doneTicket";
+}
+
 export function renderConversationLock() {
   const lock = state.conversationLock;
   const readOnly = conversationIsReadOnly();
   elements.conversationLock.hidden = !lock;
   elements.doneConversationNotice.hidden = !readOnly;
+  renderReadOnlyNotice(readOnly);
   elements.composer.hidden = Boolean(lock) || readOnly;
   elements.commandStrip.hidden = Boolean(lock) || readOnly;
   if (!lock) {

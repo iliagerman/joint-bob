@@ -28,7 +28,7 @@ async function login(node: SeededNode, identifier: string, password: string): Pr
 }
 
 async function member(environment: DevEnvironment, node: SeededNode, username: string): Promise<{ session: SignedIn; password: string; accountId: string }> {
-  const created = addMember(environment, node, username, `${username}@example.test`);
+  const created = await addMember(environment, node, username, `${username}@example.test`);
   const first = await login(node, username, created.oneTimePassword);
   assert.equal(first.status, 200);
   const password = `${username}-chosen-password-1`;

@@ -4,6 +4,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { onPeerReturned, resetPeerAvailability } from "../peer-presence.js";
 import { resetDirectFailures } from "../relay/transport.js";
 import { forgetHubRefusal, pullFromHubs } from "./cluster-hubs.js";
+import { pullTwinAssistants } from "../assistant-collaboration/twin-sync.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
 import { quickNotesAfterReturn, syncSharedQuickNotes } from "./shared-quick-notes.js";
 import { resetSharedTranscriptPulls } from "./shared-transcripts.js";
@@ -44,6 +45,7 @@ export function resumeDeliveriesOnReturn(): void {
   onPeerReturned((peerId) => {
     void resumeDeliveriesTo(peerId).catch((error) => console.warn(`Resuming deliveries to ${peerId} failed`, error));
     void quickNotesAfterReturn(peerId).catch((error) => console.warn(`Fetching quick notes from ${peerId} failed`, error));
+    void pullTwinAssistants(peerId).catch((error) => console.warn(`Fetching assistants from ${peerId} failed`, error));
   });
 }
 
@@ -77,6 +79,7 @@ export function announceReturn(slept: boolean): Promise<void> {
     // Drafts are no longer fetched on a timer: what peers offer is fetched now.
     await syncSharedQuickNotes().catch((error) => console.warn("Fetching peers' quick notes failed", error));
     await pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
+    await pullTwinAssistants().catch((error) => console.warn("Fetching twins' assistants failed", error));
   })().finally(() => { announcing = undefined; });
   return announcing;
 }

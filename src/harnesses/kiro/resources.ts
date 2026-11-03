@@ -16,6 +16,7 @@ import { defaultSkillRoots, parseResourceFrontmatter, readConfiguredSkillPath, r
 import type { HarnessResources } from "../resource-contract.js";
 import type { HarnessOpenOptions } from "../runtime.js";
 import { managedMcpBridgeConfigs } from "../../mcp/agent.js";
+import { JOINT_BOB_TOOL_SERVER, jointBobTools, withoutReservedMcpServers } from "../../assistant-collaboration/bridge-tools.js";
 import { configuredRuntime } from "../runtime-configuration.js";
 
 function defaults(home: string) {
@@ -153,6 +154,13 @@ export default harnessResources;
 
 export const kiroToolCategories = ["read", "write", "shell", "web", "subagent"];
 
+// Joint Bob's tools each written profile offers, so its launch trusts exactly those and never a server the profile lacks.
+const offeredBuiltIns = new Map<string, string[]>();
+/** `--trust-tools` for a restricted profile: its categories plus the Joint Bob tools it offers, which Kiro names @server/tool. */
+export function kiroTrustedTools(profile: string, enabledTools: string[]): string[] {
+  return [...enabledTools, ...offeredBuiltIns.get(profile) ?? []];
+}
+
 const INHERIT_SETTING = "chat.disableInheritingDefaultResources";
 
 /** Kiro gives every custom agent its default resources too: global and workspace steering, skills,
@@ -210,22 +218,27 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   }
   const prompt = [
     ...(instructions.length ? [renderInstructions(instructions)] : []),
-    ...agentCapabilityInstructionFiles().map((file) => file.content),
+    ...agentCapabilityInstructionFiles(options.projectId, options.sessionId).map((file) => file.content),
     credentialContext ?? agentCredentialContext(options.projectId, { engine: "kiro", sessionId: options.sessionId }),
   ].filter(Boolean).join("\n\n");
   if (!strict) assertNoBlockedNativeResources("kiro", "mcp");
+  const mcpServers = activeMcpServers("kiro", {
+    ...(nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(activeMcpConfig("kiro", resources.mcpConfig)) : {}),
+    ...(strict ? withoutReservedMcpServers(await readMcpConfig(path.join(options.cwd, ".kiro/settings/mcp.json"))) : {}),
+    ...managedMcpBridgeConfigs(),
+  });
+  // Restricted tools are category names, which leave out every MCP tool; Joint Bob's own stay in.
+  const offered = Object.hasOwn(mcpServers, JOINT_BOB_TOOL_SERVER);
+  offeredBuiltIns.set(name, offered ? jointBobTools().map((tool) => `@${JOINT_BOB_TOOL_SERVER}/${tool.name}`) : []);
+  const builtIn = offered ? [`@${JOINT_BOB_TOOL_SERVER}`] : [];
   const profile = {
     name,
     description: "Joint Bob Kiro session profile",
     prompt,
     resources: skills,
-    tools: enabledTools === undefined ? ["*"] : [...enabledTools],
+    tools: enabledTools === undefined ? ["*"] : [...enabledTools, ...builtIn],
     allowedTools: [],
-    mcpServers: activeMcpServers("kiro", {
-      ...(nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(activeMcpConfig("kiro", resources.mcpConfig)) : {}),
-      ...(strict ? await readMcpConfig(path.join(options.cwd, ".kiro/settings/mcp.json")) : {}),
-      ...managedMcpBridgeConfigs(),
-    }),
+    mcpServers,
     includeMcpJson: !strict,
   };
   const file = path.join(agents, `${name}.json`);

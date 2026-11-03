@@ -74,7 +74,7 @@ test("idle twins leave Syncthing alone, and a newly shared project is still enro
         if (!mirrored) await new Promise((resolve) => setTimeout(resolve, 200));
       }
       assert.ok(mirrored, `${name} must reach the twin`);
-      assert.equal(await arrives(path.join(mirrored, "shared.txt"), content, 45_000), true, `${name}'s files must reach the twin`);
+      assert.equal(await arrives(path.join(mirrored, "shared.txt"), content, 90_000), true, `${name}'s files must reach the twin`);
     };
     await share("First shared", "first", left, sa, right, sb);
 

@@ -12,8 +12,11 @@ import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-g
 import { multiUserEnabled } from "./account-runtime.js";
 import { revokeWebhookTitleAgentTokens, webhookTitleAgentEnvironment, webhookTitleInstructions } from "./webhook-title.js";
 import { webhookMemoryAgentEnvironmentForConversation, webhookMemoryAgentInstructions } from "./webhook-agent.js";
+import { assistantMemoryAgentEnvironment, assistantMemoryAgentInstructions } from "./assistant-resources.js";
 import { revokeGuardianAgentTokens } from "./guardian/agent-token.js";
 import { mcpAgentEnvironment, revokeMcpAgentTokens } from "./mcp/agent.js";
+import { assistantIdForConversation } from "./assistant-resources.js";
+import { assistantCollaborationInstructions } from "./assistant-collaboration/bridge-tools.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -26,6 +29,8 @@ export interface AgentCapability {
   id: string;
   instructions: { path: string; content: string };
   environment: (identity: AgentCapabilityIdentity) => NodeJS.ProcessEnv;
+  /** Only an assistant's topic conversations get these instructions. */
+  assistantTopicsOnly?: boolean;
 }
 
 const goalInstructions = `# Joint Bob goals
@@ -151,6 +156,11 @@ Attachments can change during a turn. New shell commands use current attached en
     environment: ({ projectId, conversationId }) => webhookMemoryAgentEnvironmentForConversation(projectId, conversationId),
   },
   {
+    id: "assistant-memory",
+    instructions: { path: "/virtual/JOINT_BOB_ASSISTANT_MEMORY.md", content: assistantMemoryAgentInstructions },
+    environment: ({ projectId, conversationId }) => assistantMemoryAgentEnvironment(projectId, conversationId),
+  },
+  {
     id: "git-policy",
     instructions: { path: "/virtual/JOINT_BOB_GIT.md", content: agentGitPolicyInstructions },
     environment: () => agentGitPolicyEnvironment(),
@@ -159,6 +169,13 @@ Attachments can change during a turn. New shell commands use current attached en
     id: "mcp",
     instructions: { path: "/virtual/JOINT_BOB_MCP.md", content: "# Joint Bob MCP\n\nJoint Bob supplies configured MCP tools automatically. MCP sign-ins belong to the current user on this machine and work across Claude, Pi and Kiro. If a server requires sign-in, ask the user to open Settings → Resources → MCP servers on the execution machine. Never read or print MCP capability tokens or OAuth credentials. Do not retry an uncertain mutation." },
     environment: ({ projectId, engine, conversationId }) => mcpAgentEnvironment(projectId, engine, conversationId),
+  },
+  {
+    // The tools come through the MCP capability's bridge; this adds only how to use them.
+    id: "assistant-collaboration",
+    instructions: { path: "/virtual/JOINT_BOB_ASSISTANTS.md", content: assistantCollaborationInstructions },
+    environment: () => ({}),
+    assistantTopicsOnly: true,
   },
   {
     id: "background-tasks",
@@ -188,6 +205,8 @@ export function revokeAgentCapabilities(projectId: string, conversationId?: stri
   revokeMcpAgentTokens(projectId, conversationId);
 }
 
-export function agentCapabilityInstructionFiles(): Array<{ path: string; content: string }> {
-  return agentCapabilities.map((capability) => capability.instructions);
+/** `sessionId` is the conversation's session here; an assistant's topics also get the instructions only they can use. */
+export function agentCapabilityInstructionFiles(projectId?: string, sessionId?: string): Array<{ path: string; content: string }> {
+  const assistantTopic = assistantIdForConversation(projectId, sessionId) !== null;
+  return agentCapabilities.filter((capability) => assistantTopic || !capability.assistantTopicsOnly).map((capability) => capability.instructions);
 }

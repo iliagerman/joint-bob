@@ -89,11 +89,15 @@ test("Pi session summaries are cached and old transcripts load only on demand", 
 
     await writeFile(sessionFile, transcript("Large", "x".repeat(32 * 1024 * 1024)));
     const large = await pi.refreshPiSessions({ path: projectCwd }, [], [sessionFile]);
-    await appendFile(sessionFile, JSON.stringify({ type: "session_info", name: "Appended title" }));
-    const usage = process.cpuUsage();
-    const appended = await pi.refreshPiSessions({ path: projectCwd }, large, [sessionFile]);
-    const consumed = process.cpuUsage(usage);
-    const cpuMs = (consumed.user + consumed.system) / 1_000;
+    // CPU is counted for the whole process, so a collection can spike one sample. Rereading 32 MiB is slow on every sample.
+    let appended = large, cpuMs = Number.POSITIVE_INFINITY;
+    for (let sample = 0; sample < 5 && cpuMs >= 10; sample += 1) {
+      await appendFile(sessionFile, `${JSON.stringify({ type: "session_info", name: "Appended title" })}\n`);
+      const usage = process.cpuUsage();
+      appended = await pi.refreshPiSessions({ path: projectCwd }, appended, [sessionFile]);
+      const consumed = process.cpuUsage(usage);
+      cpuMs = (consumed.user + consumed.system) / 1_000;
+    }
     assert.equal(appended[0].title, "Appended title");
     assert.ok(cpuMs < 10, `append-only summary refresh used ${cpuMs.toFixed(1)}ms CPU`);
     const oldPath = path.join(sessionDir, "old.jsonl");

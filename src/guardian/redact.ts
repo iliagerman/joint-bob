@@ -10,21 +10,29 @@ const PATTERNS: RegExp[] = [
   /\bglpat-[A-Za-z0-9_-]{20,}\b/g,
   /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g,
   /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b/g,
+  // Stripe secret and restricted keys. Publishable `pk_` keys are public by design.
+  /\b[sr]k_(?:live|test)_[A-Za-z0-9]{20,}\b/g,
   /\bAIza[0-9A-Za-z_-]{35}\b/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
 ];
 // KEY=value and "password": "value" pairs whose name says what they are. The name stays.
 const NAMED = /\b([A-Za-z0-9_]*(?:SECRET|PASSWORD|PASSWD|TOKEN|API_?KEY|PRIVATE_KEY)[A-Za-z0-9_]*)(["']?\s*[=:]\s*)(["']?)[^\s"'`]{6,}\3/gi;
+// Stands for a removal until the end. REMOVED has spaces, so a value already replaced by it
+// would be read by NAMED only up to "[removed" and come out with " by Guardian]" left over.
+// This marker has no spaces or quotes, so NAMED takes it in whole, with anything around it.
+const MARK = "\uE000removed\uE000";
 
 /** Removes known secret values and common credential formats from text. */
 export function removeSecrets(text: string, knownSecrets: string[]): string {
-  let result = text;
+  // Content a fix already went over can come back for a second pass.
+  let result = text.split(REMOVED).join(MARK);
   // Longest first, so a secret that contains another is removed whole.
   for (const secret of [...new Set(knownSecrets)].filter((value) => value.length >= 8).sort((left, right) => right.length - left.length)) {
-    result = result.split(secret).join(REMOVED);
+    result = result.split(secret).join(MARK);
   }
-  for (const pattern of PATTERNS) result = result.replace(pattern, REMOVED);
-  return result.replace(NAMED, (_match, name: string, separator: string, quote: string) => `${name}${separator}${quote}${REMOVED}${quote}`);
+  for (const pattern of PATTERNS) result = result.replace(pattern, MARK);
+  result = result.replace(NAMED, (_match, name: string, separator: string, quote: string) => `${name}${separator}${quote}${MARK}${quote}`);
+  return result.split(MARK).join(REMOVED);
 }
 
 /** The same removal over every string inside a tool call's arguments. */

@@ -132,10 +132,14 @@ async function showDefaultAndDiscovery() {
     isDefault ? h("p", {}, "This is your default assistant.")
       : h("button", { type: "button", "data-testid": "assistant-make-default", onclick: () => setDefault(app.assistant.id) }, "Make this my default"));
   const listed = new Set(me.discovery.filter(item => item.subjectKind === "assistant" && item.subjectId === app.assistant.id).map(item => item.relayNodeId));
+  const findable = listed.size > 0;
   discoveryTarget.replaceChildren(h("h2", {}, "Who can find this assistant"),
     h("p", { class: "muted" }, "Signed-in people on these relays can find it and see its public actions. Its listing names you as its owner."),
-    me.relays.length ? me.relays.map(relay => h("div", { class: "sec-row" }, h("span", {}, relay.name, relay.active ? "" : " (not connected)"),
-      switchButton({ checked: listed.has(relay.relayNodeId), label: `${app.assistant.name} findable on ${relay.name}`, onToggle: () => setDiscovery("assistant", app.assistant.id, relay.relayNodeId, !listed.has(relay.relayNodeId)) })))
+    me.relays.length ? h("div", {},
+      h("div", { class: "sec-row" }, h("strong", {}, findable ? "Findable" : "Hidden from everyone"),
+        switchButton({ checked: findable, label: `${app.assistant.name} findable`, testid: "assistant-findable-switch", onToggle: () => setFindable("assistant", app.assistant.id, !findable) })),
+      findable ? me.relays.map(relay => h("div", { class: "sec-row" }, h("span", {}, relay.name, relay.active ? "" : " (not connected)"),
+        switchButton({ checked: listed.has(relay.relayNodeId), label: `${app.assistant.name} findable on ${relay.name}`, onToggle: () => setDiscovery("assistant", app.assistant.id, relay.relayNodeId, !listed.has(relay.relayNodeId)) }))) : null)
       : h("p", { class: "fine" }, "This machine isn't on a relay yet. Join one in Settings → Relays to list this assistant."),
     h("button", { type: "button", class: "link", onclick: () => navigate({ screen: "you" }) }, "Open Who can find you"));
 }
@@ -146,6 +150,16 @@ export async function setDefault(assistantId) {
     app.me.profile = profile;
     const name = app.assistants.find(entry => entry.id === assistantId)?.name;
     notify(name ? `${name} is your default. Groups you're already in don't change.` : "You have no default. Groups you're already in don't change.");
+    if (app.assistant) await showDefaultAndDiscovery();
+  } catch (error) { fail(error); }
+}
+
+/** The one switch: on every relay, or hidden from everyone. Groups and existing requests stay. */
+export async function setFindable(subjectKind, subjectId, findable) {
+  try {
+    const { discovery } = await put("/api/social/findable", { subjectKind, subjectId, findable });
+    app.me.discovery = discovery;
+    notify(findable ? "Findable on your relays." : "Hidden. Nobody can find this or start a new request. Groups and existing requests stay.");
     if (app.assistant) await showDefaultAndDiscovery();
   } catch (error) { fail(error); }
 }

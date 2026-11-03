@@ -1,0 +1,77 @@
+<style>
+  .jb { --bg:#101215; --surface:#191c20; --field:#212529; --line:rgba(255,255,255,.09); --text:#ebeced; --muted:#9499a1; --accent:#3fcfa8; background:var(--bg); color:var(--text); border-radius:12px; padding:14px; font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; min-height:330px; display:flex; flex-direction:column; gap:10px }
+  .jb .head { display:flex; align-items:center; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--line) }
+  .jb .bot { width:26px; height:26px; border-radius:8px; background:color-mix(in srgb,var(--accent) 22%,var(--surface)); display:grid; place-items:center; font-size:14px }
+  .jb .head b { font-size:13px } .jb .head small { color:var(--muted); display:block; font-size:11px; line-height:1.2 }
+  .jb .b { max-width:88%; padding:7px 11px; border-radius:12px; background:var(--surface); border:1px solid var(--line); white-space:pre-wrap }
+  .jb .u { align-self:flex-end; background:color-mix(in srgb,var(--accent) 15%,var(--surface)); border-color:color-mix(in srgb,var(--accent) 30%,transparent) }
+  .jb .a { align-self:flex-start; border-left:2px solid var(--accent) }
+  .jb .via { align-self:flex-start; display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; padding:4px 9px; border:1px dashed var(--line); border-radius:999px }
+  .jb .via .dot { width:6px; height:6px; border-radius:50%; background:var(--accent) }
+  .jb .via u { text-decoration:none; color:var(--accent) }
+  .jb .nest { align-self:stretch; margin-left:14px; padding:8px 10px; border-left:2px solid #7b8cff; background:rgba(123,140,255,.07); border-radius:0 10px 10px 0; display:flex; flex-direction:column; gap:6px }
+  .jb .nest .who { font-size:11px; color:#aab4ff; font-weight:600 }
+  .jb .nest .b { max-width:100%; font-size:12px }
+  .jb .tag { display:inline-block; margin-top:5px; font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:0 7px }
+  .jb .tag i { font-style:normal; color:var(--accent) }
+  .jb ul { margin:4px 0 0; padding-left:16px } .jb li { margin:1px 0 }
+</style>
+
+<h2>When your default assistant asks your work assistant, what should your chat show?</h2>
+<p class="subtitle">Same example in all three: you ask your default assistant about tomorrow's work meetings, then ask it to book one. Click the one that feels right.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>A short line you can open</h3>
+      <p>One line says who it asked. Click it to see exactly what was asked and answered.</p>
+      <div class="jb">
+        <div class="head"><span class="bot">◉</span><div><b>Default assistant</b><small>Only you see this chat</small></div></div>
+        <div class="b u">What work meetings do I have tomorrow?</div>
+        <div class="via"><span class="dot"></span>Asked <b>Work assistant</b> · work calendar · 4 s <u>Show</u></div>
+        <div class="b a">Tomorrow at work you have:
+<ul><li>09:30–10:00 Standup</li><li>13:00–14:00 KMS roadmap review (Dana, Avi)</li><li>16:00–16:30 1:1 with Matan</li></ul></div>
+        <div class="b u">Book 30 min with Noa on Thursday afternoon</div>
+        <div class="via"><span class="dot"></span><b>Work assistant</b> booked it · Thu 14:00–14:30 <u>Show</u></div>
+        <div class="b a">Done: "Sync with Noa", Thursday 14:00–14:30, in your work calendar. Noa got the invite.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>The whole exchange, open</h3>
+      <p>You see each question and answer between the two assistants as it happens.</p>
+      <div class="jb">
+        <div class="head"><span class="bot">◉</span><div><b>Default assistant</b><small>Only you see this chat</small></div></div>
+        <div class="b u">What work meetings do I have tomorrow?</div>
+        <div class="nest">
+          <span class="who">Default assistant → Work assistant</span>
+          <div class="b">What meetings are on Ilia's work calendar tomorrow? Titles, times and attendees.</div>
+          <span class="who">Work assistant</span>
+          <div class="b">3 meetings: Standup 09:30–10:00; KMS roadmap review 13:00–14:00 (Dana, Avi); 1:1 with Matan 16:00–16:30.</div>
+        </div>
+        <div class="b a">Tomorrow at work you have:
+<ul><li>09:30–10:00 Standup</li><li>13:00–14:00 KMS roadmap review (Dana, Avi)</li><li>16:00–16:30 1:1 with Matan</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Just the answer, with a small "via" tag</h3>
+      <p>The answer reads as if one assistant did it all. A tag under it names who helped.</p>
+      <div class="jb">
+        <div class="head"><span class="bot">◉</span><div><b>Default assistant</b><small>Only you see this chat</small></div></div>
+        <div class="b u">What work meetings do I have tomorrow?</div>
+        <div class="b a">Tomorrow at work you have:
+<ul><li>09:30–10:00 Standup</li><li>13:00–14:00 KMS roadmap review (Dana, Avi)</li><li>16:00–16:30 1:1 with Matan</li></ul><span class="tag">via <i>Work assistant</i></span></div>
+        <div class="b u">Book 30 min with Noa on Thursday afternoon</div>
+        <div class="b a">Done: "Sync with Noa", Thursday 14:00–14:30, in your work calendar. Noa got the invite.<br><span class="tag">via <i>Work assistant</i></span></div>
+      </div>
+    </div>
+  </div>
+</div>

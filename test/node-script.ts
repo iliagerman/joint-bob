@@ -1,19 +1,25 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { DevEnvironment, SeededNode } from "./dev-nodes.js";
 
+const run = promisify(execFile);
+
 /** Runs `body` (an ES module body with top-level await) against a seeded node's own data
-    directory and returns what it prints. Never touches the real ~/.joint-bob. */
-export function runOnNode(environment: DevEnvironment, node: SeededNode, body: string): string {
-  return execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", body], {
+    directory and returns what it prints. Never touches the real ~/.joint-bob. Asynchronous, because
+    a test blocked here cannot see the server close an idle keep-alive socket, and its next fetch
+    then fails with "other side closed". */
+export async function runOnNode(environment: DevEnvironment, node: SeededNode, body: string): Promise<string> {
+  const { stdout } = await run(process.execPath, ["--import", "tsx", "--input-type=module", "-e", body], {
     cwd: process.cwd(),
     env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir, NODE_ENV: "test" },
     encoding: "utf8",
   });
+  return stdout;
 }
 
 /** Adds a member to a running node and returns their one-time password. */
-export function addMember(environment: DevEnvironment, node: SeededNode, username: string, email: string): { userId: string; accountId: string; oneTimePassword: string } {
-  const output = runOnNode(environment, node, `
+export async function addMember(environment: DevEnvironment, node: SeededNode, username: string, email: string): Promise<{ userId: string; accountId: string; oneTimePassword: string }> {
+  const output = await runOnNode(environment, node, `
     const { createLocalUser } = await import("./src/auth.ts");
     const { runAsAccount } = await import("./src/account-context.ts");
     const { seedPersonalSettings } = await import("./src/settings.ts");

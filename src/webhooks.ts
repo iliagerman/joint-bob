@@ -47,6 +47,8 @@ export const webhookInputSchema = z.object({
   markForReview: z.boolean().default(false),
   hideFromHistory: z.boolean().default(false),
   preserveFiles: z.boolean().default(false),
+  /** Where an assistant's answer also goes. Null: it stays in Joint Bob. */
+  reply: z.enum(["telegram"]).nullable().default(null),
   /**
    * When set, only calls whose sender is on the list reach the conversation. The sender is the
    * first of `fields` (dot paths into a JSON body or form fields) that holds a value. Null: anyone
@@ -58,6 +60,7 @@ export const webhookInputSchema = z.object({
   }).strict().nullable().default(null),
 }).strict().superRefine((input, context) => {
   if (input.target.kind === "assistant" && (input.model || input.reasoning)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["target"], message: "Assistant webhooks use the assistant's execution settings" });
+  if (input.reply && input.target.kind !== "assistant") context.addIssue({ code: z.ZodIssueCode.custom, path: ["reply"], message: "Only a webhook routed through an assistant can reply" });
 });
 export type WebhookInput = z.infer<typeof webhookInputSchema>;
 export type WebhookSenders = NonNullable<WebhookInput["senders"]>;
@@ -79,6 +82,7 @@ export interface Webhook {
   markForReview: boolean;
   hideFromHistory: boolean;
   preserveFiles: boolean;
+  reply: "telegram" | null;
   senders: WebhookSenders | null;
   createdAt: string;
   updatedAt: string;
@@ -132,6 +136,7 @@ export function ensureWebhookSchema(db: DatabaseSync): void {
   if (!columns.some(column => column.name === "creator_account_id")) db.exec("ALTER TABLE webhooks ADD COLUMN creator_account_id TEXT");
   if (!columns.some(column => column.name === "provider_profile_id")) db.exec("ALTER TABLE webhooks ADD COLUMN provider_profile_id TEXT");
   if (!columns.some(column => column.name === "assistant_id")) db.exec("ALTER TABLE webhooks ADD COLUMN assistant_id TEXT");
+  if (!columns.some(column => column.name === "reply")) db.exec("ALTER TABLE webhooks ADD COLUMN reply TEXT");
   const deliveryColumns = db.prepare("PRAGMA table_info(webhook_deliveries)").all() as Array<{ name: string }>;
   if (!deliveryColumns.some((column) => column.name === "sender")) db.exec("ALTER TABLE webhook_deliveries ADD COLUMN sender TEXT");
 }
@@ -158,6 +163,7 @@ function webhookRow(row: Record<string, unknown>): Webhook {
     context: String(row.context), enabled: row.enabled === 1, attachments: row.attachments === 1, markForReview: row.mark_for_review === 1,
     hideFromHistory: row.hide_from_history === 1,
     preserveFiles: row.preserve_files === 1,
+    reply: row.reply === "telegram" ? "telegram" : null,
     senders: row.senders ? JSON.parse(String(row.senders)) as WebhookSenders : null,
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     lastReceivedAt: row.last_received_at ? String(row.last_received_at) : null, receivedCount: Number(row.received_count),
@@ -200,7 +206,7 @@ export function createWebhook(db: DatabaseSync, input: WebhookInput): { webhook:
   const { targetKind, sessionId, engine, assistantId } = targetColumns(input.target);
   db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,assistant_id,context,enabled,attachments,preserve_files,mark_for_review,senders,model,reasoning,secret_account_ids,title_template,created_at,updated_at,creator_account_id,provider_profile_id,tags)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.preserveFiles ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, now, now, input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags));
-  db.prepare("UPDATE webhooks SET hide_from_history=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, id);
+  db.prepare("UPDATE webhooks SET hide_from_history=?,reply=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, input.reply, id);
   return { webhook: getWebhook(db, id)!, secret };
 }
 
@@ -210,7 +216,7 @@ export function updateWebhook(db: DatabaseSync, id: string, input: WebhookInput)
   const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,assistant_id=?,context=?,enabled=?,attachments=?,preserve_files=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,title_template=?,updated_at=?,creator_account_id=?,provider_profile_id=?,tags=? WHERE id=?`)
     .run(input.name, targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.preserveFiles ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, new Date().toISOString(), input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags), id);
   if (!result.changes) throw new WebhookError(404, "Webhook not found");
-  db.prepare("UPDATE webhooks SET hide_from_history=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, id);
+  db.prepare("UPDATE webhooks SET hide_from_history=?,reply=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, input.reply, id);
   return getWebhook(db, id)!;
 }
 
@@ -278,6 +284,8 @@ export interface WebhookCall {
   resourceSnapshot?: WebhookResourceSnapshot;
   /** Set only when the webhook checked the sender against its list. */
   sender?: { value: string; label: string };
+  /** The parsed JSON body or form fields, when the body had any. */
+  data?: unknown;
 }
 
 const MIME_BY_EXTENSION: Record<string, string> = {

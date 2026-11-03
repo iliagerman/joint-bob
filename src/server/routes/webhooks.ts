@@ -40,6 +40,8 @@ import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
 import { acceptWebhookCall } from "../webhooks.js";
 import { updateWebhookHistory } from "../webhook-history.js";
 import { getPersonalAssistant } from "../../personal-assistants.js";
+import { secretAccountVariable } from "../../secrets.js";
+import { TELEGRAM_TOKEN_VARIABLE } from "../../webhook-telegram.js";
 import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, revertWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
 import { ensureWebhookAgentSchema, runWebhookMemoryAgentCommand, type WebhookMemoryAgentIdentity } from "../../webhook-agent.js";
 import { readWebhookMemory, writeWebhookMemory, setWebhookMemoryEnabled } from "../../webhook-memory.js";
@@ -99,6 +101,7 @@ async function handleHook(request: IncomingMessage, response: ServerResponse, se
     method: request.method ?? "POST", headers: flatHeaders(request), query: query.slice(0, 1000), body: payload.text, attachments: payload.attachments,
     resourceSnapshot: snapshotWebhookResources(database, webhook.id, local.id),
     ...(sender.value ? { sender: { value: sender.value, label: sender.label } } : {}),
+    data: payload.data,
   });
   response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end(JSON.stringify({ accepted: true, attachments: payload.attachments.length }));
 }
@@ -202,6 +205,7 @@ async function checkTarget(input: WebhookInput): Promise<void> {
     try { validateProjectSecretAccounts(project.id, input.secretAccountIds); }
     catch { throw new WebhookError(400, "Selected secret accounts are unavailable for this project or conflict"); }
   }
+  if (input.reply === "telegram" && !secretAccountVariable(input.secretAccountIds, TELEGRAM_TOKEN_VARIABLE)) throw new WebhookError(400, `To reply in Telegram, select a secret account with ${TELEGRAM_TOKEN_VARIABLE}`);
   if (input.target.kind === "assistant") {
     const assistant = input.creatorAccountId ? await getPersonalAssistant(input.creatorAccountId, input.target.assistantId) : undefined;
     if (!assistant || assistant.projectId !== project.id || assistant.nodeId && assistant.nodeId !== (await getClusterNode()).id) throw new WebhookError(404, "Assistant not found on this machine");

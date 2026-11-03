@@ -29,7 +29,7 @@ import { attachTerminalSession } from "../terminal-session.js";
 import type { ProjectRecord, SessionSummary } from "../types.js";
 import { webSocketCloseReason } from "../websocket.js";
 import { proxySocket, sessionWatcher } from "./chat.js";
-import { attachHarnessChat } from "./harness-chat.js";
+import { attachHarnessChat, type ReadOnlyReason } from "./harness-chat.js";
 import { conversationBelongsToDoneTask, taskConversationIdentity } from "./cluster-helpers.js";
 import { attachBrowserViewer } from "./browser.js";
 import { broadcastToProject, send } from "./realtime.js";
@@ -542,7 +542,10 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
     await setConversationWorktree(project.id, sessionRequest.engine, ownershipSessionId, { id: worktree.id, name: worktree.name, color: worktree.color }, local.id)
       .catch((error) => console.warn("Could not record the conversation's worktree", error));
   }
-  const conversationReadOnly = peerReadOnly || sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
+  const doneTicket = task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
+  const conversationReadOnly = peerReadOnly || sessionReadOnly || doneTicket;
+  // The page says why it can't write: a refused runner is this node's setting, not a finished ticket.
+  const readOnlyReason: ReadOnlyReason | null = doneTicket ? "doneTicket" : sessionReadOnly ? "transcript" : peerReadOnly ? "runnerAccess" : null;
   try {
     const startCommand = getSettings().conversationCommands.start;
     const rawAutomationProfile = url.searchParams.get("automationProfile");
@@ -552,7 +555,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
       automationProfile,
       socket, project, taskId: task?.id ?? null, cwd, engine: sessionRequest.engine,
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
-      accountIds: secretAccountIds, readOnly: conversationReadOnly, peerReadOnly, ownership: foreignOwner,
+      accountIds: secretAccountIds, readOnly: conversationReadOnly, readOnlyReason, peerReadOnly, ownership: foreignOwner,
       listedSessions, handoffContext: spinOffContext, author,
       autoStartPrompt: !conversationReadOnly && refreshSessionsAfterReady && !sessionRequest.draft && !worktree && startCommand.enabled ? startCommand.prompt : null,
     });

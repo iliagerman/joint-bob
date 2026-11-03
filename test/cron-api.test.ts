@@ -217,7 +217,8 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     assert.equal(paused.body.task.enabled, false);
     await stopDevNode(children.pop()!);
     children.push(await startDevNode(environment, b, { JOINT_BOB_TEST_ENGINE_LOG: log }));
-    assert.equal((await readTask()).enabled, false);
+    // Until node B answers again, node A shows its last snapshot, from before the pause.
+    await until(async () => (await readTask()).enabled === false);
     assert.equal((await readTask()).lastRun?.status, "succeeded");
     const lockDb = openNodeDb(b.dataDir);
     lockDb.prepare("INSERT OR REPLACE INTO project_locks VALUES (?, ?, ?, ?, ?, ?)").run(created.body.task.projectId, a.nodeId, a.name, new Date().toISOString(), new Date().toISOString(), a.nodeId);

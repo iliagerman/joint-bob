@@ -7,7 +7,7 @@ import type { SkillRoots } from "./skills.js";
 import type { HarnessId } from "./types.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { validateSkillName } from "./skill-sharing.js";
-import { ensureWebhookResourceDirectory, type WebhookResourceOptions, WebhookResourceError } from "./webhook-resources.js";
+import { assertResourceOwner, ensureWebhookResourceDirectory, type WebhookResourceOptions, WebhookResourceError } from "./webhook-resources.js";
 
 export const WEBHOOK_SKILL_MAX_BYTES = 4 * 1024 * 1024;
 export const WEBHOOK_SKILL_MAX_FILES = 200;
@@ -48,7 +48,7 @@ export function listWebhookSkills(db: DatabaseSync, webhookId: string, options: 
 
 export async function uploadWebhookSkill(db: DatabaseSync, webhookId: string, files: WebhookSkillFile[], options: WebhookResourceOptions = {}, replaceSkillId?: string): Promise<WebhookSkillRecord> {
   ensureSchema(db);
-  if (!db.prepare("SELECT 1 FROM webhooks WHERE id=?").get(webhookId)) throw new WebhookResourceError("Webhook not found", 404);
+  assertResourceOwner(db, webhookId);
   if (!files.length || files.length > WEBHOOK_SKILL_MAX_FILES) throw new WebhookResourceError(`A skill folder needs 1–${WEBHOOK_SKILL_MAX_FILES} files`);
   const paths = files.map(file => safeRelativePath(file.relativePath));
   if (new Set(paths).size !== paths.length) throw new WebhookResourceError("Duplicate skill file path");

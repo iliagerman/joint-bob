@@ -14,6 +14,7 @@ import { activeMcpServers, assertNoBlockedNativeResources } from "../../resource
 import { projectFolderResources } from "../../project-folder-resources.js";
 import type { HarnessResources } from "../resource-contract.js";
 import { managedMcpBridgeConfigs } from "../../mcp/agent.js";
+import { reservedMcpServerMessage, reservedMcpServerName } from "../../assistant-collaboration/bridge-tools.js";
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -205,6 +206,8 @@ export function claudeResourceIsolationArgs(cwd: string, resources: string[], me
     }
     for (const name of Object.keys(servers)) if (decisions.disabled(name)) delete servers[name];
     const managed = managedMcpBridgeConfigs();
+    const reserved = Object.keys(servers).find(reservedMcpServerName);
+    if (reserved !== undefined) throw new Error(reservedMcpServerMessage(reserved));
     for (const name of Object.keys(managed)) if (Object.hasOwn(servers, name)) throw new Error(`MCP server ${name} is configured both natively and in Joint Bob. Remove one copy.`);
     const active = activeMcpServers("claude", { ...servers, ...managed });
     if (Object.keys(active).length) args.push("--mcp-config", isolatedMcpConfig(active));

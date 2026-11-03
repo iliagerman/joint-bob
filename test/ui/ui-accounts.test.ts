@@ -82,7 +82,7 @@ test("a local user changes their email from Account settings without changing th
 
 test("a member sees no admin entries, never calls an admin route, and saves only their own settings", { timeout: 150_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  const member = addMember(environment, node, "noam", "noam@example.test");
+  const member = await addMember(environment, node, "noam", "noam@example.test");
   const missing: string[] = [];
   const errors: string[] = [];
   page.on("response", (response) => { if (response.url().includes("/api/") && response.status() === 404) missing.push(new URL(response.url()).pathname); });
@@ -120,7 +120,7 @@ test("a member sees no admin entries, never calls an admin route, and saves only
   assert.deepEqual(response.request().postDataJSON().conversationLabels, ["noam-label"]);
   assert.deepEqual((await response.json()).conversationLabels, ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix", "noam-label"]);
   await page.getByText("Settings saved", { exact: true }).waitFor();
-  const saved = runOnNode(environment, node, `
+  const saved = await runOnNode(environment, node, `
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(process.env.JOINT_BOB_DATA_DIR + "/node.db", { readOnly: true });
     process.stdout.write(JSON.stringify({ own: db.prepare("SELECT payload FROM account_settings").all(), node: db.prepare("SELECT value FROM node_settings WHERE key = 'conversationLabels'").get() ?? null }));
@@ -225,7 +225,7 @@ test("the admin runs the self-test, sees what failed, and turns multi-user mode 
   assert.equal(await page.getByTestId("users-enable-button").isVisible(), false, "a failed self-test can't be turned on");
 
   // On a machine where it passes, the admin turns the mode on after confirming in place.
-  runOnNode(environment, node, `
+  await runOnNode(environment, node, `
     const { recordSelfTest } = await import(${JSON.stringify(path.resolve("src/multi-user.ts"))});
     recordSelfTest(true, [], true);
   `);

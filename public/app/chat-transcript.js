@@ -62,6 +62,9 @@ export function syncLiveActivity() {
     return;
   }
   if (!liveActivity) liveActivity = liveActivityRow();
+  // A turn that starts in a conversation with no messages yet, a scheduled run's, is no longer
+  // waiting for a first message.
+  elements.messages.querySelector(".empty-state[data-first-message]")?.remove();
   // It stays the last thing before the queued prompts, even when one of them starts.
   const after = liveActivity.nextElementSibling;
   if (liveActivity.parentElement !== messageHost() || (after && !after.matches(".queued-batch-controls, .message.queued"))) {
@@ -93,6 +96,7 @@ export function showChatEmptyState(title, copy) {
   description.textContent = copy;
   empty.append(heading, description);
   elements.messages.append(empty);
+  return empty;
 }
 
 

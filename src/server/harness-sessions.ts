@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import WebSocket from "ws";
 import { runInRuntime } from "../account-runtime.js";
 import { bindToRuntime, runtimeForProject } from "../project-runtime.js";
@@ -235,8 +236,12 @@ export function disposeHarnessSession(shared: SharedHarnessSession): void {
 export function refreshHarnessTranscripts(projectId: string, changedFiles: string[]): void {
   for (const shared of [...harnessSessions.values()]) {
     if (shared.projectId !== projectId || !shared.session.file || Date.now() - shared.lastLocalEventAt < localWriteGraceMs) continue;
-    if (changedFiles.length && !changedFiles.includes(shared.session.file.replace(/^[a-z][a-z0-9-]*:/, ""))) continue;
+    const file = shared.session.file.replace(/^[a-z][a-z0-9-]*:/, "");
+    if (changedFiles.length && !changedFiles.includes(file)) continue;
     if (harnessSessionBusy(shared)) continue;
+    // A refresh naming no files says nothing about a draft not flushed yet: it has no transcript that
+    // could have changed, and reopening it would only give the conversation a new ID.
+    if (!changedFiles.length && !existsSync(file) && !shared.session.messages.length) continue;
     const clients = [...shared.clients]; disposeHarnessSession(shared);
     for (const client of clients) send(client, { type: "sessionFileChanged" });
   }

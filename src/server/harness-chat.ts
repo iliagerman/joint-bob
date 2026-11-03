@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { runWithAutomationProfile } from "./automation-profile.js";
 import { resourceOwner, ownerAsActor } from "../ownership.js";
-import { actingAccount, runAsAccount } from "../account-context.js";
+import { actingAccount, runAsAccount, type ActingAccount } from "../account-context.js";
 import { withoutAutomationProfile } from "../provider-profiles/context.js";
 import { filterPersonalAssistantTools, personalAssistantContext, personalAssistantSettings, personalAssistantToolBaseline } from "../personal-assistants.js";
 import { revokeBrowserAgentTokens } from "../browser-agent.js";
 import { attachMessageAuthors, authoredPromptText, recordMessageAuthor, type MessageAuthor } from "../message-authors.js";
 import { internalTaskPrompt } from "../background-task-messages.js";
+import { JOINT_BOB_AGENT_TOOL_NAMES, promptEnded, promptStarted } from "../assistant-collaboration/bridge-tools.js";
 import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
@@ -68,11 +69,15 @@ export interface HarnessChatConnection {
   author?: MessageAuthor;
 }
 
+/** Why a conversation opened read-only: a Done ticket's, a transcript that can never be continued
+    (a sub-agent's), or this node not letting the peer that relays the page run work here. */
+export type ReadOnlyReason = "doneTicket" | "transcript" | "runnerAccess";
+
 export interface AttachOptions {
   automationProfile?: QueuedPrompt["automationProfile"];
   peerReadOnly?: boolean;
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId; sessionId: string;
-  sessionPath?: string; accountIds: string[]; readOnly: boolean; ownership: ForeignConversationOwner | null;
+  sessionPath?: string; accountIds: string[]; readOnly: boolean; readOnlyReason?: ReadOnlyReason | null; ownership: ForeignConversationOwner | null;
   listedSessions?: SessionSummary[]; handoffContext: string | null; autoStartPrompt: string | null;
   author?: MessageAuthor;
 }
@@ -469,10 +474,22 @@ async function catchUpProjectGit(connection: HarnessChatConnection): Promise<voi
   }
 }
 
+/**
+ * Who a person's turn runs as here. A person of this node (its admin or a member, writing here
+ * or through a twin) runs as themselves, with their own subscription choice. A person of another
+ * node (`homeNodeId` set: a teammate their own machine relays, or a visitor) has no subscription
+ * choice here and cannot make one, so in a project shared with them the turn runs in its owner's
+ * environment: what this node agreed to when it let other nodes run here (Settings → Node).
+ */
+function turnActor(connection: HarnessChatConnection, author: MessageAuthor | undefined): ActingAccount | undefined {
+  if (!author) return undefined;
+  return ownerAsActor(author.homeNodeId ? conversationOwner(connection) : author.accountId);
+}
+
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt & { createdAt?: string }): Promise<void> {
   if (!queued.automationProfile) {
-    const author = queued.author ?? connection.author;
-    return withoutAutomationProfile(() => runAsAccount(author ? ownerAsActor(author.accountId) : undefined, () => dispatchWithProfile(connection, queued)));
+    const actor = turnActor(connection, queued.author ?? connection.author);
+    return withoutAutomationProfile(() => runAsAccount(actor, () => dispatchWithProfile(connection, queued)));
   }
   if (queued.automationProfile.nodeId !== (await getClusterNode()).id) throw new Error("Automation profile belongs to another execution node");
   return runWithAutomationProfile({ creatorAccountId: queued.automationProfile.accountId, providerProfileId: queued.automationProfile.profileId }, () => dispatchWithProfile(connection, queued));
@@ -512,6 +529,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
     if (!latest || latest.revision !== queued.revision || !beginQueuedPrompt(queued.id, queued.revision)) return;
     startingIds.add(queued.id);
     enteredPrompt = true;
+    promptStarted(connection.project.id, connection.conversationId, queued.requestId);
     let origin: string | undefined;
     let activeDifficulty: UsageDifficulty | undefined;
     let outcome: "completed" | "failed" = "failed";
@@ -531,7 +549,9 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
         const available = connection.shared.session.tools();
         const active = available.filter(tool => tool.active).map(tool => tool.name);
         const baseline = await personalAssistantToolBaseline(queued.author!.accountId, assistantSettings.id, connection.engine, connection.shared.session.id, active);
-        const allowed = filterPersonalAssistantTools(baseline, assistantSettings);
+        // A topic's baseline may predate Joint Bob's own tools; they are always offered when the session has them.
+        const builtIn = JOINT_BOB_AGENT_TOOL_NAMES.filter(name => !baseline.includes(name) && available.some(tool => tool.name === name));
+        const allowed = filterPersonalAssistantTools([...baseline, ...builtIn], assistantSettings);
         if (allowed.length !== active.length || allowed.some(name => !active.includes(name))) await connection.shared.session.setTools(allowed);
         if (!assistantSettings.allowBrowser) revokeBrowserAgentTokens(connection.project.id, connection.conversationId);
       }
@@ -602,7 +622,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
     } finally {
       try {
         if (activeDifficulty && origin) saveDifficulty({ ...activeDifficulty, endedAt: new Date().toISOString(), outcome }, origin);
-      } finally { startingIds.delete(queued.id); }
+      } finally { startingIds.delete(queued.id); promptEnded(connection.project.id, connection.conversationId, queued.requestId); }
     }
   } catch (error) {
     if (!enteredPrompt) {
@@ -1218,7 +1238,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     if (options.socket.readyState !== WebSocket.OPEN) return;
     if (inputs !== inputState() || liveTurn !== shared.liveEvents) continue;
     if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
-    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, turnConnection: shared.turnInFlight ? shared.turnConnection ?? null : null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDecision: autoDecisionView(connection), autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), guardianReviews: pendingGuardianReviews(options.project.id, conversationId), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, executionNodeName: local.name, readOnly: options.readOnly, readOnlyReason: options.readOnly ? options.readOnlyReason ?? null : null, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, turnConnection: shared.turnInFlight ? shared.turnConnection ?? null : null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDecision: autoDecisionView(connection), autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), guardianReviews: pendingGuardianReviews(options.project.id, conversationId), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
     for (const event of shared.liveEvents) send(options.socket, event);
     refreshHarnessPromptQueue(connection);
     // A summary that fell behind while nobody had this open catches up now; one is first written after the next answer.

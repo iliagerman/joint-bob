@@ -689,7 +689,7 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
         extensions: resources.extensions,
         prompts: resources.prompts,
         themes: resources.themes,
-        agentsFiles: [...instructions.map((file) => ({ path: file.path, content: file.content })), ...agentCapabilityInstructionFiles()],
+        agentsFiles: [...instructions.map((file) => ({ path: file.path, content: file.content })), ...agentCapabilityInstructionFiles(options.projectId, conversationId)],
         // Strict isolation already brings `.pi/skills` in with the rest of the project folder.
         skillRoots: [activeSkillRoot("pi", undefined, scope), ...configured.global.skills.map((root) => activeSkillRoot("pi", root, scope)), ...(strict ? [] : [activeSkillRoot("pi", path.join(options.cwd, ".pi", "skills"), scope)]), ...configured.project.skills.map((root) => activeSkillRoot("pi", root, scope))],
         managedSkillRoot: agentResourcePaths().sharedSkills,

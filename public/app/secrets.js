@@ -272,7 +272,8 @@ function renderSecretAccounts() {
     meta.append(variables);
     if (account.shared) {
       const status = document.createElement("span"); status.className = "secret-account-vars";
-      status.textContent = account.readOnly ? "Shared with me · read-only" : "Shared with other nodes";
+      status.textContent = account.ownerTwin ? `From ${account.ownerNodeName || "your other machine"} · edit it there` : account.readOnly ? "Shared with me · read-only" : "Shared with other nodes";
+      status.dataset.testid = "secret-account-share-status";
       meta.append(status);
     }
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "ghost compact"; edit.textContent = "Edit"; edit.dataset.testid = "secret-account-edit-button";
@@ -456,7 +457,7 @@ function renderSecretScopeList(accountIds) {
     const detail = account.websiteOrigin ? ` — ${account.websiteOrigin}` : "";
     item.dataset.provider = account.provider;
     item.dataset.search = `${account.label} ${providerLabels[account.provider] ?? account.provider} ${account.websiteOrigin ?? ""}`;
-    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${detail}${account.readOnly ? " · Shared, read-only" : account.shared ? " · Shared" : ""}`)); elements.secretScopeList.append(item);
+    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${detail}${account.ownerTwin ? ` · From ${account.ownerNodeName || "your other machine"}` : account.readOnly ? " · Shared, read-only" : account.shared ? " · Shared" : ""}`)); elements.secretScopeList.append(item);
   }
   filterSecretScopeList();
 }

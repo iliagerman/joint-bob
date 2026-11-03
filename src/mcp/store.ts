@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 import { z } from "zod";
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { reservedMcpServerMessage, reservedMcpServerName } from "../assistant-collaboration/bridge-tools.js";
 
 const secureUrl = z.string().url().max(4096).refine(value => {
   const url = new URL(value);
@@ -46,6 +47,8 @@ export class ManagedMcpStore {
   install(servers: Record<string, ManagedMcpServer>): void {
     const current = this.servers();
     for (const name of Object.keys(servers)) if (Object.hasOwn(current, name)) throw new Error(`MCP server ${name} is already installed`);
+    const reserved = Object.keys(servers).find(reservedMcpServerName);
+    if (reserved !== undefined) throw new Error(reservedMcpServerMessage(reserved));
     const names = [...Object.keys(current), ...Object.keys(servers)].map(name => name.replaceAll("-", "_"));
     if (new Set(names).size !== names.length) throw new Error("MCP server names must not differ only by hyphens and underscores");
     saveJson(path.join(this.directory, "servers.json"), { ...current, ...servers });

@@ -60,7 +60,7 @@ test("deleting a person removes everything they had, and the admin role moves on
     assert.equal(await remove(node, admin, created.body.user.userId, "wrong"), 400, "deletion is typed out");
     assert.equal(await remove(node, admin, created.body.user.userId, "noam"), 204);
     assert.equal((await api<{ authenticated: boolean }>(node, noam, "GET", "/auth/status")).body.authenticated, false, "their session ends");
-    const left = runOnNode(environment, node, `
+    const left = await runOnNode(environment, node, `
       const { DatabaseSync } = await import("node:sqlite");
       const db = new DatabaseSync(process.env.JOINT_BOB_DATA_DIR + "/node.db", { readOnly: true });
       const count = (sql, ...args) => db.prepare(sql).get(...args).count;

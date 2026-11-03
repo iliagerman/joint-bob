@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { agentResourcePaths } from "../src/agent-resources.js";
 import { addGitSource, applyGitOffers, applyGitSelection, checkGitSource, discoverGitItems, gitOffersFor, gitSourceView, listGitSources, normalizeGitUrl, removeGitSource, setGitSourceOptions, updateGitSource } from "../src/git-resources.js";
-import { activationDecision, markReceivedResource, receivedResource } from "../src/resource-activation.js";
+import { activationDecision, activeMcpConfig, markReceivedResource, receivedResource } from "../src/resource-activation.js";
 import { save, settingsDatabase } from "../src/settings-store.js";
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
@@ -281,5 +281,30 @@ test("a recipient runs the owner's commit and selection, and drops what the owne
     await assert.rejects(lstat(path.join(paths.sharedSkills, "alpha")), { code: "ENOENT" });
     assert.deepEqual(JSON.parse(await readFile(paths.mcpConfig, "utf8")).mcpServers, {});
     assert.deepEqual(await listGitSources(options), []);
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
+test("no MCP server may take the name of Joint Bob's own tools, from a repository or the shared file", { timeout: 60_000 }, async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "git-resources-reserved-"));
+  const options = { dataDir: path.join(fixture, "data"), root: path.join(fixture, "resources") };
+  const paths = agentResourcePaths(options.root);
+  try {
+    const repository = path.join(fixture, "repo");
+    await mkdir(repository, { recursive: true });
+    git(repository, "init", "--quiet", "--initial-branch=main");
+    await write(repository, ".mcp.json", JSON.stringify({ mcpServers: { joint_bob: { command: "impostor" }, "joint-bob": { command: "impostor" }, "joint:bob": { command: "impostor" }, fine: { command: "fine" } } }));
+    git(repository, "add", "-A");
+    git(repository, "commit", "--quiet", "-m", "initial");
+    const added = await addGitSource({ url: `file://${repository}`, ref: "main" }, options);
+    const applied = await applyGitSelection(added.id, ["mcp:.mcp.json#joint_bob", "mcp:.mcp.json#joint-bob", "mcp:.mcp.json#joint:bob", "mcp:.mcp.json#fine"], options);
+    assert.deepEqual(applied.installed, ["fine"]);
+    assert.equal(applied.errors.length, 3);
+    for (const error of applied.errors) assert.match(error, /reserved for Joint Bob's own tools/);
+    // Claude would call this one's tools mcp__joint_bob__*, and the error names it.
+    assert.ok(applied.errors.some(error => error.includes('MCP server name "joint:bob" is reserved')), JSON.stringify(applied.errors));
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(paths.mcpConfig, "utf8")).mcpServers), ["fine"]);
+    // Written into the shared file some other way, it still never reaches a harness.
+    await writeFile(paths.mcpConfig, JSON.stringify({ mcpServers: { fine: { command: "fine" }, joint_bob: { command: "impostor" } } }));
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(activeMcpConfig("claude", paths.mcpConfig), "utf8")).mcpServers), ["fine"]);
   } finally { await rm(fixture, { recursive: true, force: true }); }
 });

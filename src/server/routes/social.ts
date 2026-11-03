@@ -5,7 +5,7 @@ import { getClusterNode } from "../../cluster.js";
 import { getPersonalAssistant, listPersonalAssistants, type PersonalAssistant } from "../../personal-assistants.js";
 import { projectVisible } from "../../store.js";
 import { actionInputSchema, createAction, deleteAction, getAction, listActions, publishProblem, setActionStatus, updateAction } from "../../social/actions.js";
-import { block, discoverySettings, listBlocks, localListings, personName, searchDirectory, setDefaultAssistant, setDiscovery, setSocialLimits, socialProfile, unblock } from "../../social/directory.js";
+import { block, discoverySettings, listBlocks, localListings, personName, searchDirectory, setDefaultAssistant, setDiscovery, setFindable, setSocialLimits, socialProfile, unblock } from "../../social/directory.js";
 import { onSocialChange } from "../../social/events.js";
 import { assistantGroups, closeGroup, createGroup, groupDetail, hostOps, inviteToGroup, leaveGroup, listGroups, listInvitations, memberOps, removeFromGroup, respondToInvitation, revokeInvitation, sendToGroup, type HostOperation } from "../../social/groups.js";
 import { SocialPeerError, sharesRelay, socialMachineRoute, socialRelays } from "../../social/network.js";
@@ -13,6 +13,7 @@ import { approveRequest, editRequestReply, listActivity, markNoticeRead, recover
 import { listThreads, openThread, sendInThread, threadDetail, threadHostOps, threadMemberOps, type ThreadHostOperation } from "../../social/threads.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
+import { announceAssistantChanges } from "../../assistant-collaboration/twin-sync.js";
 
 void recoverInterruptedRequests().catch(error => console.error("Social: could not mark interrupted requests:", error));
 
@@ -66,6 +67,10 @@ app.get("/api/social/me", personal(async (_request, _response, accountId) => {
 }));
 app.put("/api/social/discovery", personal(async (request, _response, accountId) => {
   await setDiscovery(accountId, z.object({ subjectKind: z.enum(["person", "assistant"]), subjectId: z.string().min(1).max(200), relayNodeId: uuid, enabled: z.boolean() }).strict().parse(request.body));
+  return { discovery: await discoverySettings(accountId) };
+}));
+app.put("/api/social/findable", personal(async (request, _response, accountId) => {
+  await setFindable(accountId, z.object({ subjectKind: z.enum(["person", "assistant"]), subjectId: z.string().min(1).max(200), findable: z.boolean() }).strict().parse(request.body));
   return { discovery: await discoverySettings(accountId) };
 }));
 app.put("/api/social/default-assistant", personal(async (request, _response, accountId) => ({ profile: await setDefaultAssistant(accountId, z.object({ assistantId: uuid.nullable() }).strict().parse(request.body).assistantId) })));
@@ -151,19 +156,26 @@ app.get("/api/personal-assistants/:id/actions", personal(async (request, respons
 app.post("/api/personal-assistants/:id/actions", personal(async (request, response) => {
   const assistant = await ownedAssistant(response, request.params.id);
   response.status(201);
-  return { action: await createAction(assistant.id, actionInputSchema.parse(request.body)) };
+  const action = await createAction(assistant.id, actionInputSchema.parse(request.body));
+  announceAssistantChanges();
+  return { action };
 }));
 app.put("/api/personal-assistants/:id/actions/:actionId", personal(async (request, response) => {
   const assistant = await ownedAssistant(response, request.params.id);
-  return { action: await updateAction(assistant.id, uuid.parse(request.params.actionId), actionInputSchema.parse(request.body)) };
+  const action = await updateAction(assistant.id, uuid.parse(request.params.actionId), actionInputSchema.parse(request.body));
+  announceAssistantChanges();
+  return { action };
 }));
 app.post("/api/personal-assistants/:id/actions/:actionId/status", personal(async (request, response) => {
   const assistant = await ownedAssistant(response, request.params.id);
-  return { action: await setActionStatus(assistant.id, uuid.parse(request.params.actionId), z.object({ status: z.enum(["published", "disabled"]) }).strict().parse(request.body).status) };
+  const action = await setActionStatus(assistant.id, uuid.parse(request.params.actionId), z.object({ status: z.enum(["published", "disabled"]) }).strict().parse(request.body).status);
+  announceAssistantChanges();
+  return { action };
 }));
 app.delete("/api/personal-assistants/:id/actions/:actionId", personal(async (request, response) => {
   const assistant = await ownedAssistant(response, request.params.id);
   await deleteAction(assistant.id, uuid.parse(request.params.actionId));
+  announceAssistantChanges();
   return undefined;
 }));
 app.post("/api/personal-assistants/:id/actions/:actionId/test", personal(async (request, response) => {

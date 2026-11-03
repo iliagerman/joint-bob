@@ -44,8 +44,17 @@ test("workspace selection on a twin shares the owner's projects, including futur
     const project = owner.projects.find(project => project.name === "Internal Assistant")!;
     const listed = view.body.projects.find(item => item.id === project.id);
     assert.ok(listed, "the sharing picker must include a project owned by this machine's trusted twin");
-    const selected = await api<Selection>(twin, twinSession, "PUT", endpoint, { projectIds: [], workspaceIds: [listed.workspaceId], confirmOwnedData: true });
-    assert.equal(selected.status, 200, JSON.stringify(selected.body));
+    // Until the owner's deliveries reach this twin, saving answers 503 and asks to save again.
+    const save = async (projectIds: string[], workspaceIds: string[]): Promise<void> => {
+      const attempt = () => api(twin, twinSession, "PUT", endpoint, { projectIds, workspaceIds, confirmOwnedData: true });
+      let saved = await attempt();
+      for (const deadline = Date.now() + 60_000; saved.status === 503 && Date.now() < deadline;) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        saved = await attempt();
+      }
+      assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    };
+    await save([], [listed.workspaceId]);
     const refreshed = await api<{ projects: Array<{ id: string; clusterIds: string[] }> }>(twin, twinSession, "GET", "/projects?syncStatus=false");
     assert.deepEqual(refreshed.body.projects.find(item => item.id === project.id)?.clusterIds, [clusterId], "the saving twin must see the grant before save returns");
     const policy = await api<{ ownerNodeId: string; shares: Array<{ clusterId: string }> }>(owner, ownerSession, "GET", `/sharing/project/${project.id}`);
@@ -75,13 +84,12 @@ test("workspace selection on a twin shares the owner's projects, including futur
       for (const entry of endpoints) ownerDb.prepare("UPDATE cluster_v2_peer_endpoints SET url=? WHERE context_kind=? AND context_id=? AND node_id=?").run(entry.url, entry.context_kind, entry.context_id, twin.nodeId);
       ownerDb.close();
     }
-    const cleared = await api(twin, twinSession, "PUT", endpoint, { projectIds: [], workspaceIds: [], confirmOwnedData: true });
-    assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
+    await save([], []);
     for (const id of [project.id, future.body.project.id]) assert.deepEqual((await api<{ shares: unknown[] }>(owner, ownerSession, "GET", `/sharing/project/${id}`)).body.shares, [], "unchecking the workspace revokes inherited shares at the owner");
 
     const localProject = await api<{ project: { id: string } }>(twin, twinSession, "POST", "/projects", { name: "Twin's own project", type: listed.workspaceId, synced: false });
     assert.equal(localProject.status, 201);
-    assert.equal((await api(twin, twinSession, "PUT", endpoint, { projectIds: [localProject.body.project.id], workspaceIds: [], confirmOwnedData: true })).status, 200);
+    await save([localProject.body.project.id], []);
     await stopDevNode(servers.shift()!);
     const offline = await api<{ error: string }>(twin, twinSession, "PUT", endpoint, { projectIds: [], workspaceIds: [], confirmOwnedData: true });
     assert.equal(offline.status, 503, "unreachable twin must surface an explicit partial-save error");

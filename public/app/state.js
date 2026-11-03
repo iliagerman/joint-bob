@@ -144,6 +144,9 @@ export const state = {
   activeTaskId: null,
   conversationLock: null,
   conversationReadOnly: false,
+  // Why the open conversation is read-only ("doneTicket", "transcript", "runnerAccess"), and the machine it runs on.
+  conversationReadOnlyReason: null,
+  conversationNodeName: null,
   scheduledTurn: false,
   scheduledAssistantText: "",
   assistantRawText: "",

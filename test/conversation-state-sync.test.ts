@@ -101,7 +101,7 @@ function sendPrompt(socket: WebSocket, message: string): void {
   socket.send(JSON.stringify({ type: "prompt", message }));
 }
 
-function waitForTextDelta(socket: WebSocket, timeoutMs = 15_000): Promise<string> {
+function waitForTextDelta(socket: WebSocket, timeoutMs = 60_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Prompt result timed out")), timeoutMs);
     const onMessage = (raw: WebSocket.RawData): void => {

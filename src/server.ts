@@ -212,6 +212,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         resumeDeliveriesOnReturn();
         // Tells every peer this machine is back and catches up from them, hubs included.
         announceReturn(false).catch((error) => console.warn("Announcing this machine's return failed", error));
+        // Helper turns don't survive a restart; the asks they were answering here end now.
+        import("./assistant-collaboration/ask.js").then(({ failInterruptedAsks }) => failInterruptedAsks()).catch((error) => console.warn("Ending asks the restart cut off failed", error));
         removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
         refreshSharedCommands().catch((error) => console.warn("Command sync failed", error));
         syncSharedWorkspaces().catch((error) => console.warn("Shared workspace sync failed", error));

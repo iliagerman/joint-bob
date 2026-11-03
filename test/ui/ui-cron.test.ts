@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { access, chmod, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
+import { claudeProjectDir } from "../../src/session-paths.js";
+import { api, projectNamed, signIn } from "../dev-nodes.js";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
 test("project and conversation schedules, edit, pause, history, delete and Cron filter", { timeout: 180_000 }, async (t) => {
@@ -33,15 +37,15 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     if (f.pauseOnFailure.checked) throw Error("Pause on failure must default off");
     if (f.markForReview.checked) throw Error("Review must default off");
     f.pauseOnFailure.checked = true;
-    if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronIntervalLabel").hidden) throw Error("Weekly controls incorrect");
-    if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");
-    form.requestSubmit(); return true;
-  })()`), true);
     f.autoReplyEnabled.checked = true; f.autoReplyEnabled.dispatchEvent(new Event("change", { bubbles: true }));
     f.autoReplyHarness.value = "claude"; f.autoReplyHarness.dispatchEvent(new Event("change", { bubbles: true }));
     f.autoReplyInstructions.value = "Drive the task and verify the result";
     f.autoReplyStopInstructions.value = "The requested checks pass";
     f.autoReplyLimit.value = "12";
+    if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronIntervalLabel").hidden) throw Error("Weekly controls incorrect");
+    if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");
+    form.requestSubmit(); return true;
+  })()`), true);
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("sonnet") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
   assert.equal(await page.getByTestId("cron-run").isVisible(), true, "Paused schedules need a Run now action");
   assert.match(await page.locator("#cronList").innerText(), /REVIEW\s+Silent/);
@@ -51,11 +55,11 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     const form = document.querySelector("#cronForm"), f = form.elements;
     if (f.frequency.value !== "weekly" || f.timezone.value !== "UTC" || f.enabled.checked || !f.pauseOnFailure.checked || f.markForReview.checked) throw Error("Saved schedule not restored");
     if (f.engine.value !== "claude" || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Saved execution settings not restored");
+    if (!f.autoReplyEnabled.checked || f.autoReplyHarness.value !== "claude" || f.autoReplyInstructions.value !== "Drive the task and verify the result" || f.autoReplyStopInstructions.value !== "The requested checks pass" || f.autoReplyLimit.value !== "12") throw Error("Saved auto reply settings not restored");
     f.name.value = "Edited project cron"; f.frequency.value = "daily";
     f.frequency.dispatchEvent(new Event("change", { bubbles: true }));
     if (!document.querySelector("#cronWeekdayLabel").hidden) throw Error("Daily schedule shows weekday");
     form.requestSubmit(); return true;
-    if (!f.autoReplyEnabled.checked || f.autoReplyHarness.value !== "claude" || f.autoReplyInstructions.value !== "Drive the task and verify the result" || f.autoReplyStopInstructions.value !== "The requested checks pass" || f.autoReplyLimit.value !== "12") throw Error("Saved auto reply settings not restored");
   })()`), true);
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Edited project cron"));
   await page.locator('[data-testid="cron-toggle"]').click();
@@ -335,4 +339,102 @@ test("changing a conversation schedule harness detaches it into a new conversati
     form.requestSubmit();
   });
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Pi scheduled conversation") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("Pi"));
+});
+
+// A scheduled run's prompt is hidden, so its conversation has no message until the report
+// arrives. It showed "Ready for your first message" above the "Working…" row the whole time.
+test("a running scheduled run shows its conversation working, not the first-message prompt", { timeout: 300_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  page.context().setDefaultTimeout(60_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const project = projectNamed(node, "Infra Scripts");
+  const transcripts = claudeProjectDir(project.path, path.join(environment.home, ".claude", "projects"));
+  await mkdir(transcripts, { recursive: true });
+  const started = path.join(environment.home, "scheduled-run-started");
+  const release = path.join(environment.home, "release-scheduled-run");
+  // A stand-in Claude Code that holds the turn open until the test releases it.
+  const fake = path.join(environment.home, "fake-claude.mjs");
+  await writeFile(fake, `#!/usr/bin/env node
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+if (process.argv[2] === "auth") { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
+let input = "";
+await new Promise((resolve) => process.stdin.on("data", (chunk) => { input += chunk; }).on("end", resolve));
+const args = process.argv.slice(2);
+const supplied = args.indexOf("--session-id");
+const sessionId = supplied >= 0 ? args[supplied + 1] : args[args.indexOf("--resume") + 1];
+let prompt = input.trim();
+for (const line of input.split("\\n")) {
+  try {
+    const content = JSON.parse(line).message?.content;
+    const text = typeof content === "string" ? content : (content ?? []).map((part) => part.text ?? "").join("");
+    if (text.trim()) prompt = text.trim();
+  } catch {}
+}
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: sessionId }));
+// As Claude Code does, the prompt reaches the transcript when the turn starts and the answer when it ends.
+const transcript = ${JSON.stringify(transcripts)} + "/" + sessionId + ".jsonl";
+const record = (role, text) => JSON.stringify({ type: role, uuid: sessionId + "-" + role, cwd: ${JSON.stringify(project.path)}, timestamp: new Date().toISOString(), message: { role, content: [{ type: "text", text }] } }) + "\\n";
+appendFileSync(transcript, record("user", prompt));
+writeFileSync(${JSON.stringify(started)}, sessionId);
+while (!existsSync(${JSON.stringify(release)})) await new Promise((resolve) => setTimeout(resolve, 100));
+const answer = "Nightly report: every certificate is valid.";
+console.log(JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: answer } } }));
+appendFileSync(transcript, record("assistant", answer));
+console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: answer }] } }));
+console.log(JSON.stringify({ type: "result", is_error: false }));
+`);
+  await chmod(fake, 0o755);
+  t.after(() => writeFile(release, "").catch(() => {}));
+  const admin = await signIn(environment, node);
+  const current = (await api<{ pi: { executable: string; configPath: string; sessionPath: string }; claude: { configPath: string; sessionPath: string }; syncthing: { endpoint: string } }>(node, admin, "GET", "/settings")).body;
+  const configured = await api(node, admin, "PUT", "/settings", {
+    pi: { executable: current.pi.executable, configPath: current.pi.configPath, sessionPath: current.pi.sessionPath },
+    claude: { executable: fake, configPath: current.claude.configPath, sessionPath: current.claude.sessionPath },
+    syncthing: { endpoint: current.syncthing.endpoint },
+  });
+  assert.equal(configured.status, 200, JSON.stringify(configured.body));
+  const cron = (command: Record<string, unknown>) => api<any>(node, admin, "POST", "/cron", { nodeId: node.nodeId, command });
+  const created = await cron({ action: "create", input: {
+    projectId: project.id, name: "Nightly certificate report", prompt: "Check the certificates", ownerNodeId: node.nodeId, engine: "claude",
+    model: null, sessionId: null, enabled: false,
+    schedule: { frequency: "daily", hour: 3, minute: 0, weekday: 1, timezone: "UTC", days: [0, 1, 2, 3, 4, 5, 6] },
+  } });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const taskId = created.body.task.id;
+  assert.equal((await cron({ action: "run", id: taskId, projectId: project.id })).status, 200);
+  // The stand-in says when its turn is under way; the run's history row can still say "waiting".
+  for (const deadline = Date.now() + 90_000; !await access(started).then(() => true, () => false);) {
+    const run = (await cron({ action: "history", id: taskId, projectId: project.id })).body.runs?.[0];
+    assert.notEqual(run?.status, "failed", `scheduled run failed: ${run?.error}`);
+    if (Date.now() > deadline) throw new Error(`scheduled run never started: ${JSON.stringify(run)}`);
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  // The bug needs the run listed as running, with its prompt hidden and no answer yet.
+  for (const deadline = Date.now() + 60_000; ;) {
+    const listed = (await api<{ sessions: Array<{ title: string; turnRunning?: boolean }> }>(node, admin, "GET", `/projects/${encodeURIComponent(project.id)}/sessions`)).body.sessions;
+    if (listed.some((session) => session.title === "Nightly certificate report" && session.turnRunning)) break;
+    if (Date.now() > deadline) throw new Error(`the running scheduled conversation was never listed: ${JSON.stringify(listed.map((session) => session.title))}`);
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  await page.context().addCookies(admin.cookie.split("; ").map(cookie => ({ name: cookie.slice(0, cookie.indexOf("=")), value: cookie.slice(cookie.indexOf("=") + 1), url: node.url })));
+  await page.goto(node.url);
+  await page.locator("#projectList").getByText("Infra Scripts", { exact: true }).click();
+  await page.getByTestId("show-scheduled-conversations-toggle").check();
+  await page.getByTestId("chats-filter-cron-button").click();
+  await page.locator("#sessionList .list-row", { hasText: "Nightly certificate report" }).first().click();
+  await page.locator("#sessionTitle").filter({ hasText: "Nightly certificate report" }).waitFor();
+  const working = page.locator("#messages .live-activity");
+  await working.waitFor();
+  assert.match(await working.innerText(), /Working/);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.getByText("Ready for your first message", { exact: true }).count(), 0, "a running scheduled turn is not waiting for a first message");
+  assert.equal(await page.locator("#messages .empty-state").count(), 0, `the thread shows the run, not an empty state: ${await page.locator("#messages").innerText()}`);
+
+  await writeFile(release, "");
+  await page.locator("#messages .message.assistant", { hasText: "Nightly report: every certificate is valid." }).waitFor();
+  await working.waitFor({ state: "detached" });
+  assert.equal(await page.locator("#messages .empty-state").count(), 0, "the report replaces the working row, not an empty state");
+  assert.deepEqual(errors, []);
 });

@@ -50,7 +50,7 @@ test("assistant shell: resources, public actions, activity and discovery without
     assert.equal(await page.locator("#rail").isVisible(), true, "desktop shows the rail");
     assert.equal(await page.locator("#tabbar").isVisible(), false, "desktop has no bottom tabs");
     await page.getByTestId("assistant-resources-section-browser").waitFor();
-    assert.equal(await page.locator(".side-item").count(), 5, "five resource sections");
+    assert.equal(await page.locator(".side-item").count(), 7, "seven resource sections");
     await page.getByText("No logins yet. Add one and sign in yourself. Every topic can use it.").waitFor();
     await page.getByTestId("assistant-add-login").click();
     await page.locator("#add-login").waitFor();
@@ -58,8 +58,37 @@ test("assistant shell: resources, public actions, activity and discovery without
     await page.getByText("No saved logins to attach.").waitFor();
     await page.keyboard.press("Escape");
     await page.locator("#overlay").waitFor({ state: "hidden" });
+
+    // Files: the assistant's folder, kept across all its topics.
+    await page.getByTestId("assistant-resources-section-files").click();
+    await page.getByText("No files yet.", { exact: false }).waitFor();
+    await page.getByTestId("assistant-file-input").setInputFiles({ name: "plan.txt", mimeType: "text/plain", buffer: Buffer.from("Rome in May") });
+    const fileRow = page.getByTestId("assistant-resources-files").locator(".res-row", { hasText: "plan.txt" });
+    await fileRow.waitFor();
+    assert.equal(await fileRow.getByRole("link", { name: "Download" }).getAttribute("href"), `/api/personal-assistants/${assistantId}/files/download?path=plan.txt`);
+    await fileRow.getByRole("button", { name: "Delete" }).click();
+    await page.getByTestId("assistant-resource-delete-confirm").click();
+    await page.getByText("No files yet.", { exact: false }).waitFor();
+
+    // Memory: notes the owner can read and edit, and turn off.
+    await page.getByTestId("assistant-resources-section-memory").click();
+    await page.getByTestId("assistant-memory-text").fill("I prefer trains.");
+    await page.getByTestId("assistant-memory-save").click();
+    await page.locator("#message", { hasText: "Memory saved." }).waitFor();
+    await page.getByTestId("assistant-resources-section-browser").click();
+    await page.getByTestId("assistant-resources-section-memory").click();
+    assert.equal(await page.getByTestId("assistant-memory-text").inputValue(), "I prefer trains.");
+    await page.getByTestId("assistant-memory-switch").click();
+    await page.getByText("Memory is off. Its notes stay saved.").first().waitFor();
+    await page.getByTestId("assistant-memory-switch").click();
+    await page.getByText("Keeps notes between topics").waitFor();
+
     await page.getByTestId("assistant-resources-section-skills").click();
     await page.getByTestId("assistant-resources-skills").waitFor();
+    await page.getByTestId("assistant-add-skill").click();
+    await page.getByRole("button", { name: "Choose a folder with SKILL.md" }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator("#overlay").waitFor({ state: "hidden" });
     await assertListsFit(page, "desktop skills");
     const skillSwitch = page.getByTestId("assistant-resources-skills").locator(".switch").first();
     if (await skillSwitch.count()) {
@@ -120,8 +149,6 @@ test("assistant shell: resources, public actions, activity and discovery without
     await working.waitFor({ state: "detached" });
     assert.equal(await send.isDisabled(), false, "send is available again once the answer is in");
     assert.equal(await chatBox.inputValue(), "Draft typed while waiting", "the answer doesn't wipe a draft typed meanwhile");
-    await page.unroute("**/api/personal-assistants/*/turn");
-
     // A failed send puts the message back, and retrying it is the same turn.
     const sentRequestIds: string[] = [];
     await page.route("**/api/personal-assistants/*/turn", async route => {
@@ -146,6 +173,7 @@ test("assistant shell: resources, public actions, activity and discovery without
       contentType: "application/json",
       body: JSON.stringify({ timeline: [
         { id: "question", role: "user", text: "Give me **my** report", createdAt: "2026-11-03T07:00:00.000Z" },
+        { id: "hook", role: "user", text: '[Joint Bob webhook: Telegram]\n\nSender: Ilia (111). This sender is on the list.\n\nPayload:\n```\n{"message":{"text":"Plan my week"}}\n```', createdAt: "2026-11-03T07:00:00.500Z" },
         { id: "answer", role: "assistant", text: "## Morning report\n\n- **Urgent:** call Noa\n- See [the plan](https://example.com/plan)\n\n<img src=x onerror=alert(1)>", createdAt: "2026-11-03T07:00:01.000Z" },
       ] }),
     }));
@@ -159,7 +187,10 @@ test("assistant shell: resources, public actions, activity and discovery without
     assert.equal(await answer.locator("img").count(), 0, "HTML in an answer is shown as text, never parsed");
     assert.equal(await answer.evaluate(element => getComputedStyle(element).whiteSpace), "normal");
     assert.equal(await answer.locator("ul").evaluate(element => getComputedStyle(element).listStyleType), "disc");
-    assert.equal(await page.locator("#timeline .chat-bubble.user").textContent(), "Give me **my** report");
+    assert.equal(await page.locator("#timeline .chat-bubble.user").first().textContent(), "Give me **my** report");
+    const webhookBubble = page.locator("#timeline details.chat-bubble.webhook");
+    assert.equal(await webhookBubble.locator("summary").innerText(), "From Telegram · Ilia (111)\nPlan my week", "a webhook's message stays folded behind who sent it");
+    assert.equal(await webhookBubble.locator("pre").isVisible(), false);
     await page.unroute("**/api/personal-assistants/*/transcript");
 
     // Someone else's assistant answers a direct request the same way.
@@ -193,12 +224,43 @@ test("assistant shell: resources, public actions, activity and discovery without
     await page.locator("#overlay").waitFor({ state: "hidden" });
     assert.equal(await page.locator("#chat-form").isVisible(), true);
 
+    // On a machine with a relay, one switch hides the assistant; while it's on, relays can be chosen.
+    const relay = { relayNodeId: "11111111-1111-4111-8111-111111111111", name: "Team", active: true };
+    let listed = true;
+    const puts: unknown[] = [];
+    await page.route("**/api/social/me", async route => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, body: JSON.stringify({ ...body, relays: [relay], discovery: listed ? [{ subjectKind: "assistant", subjectId: assistantId, relayNodeId: relay.relayNodeId }] : [] }) });
+    });
+    await page.route("**/api/social/findable", async route => {
+      puts.push(route.request().postDataJSON());
+      listed = !listed;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ discovery: listed ? [{ subjectKind: "assistant", subjectId: assistantId, relayNodeId: relay.relayNodeId }] : [] }) });
+    });
+    await page.goto(`${node.url}/assistant.html?id=${assistantId}&view=settings`);
+    const findableSwitch = page.getByTestId("assistant-findable-switch");
+    assert.equal(await findableSwitch.getAttribute("aria-checked"), "true");
+    await page.getByRole("switch", { name: "Work assistant findable on Team" }).waitFor();
+    assert.equal((await page.locator("#settings-discovery").textContent())?.includes("[object"), false, "the relay rows are elements, not text");
+    await findableSwitch.click();
+    await page.getByText("Hidden from everyone").waitFor();
+    assert.deepEqual(puts, [{ subjectKind: "assistant", subjectId: assistantId, findable: false }]);
+    assert.equal(await page.getByRole("switch", { name: "Work assistant findable on Team" }).count(), 0, "a hidden assistant has no relays to choose");
+    listed = true;
+    await page.goto(`${node.url}/assistant.html?screen=you`);
+    assert.equal(await page.getByTestId("assistant-findable-all-assistant").getAttribute("aria-checked"), "true");
+    await page.unroute("**/api/social/me");
+    await page.unroute("**/api/social/findable");
+    await page.goto(`${node.url}/assistant.html?id=${assistantId}`);
+    await page.locator("#chat-form").waitFor();
+
     // Who can find you and Find, with no relay on this machine.
     await page.locator("#rail-you").click();
     await page.getByText("This machine isn't on a relay yet.", { exact: false }).waitFor();
     await page.getByRole("radio", { name: "Work assistant" }).click();
     await page.locator("#message", { hasText: "Work assistant is your default" }).waitFor();
-    assert.equal(await page.getByRole("radio", { name: "Work assistant" }).getAttribute("aria-checked"), "true");
+    await page.getByRole("radio", { name: "Work assistant", checked: true }).waitFor();
     await page.locator(".rail-search").click();
     await page.getByText("This machine isn't on a relay yet.", { exact: false }).waitFor();
     await page.locator("#rail-groups").getByText("Invitations").click();
@@ -223,7 +285,7 @@ test("assistant shell: resources, public actions, activity and discovery without
     const tabsFit = await page.locator("#assistant-nav").evaluate(tabs => tabs.scrollWidth <= tabs.clientWidth + 1);
     assert.equal(tabsFit, true, "assistant tabs fit a phone width");
     await page.getByText("Back to resources").click();
-    assert.equal(await page.locator(".side-item").count(), 5);
+    assert.equal(await page.locator(".side-item").count(), 7);
     assert.deepEqual(errors, [], "the page runs without script errors");
   } finally {
     await browser?.close();

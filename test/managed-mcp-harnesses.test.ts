@@ -31,7 +31,7 @@ test("all harnesses receive the same bundled bridge, while capabilities stay bou
       assert.doesNotMatch(JSON.stringify(native), /JOINT_BOB_MCP_TOKEN|access_token/);
       revokeMcpAgentTokens("fixture-project", "fixture-conversation");
       assert.equal(mcpAgentIdentity(environment.JOINT_BOB_MCP_TOKEN!), undefined);
-      runAsAccount({ ...account, accountId: "other-account" }, () => assert.deepEqual(managedMcpBridgeConfigs(), {}));
+      runAsAccount({ ...account, accountId: "other-account" }, () => assert.deepEqual(Object.keys(managedMcpBridgeConfigs()), ["joint_bob"], "only Joint Bob's own tools"));
       store.remove("fixture");
     } finally { await rm(root, { recursive: true, force: true }); }
   });

@@ -7,7 +7,11 @@ import test from "node:test";
 import express from "express";
 import { createPerformanceDiagnostics } from "../src/server/performance-diagnostics.js";
 
-const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+/** Waits a measured time: a timer counts from the event loop's cached clock, so a busy loop can fire it early. */
+const pause = async (ms: number) => {
+  const start = performance.now();
+  while (performance.now() - start < ms) await new Promise<void>(resolve => setTimeout(resolve, 1));
+};
 
 test("slow requests and stages log route templates, never private inputs", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-"));

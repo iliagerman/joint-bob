@@ -61,7 +61,11 @@ test("a lost machine's twin takes over its projects and cluster, and a rebuilt m
     }
     const relationshipId = await pairTwins(lost, sl, survivor, ss);
     const project = lost.projects.find((candidate) => candidate.name === "Internal Assistant")!;
-    assert.equal((await api(lost, sl, "PUT", `/clusters/${clusterId}/sharing`, { projectIds: [project.id], workspaceIds: [], confirmOwnedData: true })).status, 200);
+    // A new twin may still be catching up: this answers 503 and asks to save again until it has.
+    await eventually(async () => {
+      const shared = await api(lost, sl, "PUT", `/clusters/${clusterId}/sharing`, { projectIds: [project.id], workspaceIds: [], confirmOwnedData: true });
+      assert.equal(shared.status, 200, JSON.stringify(shared.body));
+    });
     await eventually(async () => {
       assert.ok(await lists(member, sm, project.id), "the cluster member receives the shared project");
       assert.ok(await lists(survivor, ss, project.id), "the twin receives the project");

@@ -16,6 +16,8 @@ import { state } from "./state.js";
 
 // Below this width the panel floats over the transcript instead of sharing the row.
 const OVERLAY_QUERY = window.matchMedia("(max-width: 900px)");
+// The thread keeps at least this width beside the panel while the Browser panel shares the row.
+const THREAD_MIN_WIDTH = 400;
 // On a phone the whole panel scrolls as one page, so it, not the steps list, follows new steps.
 const PHONE_QUERY = window.matchMedia("(max-width: 640px)");
 const FOLLOW_THRESHOLD_PX = 32;
@@ -31,6 +33,9 @@ const summary = { digest: null, policy: null, writing: false };
 // Whether the person last opened or collapsed the panel this session. Browser storage is not used
 // for it; a reload falls back to the width default.
 let chosenOpen = null;
+// The panel was collapsed for the Browser panel rather than by the person, so it comes back with the row.
+let collapsedForBrowser = false;
+let browserShown = false;
 // The steps list stays collapsed until asked for, and stays as last set while the page is open.
 let stepsOpen = false;
 let statsFrame = 0;
@@ -38,7 +43,7 @@ let statsFrame = 0;
 const resizeHandle = document.getElementById("activityPanelResize");
 const WIDTH_STORAGE_KEY = "joint-bob-activity-width";
 function applyPanelWidth(width) {
-  const maximum = elements.messagesWrap.clientWidth * (OVERLAY_QUERY.matches ? 0.92 : 0.65);
+  const maximum = elements.messagesWrap.clientWidth * (panelFloats() ? 0.92 : 0.65);
   const bounded = Math.round(Math.max(280, Math.min(width, maximum)));
   elements.messagesWrap.style.setProperty("--activity-preferred-width", `${bounded}px`);
   resizeHandle.setAttribute("aria-valuenow", String(bounded));
@@ -94,6 +99,36 @@ export function activityPanelOpen() {
   return !elements.activityPanel.hidden;
 }
 
+function panelFloats() {
+  return OVERLAY_QUERY.matches || elements.messagesWrap.classList.contains("activity-floating");
+}
+
+// Whether the panel, at the width `--activity-width` in styles.css gives it, leaves the thread
+// too little room.
+function crowdsThread() {
+  const wrap = elements.messagesWrap.clientWidth;
+  const preferred = parseFloat(elements.messagesWrap.style.getPropertyValue("--activity-preferred-width")) || Math.min(420, Math.max(300, window.innerWidth * 0.28));
+  return wrap - Math.max(280, Math.min(preferred, wrap * 0.65)) < THREAD_MIN_WIDTH;
+}
+
+// The Browser panel takes half the row, which leaves the conversation column too narrow to share
+// with this panel: the thread wrapped a word or a syllable a line. Opening the browser there
+// collapses the panel and closing it brings the panel back; opened beside the browser, the panel
+// floats over the thread as it does on a narrow window.
+function fitBesideBrowser() {
+  const shown = document.body.classList.contains("browser-visible");
+  const crowded = shown && !OVERLAY_QUERY.matches && crowdsThread();
+  if (shown && !browserShown && crowded && activityPanelOpen()) {
+    setActivityPanelOpen(false, false);
+    collapsedForBrowser = true;
+  } else if (!shown && browserShown && collapsedForBrowser) {
+    collapsedForBrowser = false;
+    setActivityPanelOpen(true, false);
+  }
+  browserShown = shown;
+  elements.messagesWrap.classList.toggle("activity-floating", crowded);
+}
+
 /** `remember` marks the person's own open or collapse, which also asks for an up-to-date summary. */
 export function setActivityPanelOpen(open, remember = true) {
   const opening = open && !activityPanelOpen();
@@ -101,7 +136,7 @@ export function setActivityPanelOpen(open, remember = true) {
   elements.messagesWrap.classList.toggle("activity-open", open);
   elements.activityToggleButton.setAttribute("aria-expanded", String(open));
   elements.activityToggleButton.classList.toggle("active", open);
-  if (remember) chosenOpen = open;
+  if (remember) { chosenOpen = open; collapsedForBrowser = false; }
   // Opening the panel yourself asks for the summary to catch up, whatever the policy.
   if (opening && remember) requestSummary();
 }
@@ -627,11 +662,13 @@ document.addEventListener("summary-policy-changed", () => {
 document.addEventListener("instructions-saved", () => void renderInstructions());
 document.addEventListener("instructions-changed", () => void renderInstructions());
 elements.activityPanel.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || !OVERLAY_QUERY.matches) return;
+  if (event.key !== "Escape" || !panelFloats()) return;
   event.stopPropagation();
   setActivityPanelOpen(false);
   elements.activityToggleButton.focus();
 });
 setActivityPanelOpen(storedOpen(), false);
+new MutationObserver(fitBesideBrowser).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+new ResizeObserver(fitBesideBrowser).observe(elements.messagesWrap);
 setActivityStepsOpen(stepsOpen);
 renderStats();

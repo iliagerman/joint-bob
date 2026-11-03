@@ -2,7 +2,7 @@ import { del, post, put, request } from "./api.js";
 import { app, closeOverlay, fail, isMobile, navigate, notify, openSheet } from "./context.js";
 import { avatar, bot, chip, fitPage, h, icon, rowText, switchButton } from "./dom.js";
 import { openInviteSheet } from "./groups.js";
-import { setDefault, setDiscovery } from "./settings.js";
+import { setDefault, setDiscovery, setFindable } from "./settings.js";
 
 // Who can find you, Find, and a found person's or assistant's card.
 
@@ -22,9 +22,11 @@ const relayMissing = () => h("div", { class: "notice plain" }, icon("info"), h("
 function findableMatrix(me) {
   const subjects = [["person", me.account.accountId, "You", avatar(me.account.name, "you")], ...me.assistants.filter(entry => entry.local).map(entry => ["assistant", entry.id, entry.name, bot()])];
   const isOn = (kind, id, relay) => me.discovery.some(item => item.subjectKind === kind && item.subjectId === id && item.relayNodeId === relay);
+  const anywhere = (kind, id) => me.discovery.some(item => item.subjectKind === kind && item.subjectId === id);
   return h("table", { class: "matrix" },
-    h("thead", {}, h("tr", {}, h("th", { scope: "col" }), me.relays.map(relay => h("th", { scope: "col" }, relay.name, relay.active ? "" : " (offline)")))),
+    h("thead", {}, h("tr", {}, h("th", { scope: "col" }), h("th", { scope: "col" }, "Findable"), me.relays.map(relay => h("th", { scope: "col" }, relay.name, relay.active ? "" : " (offline)")))),
     h("tbody", {}, subjects.map(([kind, id, label, glyph]) => h("tr", {}, h("td", {}, h("span", { style: "display:inline-flex;gap:9px;align-items:center" }, glyph, label)),
+      h("td", {}, switchButton({ checked: anywhere(kind, id), label: `${label} findable`, testid: `assistant-findable-all-${kind}`, onToggle: async () => { await setFindable(kind, id, !anywhere(kind, id)); await showYou(); } })),
       me.relays.map(relay => h("td", {}, switchButton({ checked: isOn(kind, id, relay.relayNodeId), label: `${label} findable on ${relay.name}`, testid: `assistant-findable-${kind}`, onToggle: async () => { await setDiscovery(kind, id, relay.relayNodeId, !isOn(kind, id, relay.relayNodeId)); await showYou(); } })))))));
 }
 
@@ -61,7 +63,7 @@ export async function showYou() {
   const blocks = me.blocks.length ? me.blocks.map(person => h("div", { class: "work", style: "align-items:center" }, avatar(person.name), h("div", {}, h("strong", {}, person.name)),
     h("button", { type: "button", onclick: async () => { try { await del(`/api/social/blocks/${encodeURIComponent(person.accountId)}`); await showYou(); } catch (error) { fail(error); } } }, "Unblock"))) : h("p", { class: "fine" }, "Nobody is blocked.");
   target.replaceChildren(head("Who can find you", "Off until you turn it on, separately for each relay"), h("div", { class: "scroll" }, h("div", { class: "narrow" },
-    h("section", { class: "settings-sec" }, h("h2", {}, "Findable on"), h("p", { class: "muted" }, "Signed-in people on a relay can find what you turn on there. Nothing is on the public Internet."), me.relays.length ? findableMatrix(me) : relayMissing()),
+    h("section", { class: "settings-sec" }, h("h2", {}, "Findable on"), h("p", { class: "muted" }, "Signed-in people on a relay can find what you turn on there. Nothing is on the public Internet. Turn off Findable to hide from everyone at once."), me.relays.length ? findableMatrix(me) : relayMissing()),
     h("section", { class: "settings-sec" }, h("h2", {}, "What people see"), h("p", { class: "muted" }, "Your listings show only this."),
       h("div", { class: "card" }, h("div", { class: "listing" }, avatar(me.account.name, "you"), h("div", {}, h("strong", {}, me.account.name), h("p", { class: "fine" }, `Person · Verified home: ${me.account.nodeName}`)))),
       h("p", { class: "fine" }, "Never in a listing:"), h("div", { class: "never" }, ["Email", "Private instructions", "Credentials", "Projects", "Calendar contents", "Private chats"].map(item => chip(item)))),

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mobile quick actions · mockup</title>
+<style>
+  :root { color-scheme: dark; --bg:#08090b; --panel:#101215; --surface:#191c20; --raised:#212529; --line:rgba(255,255,255,.075); --line-strong:rgba(255,255,255,.17); --text:#ebeced; --muted:#94999e; --accent:#37cfab; --amber:#e0b35a; --danger:#e06a61; --sans:ui-sans-serif,-apple-system,"Segoe UI",Inter,sans-serif; --serif:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-family:var(--sans); }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--text); background:radial-gradient(circle at 15% 0%, #15332b 0, transparent 40%), var(--bg); min-height:100vh; }
+  button { font:inherit; color:inherit; cursor:pointer; }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .page { max-width:960px; margin:auto; padding:32px clamp(16px,4vw,40px) 60px; }
+  .eyebrow { margin:0 0 9px; color:var(--accent); font:700 11px/1.2 var(--mono); letter-spacing:.16em; text-transform:uppercase; }
+  h1 { font:600 clamp(26px,4vw,36px)/1.1 var(--serif); letter-spacing:-.02em; margin:0 0 10px; }
+  .sub { color:var(--muted); font-size:14px; line-height:1.6; max-width:680px; margin:0 0 26px; }
+  .stage { display:grid; grid-template-columns:repeat(2, minmax(0, 360px)); gap:32px; justify-content:center; }
+  .label { font:700 11px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 12px; text-align:center; }
+  .label.good { color:var(--accent); }
+
+  /* Phone frame with a dimmed chat behind the sheet */
+  .phone { position:relative; width:360px; height:740px; margin:auto; border:1px solid var(--line-strong); border-radius:34px; background:var(--panel); overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.5); }
+  .phone-top { height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 18px; border-bottom:1px solid var(--line); color:var(--muted); font-size:13px; }
+  .phone-chat { padding:16px; color:var(--muted); font-size:13px; line-height:1.55; filter:brightness(.45); }
+  .phone-chat .bubble { background:var(--surface); border-radius:12px; padding:12px; margin-bottom:12px; }
+  .scrim { position:absolute; inset:0; background:rgba(4,5,6,.5); }
+  .fab { position:absolute; right:14px; bottom:18px; width:52px; height:52px; border-radius:50%; background:var(--surface); border:1px solid var(--line-strong); display:grid; place-items:center; }
+  .fab img, .fab span { font-size:20px; }
+
+  /* Sheet */
+  .sheet { position:absolute; left:10px; right:10px; bottom:10px; max-height:700px; display:flex; flex-direction:column; background:var(--raised); border:1px solid var(--line-strong); border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.6); overflow:hidden; }
+  .sheet-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 10px; }
+  .sheet-head h2 { margin:0; font:600 20px/1.1 var(--serif); }
+  .icon-btn { width:36px; height:36px; border:0; border-radius:10px; background:transparent; color:var(--muted); display:grid; place-items:center; }
+  .icon-btn svg { width:20px; height:20px; }
+  .scroll { overflow:auto; padding:0 12px 12px; }
+  .group-title { margin:14px 4px 8px; font:700 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+
+  /* Quick actions: 6-col grid so Mark done is full width, row 2 is three, row 3 is two wide */
+  .quick { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; }
+  .tile { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; min-height:72px; border:1px solid var(--line); border-radius:14px; background:var(--surface); font-size:13px; font-weight:600; padding:10px 6px; }
+  .tile svg { width:22px; height:22px; }
+  .tile small { font:600 11px/1 var(--mono); color:var(--muted); letter-spacing:.02em; }
+  .tile.done { grid-column:span 6; min-height:58px; flex-direction:row; gap:10px; background:#15332b; border-color:#2f7a64; color:var(--accent); font-size:15px; }
+  .tile.n2 { grid-column:span 2; }
+  .tile.w3 { grid-column:span 3; flex-direction:row; justify-content:flex-start; padding:0 14px; min-height:58px; font-size:14px; }
+  .tile.w3 .sub-label { margin-left:auto; color:var(--muted); font:600 11px/1 var(--mono); }
+  .tile.on { background:#1d3a33; border-color:#2f7a64; color:var(--accent); }
+  .tile.on small { color:var(--accent); }
+
+  /* Run settings: compact 2x2 summary of the current conversation */
+  .run { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .chip { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:11px; background:var(--panel); padding:9px 10px; font-size:13px; font-weight:560; text-align:left; min-width:0; }
+  .chip svg { width:16px; height:16px; color:var(--muted); flex:none; }
+  .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chip em { font:normal 600 10px/1 var(--mono); color:var(--muted); display:block; margin-bottom:3px; }
+
+  /* Lists */
+  .rows { border:1px solid var(--line); border-radius:14px; background:var(--panel); overflow:hidden; }
+  .row { display:flex; align-items:center; gap:12px; width:100%; min-height:50px; padding:0 14px; border:0; border-top:1px solid var(--line); background:transparent; text-align:left; font-size:14px; font-weight:560; }
+  .row:first-child { border-top:0; }
+  .row svg { width:18px; height:18px; color:var(--muted); flex:none; }
+  .row .count { margin-left:auto; min-width:24px; height:22px; padding:0 7px; border-radius:11px; background:var(--danger); color:#fff; font:700 12px/22px var(--mono); text-align:center; }
+  .row .count.run { background:var(--amber); color:#1b1505; }
+  .row .chev { margin-left:auto; color:var(--muted); }
+
+  .foot { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; margin-top:10px; }
+  .foot button { border:1px solid var(--line); border-radius:12px; background:var(--panel); min-height:56px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; font-size:12px; font-weight:560; color:var(--text); }
+  .foot svg { width:18px; height:18px; color:var(--muted); }
+
+  /* Today's sheet, shown for comparison */
+  .today .sheet { bottom:auto; top:58px; }
+  .today .tile-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .today .tile-grid .tile { min-height:84px; }
+  .today .tile.done { grid-column:span 2; }
+  .today .tile.muted { color:var(--muted); background:#171a1d; }
+  .today .rows .row { font-size:14px; }
+
+  .notes { max-width:720px; margin:40px auto 0; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px 24px; }
+  .notes h2 { margin:0 0 10px; font:600 17px var(--serif); }
+  .notes h3 { margin:16px 0 6px; font:700 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+  .notes ul { margin:0; padding-left:20px; color:var(--muted); font-size:14px; line-height:1.65; }
+  .notes li + li { margin-top:4px; }
+  .notes b { color:var(--text); font-weight:600; }
+  .hint { color:var(--muted); font-size:12px; text-align:center; margin-top:14px; }
+  @media (max-width:800px) { .stage { grid-template-columns:1fr; justify-items:center; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Mockup · for review, not implemented</p>
+  <h1>Mobile controls: quick actions first</h1>
+  <p class="sub">The conversation menu opens from the floating button. Today every item has the same weight, so the actions you use most sit among settings and navigation. The proposal puts your six most common actions in a thumb-sized grid at the top, shows the run settings as a compact summary, and moves everything else into quieter rows. Tap the tiles to try the states. The mock is not wired to the app.</p>
+
+  <div class="stage">
+    <section>
+      <p class="label">Today</p>
+      <div class="phone today">
+        <div class="phone-top"><span>8:58</span><span>Pi · GPT-6.1 Sol</span></div>
+        <div class="phone-chat">
+          <div class="bubble">Pushed the fix. Opened the PR and waiting on CI.</div>
+          <div class="bubble">Auto respond is on for this conversation.</div>
+        </div>
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="sheet-head"><h2>This conversation</h2><button class="icon-btn" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+          <div class="scroll">
+            <div class="tile-grid">
+              <button class="tile done">Mark done</button>
+              <button class="tile">Pi</button>
+              <button class="tile">GPT-6.1 Sol</button>
+              <button class="tile muted">medium</button>
+              <button class="tile">Homeserver</button>
+              <button class="tile">Auto respond</button>
+              <button class="tile">Tools</button>
+            </div>
+            <div class="rows" style="margin-top:12px">
+              <button class="row">New conversation…</button>
+              <button class="row">New note…</button>
+              <button class="row">Recent conversations</button>
+              <button class="row">Running conversations</button>
+              <button class="row">Needs review <span class="count">16</span></button>
+            </div>
+            <div class="foot">
+              <button>All projects</button>
+              <button>Conversations</button>
+              <button>Costs</button>
+              <button>Settings</button>
+            </div>
+          </div>
+        </div>
+        <div class="fab"><span>◎</span></div>
+      </div>
+    </section>
+
+    <section>
+      <p class="label good">Proposed</p>
+      <div class="phone">
+        <div class="phone-top"><span>8:58</span><span>Pi · GPT-6.1 Sol</span></div>
+        <div class="phone-chat">
+          <div class="bubble">Pushed the fix. Opened the PR and waiting on CI.</div>
+          <div class="bubble">Auto respond is on for this conversation.</div>
+        </div>
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="sheet-head"><h2>This conversation</h2><button class="icon-btn" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+          <div class="scroll">
+            <div class="quick" aria-label="Quick actions">
+              <button class="tile done" id="markDone" aria-pressed="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.3 2.4 2.4 4.8-5"/></svg>
+                <span id="markDoneLabel">Mark done</span>
+              </button>
+              <button class="tile n2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M12 10v6M9 13h6"/></svg>
+                New note
+              </button>
+              <button class="tile n2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-5 4z"/><path d="M12 9v4M10 11h4"/></svg>
+                New conversation
+              </button>
+              <button class="tile n2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8M16.5 6.5l2.5 2.5M14 9l2 2"/></svg>
+                Add secret
+              </button>
+              <button class="tile w3 on" id="autoRespond" aria-pressed="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 0 1 13-5"/><path d="M18 3.5V7h-3.5"/><path d="M19.5 12a7.5 7.5 0 0 1-13 5"/><path d="M6 20.5V17h3.5"/></svg>
+                Auto respond
+                <span class="sub-label" id="autoLabel">ON</span>
+              </button>
+              <button class="tile w3">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6 8.5 12l6 6"/></svg>
+                Back to conversations
+              </button>
+            </div>
+
+            <p class="group-title">Run settings</p>
+            <div class="run">
+              <button class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M3 20a6 6 0 0 1 12 0"/></svg><span><em>AGENT</em>Pi</span></button>
+              <button class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v14a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/></svg><span><em>MODEL</em>GPT-6.1 Sol</span></button>
+              <button class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg><span><em>EFFORT</em>medium</span></button>
+              <button class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg><span><em>NODE</em>Homeserver</span></button>
+            </div>
+
+            <p class="group-title">More</p>
+            <div class="rows">
+              <button class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m5 7 5 5-5 5"/><path d="M12.5 17h6.5"/></svg>Tools &amp; actions<span class="chev">›</span></button>
+              <button class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Recent conversations<span class="chev">›</span></button>
+              <button class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m8 5.5 10 6.5L8 18.5z"/></svg>Running conversations<span class="count run">3</span></button>
+              <button class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>Needs review<span class="count">16</span></button>
+            </div>
+
+            <div class="foot">
+              <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5h6l2 2h9v10h-17z"/></svg>All projects</button>
+              <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg>Costs</button>
+              <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>Settings</button>
+            </div>
+          </div>
+        </div>
+        <div class="fab"><span>◎</span></div>
+      </div>
+      <p class="hint">Tap Mark done or Auto respond to see the state change.</p>
+    </section>
+  </div>
+
+  <div class="notes">
+    <h2>What changed and why</h2>
+    <h3>Decisions in this mock</h3>
+    <ul>
+      <li><b>Six quick actions at the top</b>: Mark done, New note, New conversation, Add secret, Auto respond, Back to conversations. Each is a single tap, with no nested menu.</li>
+      <li><b>Mark done is full width and tinted</b>, as before, because it is the most frequent action. The label flips to "Mark not done" after a tap.</li>
+      <li><b>Auto respond shows its state on the tile</b> (ON or OFF), so you can see it without opening anything.</li>
+      <li><b>Run settings become a 2×2 summary</b> (agent, model, effort, node). The values are readable at a glance. Tapping a chip opens the same picker as today.</li>
+      <li><b>Lower-frequency navigation is grouped under More</b>: Tools, Recent, Running, and Needs review. The Needs review count stays visible.</li>
+      <li><b>Footer keeps three items</b>: All projects, Costs, and Settings. Conversations moved into the Back tile, so it no longer appears twice.</li>
+    </ul>
+    <h3>Open questions for you</h3>
+    <ul>
+      <li><b>Add secret</b>: should it open the secret-account form directly, or the Settings secrets page? The mock assumes the direct form.</li>
+      <li><b>Order</b>: is New note or New conversation more frequent? The mock keeps your order from the request.</li>
+      <li><b>Outside chat</b>: the Projects and Board views have their own actions. Should the same quick-action grid appear there, or only in a conversation?</li>
+      <li><b>Customisation</b>: should you be able to reorder or hide quick actions later, or is a fixed list enough for now?</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  const markDone = document.querySelector("#markDone");
+  const markDoneLabel = document.querySelector("#markDoneLabel");
+  markDone.addEventListener("click", () => {
+    const done = markDone.getAttribute("aria-pressed") !== "true";
+    markDone.setAttribute("aria-pressed", String(done));
+    markDoneLabel.textContent = done ? "Marked done" : "Mark done";
+  });
+  const autoRespond = document.querySelector("#autoRespond");
+  const autoLabel = document.querySelector("#autoLabel");
+  autoRespond.addEventListener("click", () => {
+    const on = autoRespond.getAttribute("aria-pressed") !== "true";
+    autoRespond.setAttribute("aria-pressed", String(on));
+    autoRespond.classList.toggle("on", on);
+    autoLabel.textContent = on ? "ON" : "OFF";
+  });
+</script>
+</body>
+</html>

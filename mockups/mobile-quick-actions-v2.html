@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mobile quick actions v2 · mockup</title>
+<style>
+  :root { color-scheme: dark; --bg:#08090b; --panel:#101215; --surface:#191c20; --raised:#212529; --line:rgba(255,255,255,.075); --line-strong:rgba(255,255,255,.17); --text:#ebeced; --muted:#94999e; --accent:#37cfab; --amber:#e0b35a; --danger:#e06a61; --sans:ui-sans-serif,-apple-system,"Segoe UI",Inter,sans-serif; --serif:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-family:var(--sans); }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--text); background:radial-gradient(circle at 15% 0%, #15332b 0, transparent 40%), var(--bg); min-height:100vh; }
+  button, input { font:inherit; color:inherit; cursor:pointer; }
+  button:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .page { max-width:960px; margin:auto; padding:32px clamp(16px,4vw,40px) 60px; }
+  .eyebrow { margin:0 0 9px; color:var(--accent); font:700 11px/1.2 var(--mono); letter-spacing:.16em; text-transform:uppercase; }
+  h1 { font:600 clamp(26px,4vw,36px)/1.1 var(--serif); letter-spacing:-.02em; margin:0 0 10px; }
+  .sub { color:var(--muted); font-size:14px; line-height:1.6; max-width:680px; margin:0 0 26px; }
+  .stage { display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .label { font:700 11px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin:0; }
+
+  /* Phone frame with the chat dimmed behind the sheet */
+  .phone { position:relative; width:360px; height:740px; border:1px solid var(--line-strong); border-radius:34px; background:var(--panel); overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.5); }
+  .phone-top { height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 18px; border-bottom:1px solid var(--line); color:var(--muted); font-size:13px; }
+  .phone-chat { padding:16px; color:var(--muted); font-size:13px; line-height:1.55; filter:brightness(.45); }
+  .phone-chat .bubble { background:var(--surface); border-radius:12px; padding:12px; margin-bottom:12px; }
+  .scrim { position:absolute; inset:0; background:rgba(4,5,6,.5); }
+  .scrim[hidden] { display:none; }
+  .fab { position:absolute; right:14px; bottom:18px; width:52px; height:52px; border-radius:50%; background:var(--surface); border:1px solid var(--line-strong); display:grid; place-items:center; font-size:20px; }
+  .fab[aria-expanded="true"] { display:none; }
+
+  /* Sheet: header, scrolling settings, sticky action dock */
+  .sheet { position:absolute; left:10px; right:10px; bottom:10px; max-height:690px; display:flex; flex-direction:column; background:var(--raised); border:1px solid var(--line-strong); border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.6); overflow:hidden; }
+  .sheet[hidden] { display:none; }
+  .sheet-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 8px; }
+  .sheet-head h2 { margin:0; font:600 20px/1.1 var(--serif); }
+  .icon-btn { width:36px; height:36px; border:0; border-radius:10px; background:transparent; color:var(--muted); display:grid; place-items:center; }
+  .icon-btn svg { width:20px; height:20px; }
+  .scroll { overflow:auto; padding:0 12px 4px; }
+  .hint { color:var(--muted); font-size:12px; line-height:1.5; margin:0 4px 6px; }
+
+  /* Run settings: change in place, sheet stays open */
+  .setting { padding:10px 10px 12px; border:1px solid var(--line); border-radius:14px; background:var(--panel); margin-bottom:8px; }
+  .setting-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .setting-head em { font:700 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-style:normal; }
+  .setting-head .saved { font:600 11px/1 var(--mono); color:var(--accent); opacity:0; transition:opacity .2s; }
+  .setting-head .saved.show { opacity:1; }
+  .seg { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:4px; background:var(--surface); border-radius:10px; padding:3px; }
+  .seg button { min-height:38px; border:0; border-radius:8px; background:transparent; color:var(--muted); font-size:13px; font-weight:560; padding:0 6px; }
+  .seg button[aria-pressed="true"] { background:#2b3a35; color:var(--accent); box-shadow:inset 0 0 0 1px #2f7a64; }
+
+  /* Searchable dropdowns: the panel opens inline so it stays inside the sheet */
+  .combo-trigger { width:100%; min-height:42px; display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid var(--line-strong); border-radius:10px; background:var(--surface); padding:0 12px; font-size:14px; font-weight:560; text-align:left; }
+  .combo-trigger svg { width:16px; height:16px; color:var(--muted); flex:none; transition:transform .15s; }
+  .combo-trigger[aria-expanded="true"] svg { transform:rotate(180deg); }
+  .combo-panel { margin-top:6px; border:1px solid var(--line-strong); border-radius:10px; background:var(--surface); padding:6px; }
+  .combo-panel[hidden] { display:none; }
+  .combo-search { width:100%; min-height:38px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); padding:0 10px; font-size:14px; }
+  .combo-list { list-style:none; margin:6px 0 0; padding:0; max-height:190px; overflow:auto; }
+  .combo-list li { min-height:40px; display:flex; align-items:center; padding:0 10px; border-radius:8px; font-size:14px; }
+  .combo-list li.active { background:#2b3a35; color:var(--accent); }
+  .combo-list li[aria-selected="true"]::after { content:"✓"; margin-left:auto; color:var(--accent); }
+  .combo-list li.empty { color:var(--muted); }
+
+  /* Secondary navigation as a compact row */
+  .more { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; margin:8px 0 6px; }
+  .more button { position:relative; min-height:58px; border:1px solid var(--line); border-radius:12px; background:var(--panel); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; font-size:12px; font-weight:560; }
+  .more svg { width:18px; height:18px; color:var(--muted); }
+  .more .count { position:absolute; top:6px; right:8px; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--danger); color:#fff; font:700 10px/18px var(--mono); text-align:center; }
+  .more .count.run { background:var(--amber); color:#1b1505; }
+  .links { display:flex; justify-content:center; gap:16px; font-size:12px; color:var(--muted); margin:4px 0 10px; }
+  .links button { border:0; background:transparent; color:var(--muted); padding:6px; font-size:12px; text-decoration:underline; text-underline-offset:3px; }
+
+  /* Action dock: pinned to the bottom of the sheet for thumb reach */
+  .dock { border-top:1px solid var(--line); background:var(--panel); padding:10px 12px 12px; display:grid; grid-template-columns:repeat(6, 1fr); gap:6px; }
+  .tile { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; min-height:60px; border:1px solid var(--line); border-radius:12px; background:var(--surface); font-size:12px; font-weight:600; padding:8px 4px; text-align:center; }
+  .tile svg { width:20px; height:20px; }
+  .tile.done { grid-column:span 6; min-height:50px; flex-direction:row; gap:10px; background:#15332b; border-color:#2f7a64; color:var(--accent); font-size:14px; }
+  .tile.n2 { grid-column:span 2; }
+  .tile.w3 { grid-column:span 3; }
+  .tile.on { background:#1d3a33; border-color:#2f7a64; color:var(--accent); }
+  .tile .state { font:600 10px/1 var(--mono); color:var(--muted); }
+  .tile.on .state { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Mockup v2 · for review, not implemented</p>
+  <h1>Mobile controls: settings stay open</h1>
+  <p class="sub">Version 2 moves the quick actions to a dock at the bottom of the sheet, within thumb reach. Harness, model, and effort are searchable dropdowns. Node is a segmented control. Changing any of them keeps the sheet open. Picking from a dropdown closes only that dropdown. The sheet closes only with ✕ or a tap outside it. Tap the floating button to reopen it.</p>
+
+  <div class="stage">
+    <p class="label">Proposed v2</p>
+    <div class="phone" id="phone">
+      <div class="phone-top"><span>8:58</span><span>Pi · GPT-6.1 Sol</span></div>
+      <div class="phone-chat">
+        <div class="bubble">Pushed the fix. Opened the PR and waiting on CI.</div>
+        <div class="bubble">Auto respond is on for this conversation.</div>
+      </div>
+      <button class="fab" id="fab" aria-expanded="false" aria-label="Show controls">◎</button>
+      <div class="scrim" id="scrim" hidden></div>
+      <div class="sheet" id="sheet">
+        <div class="sheet-head">
+          <h2>This conversation</h2>
+          <button class="icon-btn" id="closeSheet" aria-label="Close controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div class="scroll">
+          <p class="hint">Changes apply immediately and this stays open. Close with ✕ or tap outside.</p>
+
+          <div class="setting">
+            <div class="setting-head"><em>Harness</em><span class="saved">✓ saved</span></div>
+            <div class="combo" data-combo="harness">
+              <button class="combo-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="combo-value"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div class="combo-panel" hidden>
+                <input class="combo-search" type="search" placeholder="Search harnesses…" aria-label="Search harnesses" autocomplete="off">
+                <ul class="combo-list" role="listbox"></ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting">
+            <div class="setting-head"><em>Model</em><span class="saved">✓ saved</span></div>
+            <div class="combo" data-combo="model">
+              <button class="combo-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="combo-value"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div class="combo-panel" hidden>
+                <input class="combo-search" type="search" placeholder="Search models…" aria-label="Search models" autocomplete="off">
+                <ul class="combo-list" role="listbox"></ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting">
+            <div class="setting-head"><em>Effort</em><span class="saved">✓ saved</span></div>
+            <div class="combo" data-combo="effort">
+              <button class="combo-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="combo-value"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div class="combo-panel" hidden>
+                <input class="combo-search" type="search" placeholder="Search effort levels…" aria-label="Search effort levels" autocomplete="off">
+                <ul class="combo-list" role="listbox"></ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting">
+            <div class="setting-head"><em>Runs on</em><span class="saved">✓ saved</span></div>
+            <div class="seg">
+              <button aria-pressed="true">Homeserver</button>
+              <button aria-pressed="false">This machine</button>
+            </div>
+          </div>
+
+          <div class="more">
+            <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m5 7 5 5-5 5"/><path d="M12.5 17h6.5"/></svg>Tools</button>
+            <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Recent</button>
+            <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m8 5.5 10 6.5L8 18.5z"/></svg>Running<span class="count run">3</span></button>
+            <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>Review<span class="count">16</span></button>
+          </div>
+          <div class="links">
+            <button>All projects</button>
+            <button>Costs</button>
+            <button>Settings</button>
+          </div>
+        </div>
+
+        <div class="dock" aria-label="Quick actions">
+          <button class="tile done" id="markDone" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.3 2.4 2.4 4.8-5"/></svg><span id="markDoneLabel">Mark done</span></button>
+          <button class="tile n2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M12 10v6M9 13h6"/></svg>New note</button>
+          <button class="tile n2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-5 4z"/><path d="M12 9v4M10 11h4"/></svg>New conversation</button>
+          <button class="tile n2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8M16.5 6.5l2.5 2.5M14 9l2 2"/></svg>Add secret</button>
+          <button class="tile w3 on" id="autoRespond" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 0 1 13-5"/><path d="M18 3.5V7h-3.5"/><path d="M19.5 12a7.5 7.5 0 0 1-13 5"/><path d="M6 20.5V17h3.5"/></svg>Auto respond<span class="state" id="autoLabel">ON</span></button>
+          <button class="tile w3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6 8.5 12l6 6"/></svg>Back to conversations</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const sheet = document.querySelector("#sheet");
+  const scrim = document.querySelector("#scrim");
+  const fab = document.querySelector("#fab");
+
+  const MODELS = {
+    pi: [{ value: "gpt-6.1-sol", label: "GPT-6.1 Sol" }, { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" }, { value: "gpt-6-astra", label: "GPT-6 Astra" }],
+    claude: [{ value: "fable-5.1", label: "Fable 5.1" }, { value: "opus-5.5", label: "Opus 5.5" }, { value: "sonnet-5.5", label: "Sonnet 5.5" }, { value: "haiku-5.5", label: "Haiku 5.5" }],
+    kiro: [{ value: "default", label: "Kiro default" }],
+  };
+  const OPTIONS = {
+    harness: () => [{ value: "pi", label: "Pi" }, { value: "claude", label: "Claude" }, { value: "kiro", label: "Kiro" }],
+    model: () => MODELS[values.harness],
+    effort: () => ["minimal", "low", "medium", "high", "xhigh", "max"].map(level => ({ value: level, label: level })),
+  };
+  const values = { harness: "pi", model: "gpt-6.1-sol", effort: "medium" };
+  const combos = {};
+
+  function flashSaved(root) {
+    const saved = root.closest(".setting").querySelector(".saved");
+    saved.classList.add("show");
+    clearTimeout(saved.timer);
+    saved.timer = setTimeout(() => saved.classList.remove("show"), 1200);
+  }
+
+  function closeAllCombos() {
+    Object.values(combos).forEach(combo => combo.close());
+  }
+
+  function createCombo(key, onSelect) {
+    const root = document.querySelector(`[data-combo="${key}"]`);
+    const trigger = root.querySelector(".combo-trigger");
+    const valueText = root.querySelector(".combo-value");
+    const panel = root.querySelector(".combo-panel");
+    const search = root.querySelector(".combo-search");
+    const list = root.querySelector(".combo-list");
+    let shown = [];
+    let active = 0;
+
+    function show() {
+      valueText.textContent = OPTIONS[key]().find(option => option.value === values[key]).label;
+    }
+    function choose(option) {
+      values[key] = option.value;
+      show();
+      close();
+      onSelect?.(option.value);
+      flashSaved(root);
+    }
+    function renderList() {
+      const query = search.value.trim().toLowerCase();
+      shown = OPTIONS[key]().filter(option => option.label.toLowerCase().includes(query));
+      list.replaceChildren();
+      if (!shown.length) {
+        list.insertAdjacentHTML("beforeend", `<li class="empty">No matches</li>`);
+        return;
+      }
+      shown.forEach((option, index) => {
+        const item = document.createElement("li");
+        item.setAttribute("role", "option");
+        item.setAttribute("aria-selected", String(option.value === values[key]));
+        item.className = index === active ? "active" : "";
+        item.textContent = option.label;
+        item.addEventListener("click", () => choose(option));
+        list.append(item);
+      });
+    }
+    function open() {
+      closeAllCombos();
+      panel.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+      search.value = "";
+      active = 0;
+      renderList();
+      search.focus();
+    }
+    function close() {
+      panel.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+    }
+
+    trigger.addEventListener("click", () => (panel.hidden ? open() : close()));
+    search.addEventListener("input", () => { active = 0; renderList(); });
+    search.addEventListener("keydown", event => {
+      if (event.key === "ArrowDown") { active = Math.min(active + 1, shown.length - 1); renderList(); }
+      else if (event.key === "ArrowUp") { active = Math.max(active - 1, 0); renderList(); }
+      else if (event.key === "Enter" && shown[active]) choose(shown[active]);
+      else if (event.key === "Escape") { close(); trigger.focus(); }
+      else return;
+      event.preventDefault();
+    });
+    show();
+    combos[key] = { show, close };
+  }
+
+  createCombo("harness", () => {
+    // A model from another harness can't run here, so the model resets to that harness's first option.
+    if (!MODELS[values.harness].some(model => model.value === values.model)) values.model = MODELS[values.harness][0].value;
+    combos.model.show();
+  });
+  createCombo("model");
+  createCombo("effort");
+
+  // Segmented node control: change in place, sheet stays open.
+  document.querySelectorAll(".seg").forEach(group => {
+    group.querySelectorAll("button").forEach(button => {
+      button.addEventListener("click", () => {
+        group.querySelectorAll("button").forEach(other => other.setAttribute("aria-pressed", String(other === button)));
+        flashSaved(group);
+      });
+    });
+  });
+
+  // A tap outside an open dropdown closes only the dropdown, never the sheet.
+  document.addEventListener("click", event => {
+    if (!event.target.closest(".combo")) closeAllCombos();
+  });
+
+  const markDone = document.querySelector("#markDone");
+  const markDoneLabel = document.querySelector("#markDoneLabel");
+  markDone.addEventListener("click", () => {
+    const done = markDone.getAttribute("aria-pressed") !== "true";
+    markDone.setAttribute("aria-pressed", String(done));
+    markDoneLabel.textContent = done ? "Marked done" : "Mark done";
+  });
+
+  const autoRespond = document.querySelector("#autoRespond");
+  const autoLabel = document.querySelector("#autoLabel");
+  autoRespond.addEventListener("click", () => {
+    const on = autoRespond.getAttribute("aria-pressed") !== "true";
+    autoRespond.setAttribute("aria-pressed", String(on));
+    autoRespond.classList.toggle("on", on);
+    autoLabel.textContent = on ? "ON" : "OFF";
+  });
+
+  // Only ✕, a tap on the scrim, or the floating button change the sheet's visibility.
+  function setOpen(open) {
+    sheet.hidden = !open;
+    scrim.hidden = !open;
+    fab.setAttribute("aria-expanded", String(open));
+  }
+  document.querySelector("#closeSheet").addEventListener("click", () => setOpen(false));
+  scrim.addEventListener("click", () => setOpen(false));
+  fab.addEventListener("click", () => setOpen(sheet.hidden));
+</script>
+</body>
+</html>

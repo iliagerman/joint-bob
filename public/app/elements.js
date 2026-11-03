@@ -60,6 +60,8 @@ export const elements = {
   conversationLockStatus: document.querySelector("#conversationLockStatus"),
   conversationLockTakeButton: document.querySelector("#conversationLockTakeButton"),
   doneConversationNotice: document.querySelector("#doneConversationNotice"),
+  doneConversationTitle: document.querySelector("#doneConversationTitle"),
+  doneConversationDetail: document.querySelector("#doneConversationDetail"),
   doneConversationContinueButton: document.querySelector("#doneConversationContinueButton"),
   attachmentList: document.querySelector("#attachmentList"),
   attachmentInput: document.querySelector("#attachmentInput"),

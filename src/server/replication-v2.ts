@@ -193,11 +193,11 @@ export async function sendReplicationV2(peer: PeerEndpoint, events: ReplicationE
   return signedPeerPost(peer, "/api/cluster/v2/events", { events });
 }
 
-export async function signedPeerPost(peer: PeerEndpoint, target: string, payload: unknown): Promise<unknown> {
+export async function signedPeerPost(peer: PeerEndpoint, target: string, payload: unknown, timeoutMs = 10_000): Promise<unknown> {
   const db = await clusterV2Database(), local = await getClusterNode();
   const body = Buffer.from(JSON.stringify(payload));
   const response = await fetchPeer(db, peer.nodeId, new URL(target, peer.url), { method: "POST", redirect: "error",
-    signal: AbortSignal.timeout(10_000), body,
+    signal: AbortSignal.timeout(timeoutMs), body,
     headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local.id, peer.nodeId, "POST", target, body) } });
   if (!response.ok) throw new ClusterV2HttpError(response.status,`Peer returned ${response.status}`);
   return response.json();

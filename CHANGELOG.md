@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added assistant collaboration: your assistants can ask your other private assistants for help, and answer other people's requests with the public actions your other assistants publish.
+
 ## 2.208.4 — 2026-11-03
 
 - Activity Chat settings now collapse behind a keyboard-accessible Chat settings toggle, leaving more room to review messages on desktop and phones.

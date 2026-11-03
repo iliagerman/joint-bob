@@ -3,7 +3,7 @@ import { listLocalUsers, replicatedUserByAccount, validUsername } from "../auth.
 import { getClusterNode } from "../cluster.js";
 import { getPersonalAssistant, listPersonalAssistants } from "../personal-assistants.js";
 import { relayPeers, SocialPeerError, socialPost, socialRelays, type SocialRelay } from "./network.js";
-import { now, socialDatabase } from "./store.js";
+import { inTransaction, now, socialDatabase } from "./store.js";
 
 // What a listing may carry. Never email, instructions, projects, calendars or chat history.
 export interface ListedAction { id: string; name: string; description: string; inputs: string }
@@ -48,7 +48,7 @@ export async function discoverySettings(accountId: string): Promise<Array<{ subj
   return db.prepare("SELECT subject_kind subjectKind, subject_id subjectId, relay_node_id relayNodeId FROM social_discovery WHERE account_id=? ORDER BY subject_kind, subject_id, relay_node_id").all(accountId) as Array<{ subjectKind: "person" | "assistant"; subjectId: string; relayNodeId: string }>;
 }
 
-export async function setDiscovery(accountId: string, input: { subjectKind: "person" | "assistant"; subjectId: string; relayNodeId: string; enabled: boolean }): Promise<void> {
+async function assertCanList(accountId: string, input: { subjectKind: "person" | "assistant"; subjectId: string }): Promise<void> {
   if (input.subjectKind === "person" && input.subjectId !== accountId) throw new SocialPeerError("You can only list yourself", 403);
   if (input.subjectKind === "assistant") {
     const assistant = await getPersonalAssistant(accountId, input.subjectId);
@@ -56,6 +56,21 @@ export async function setDiscovery(accountId: string, input: { subjectKind: "per
     if (!assistant) throw new SocialPeerError("Assistant not found", 404);
     if (assistant.nodeId && assistant.nodeId !== local) throw new SocialPeerError("Open this assistant on its execution machine to list it", 409);
   }
+}
+
+/** The one switch: listed on every relay this machine is on, or on none, including relays it has left. */
+export async function setFindable(accountId: string, input: { subjectKind: "person" | "assistant"; subjectId: string; findable: boolean }): Promise<void> {
+  await assertCanList(accountId, input);
+  const db = await socialDatabase();
+  const relays = input.findable ? await socialRelays() : [];
+  inTransaction(db, () => {
+    db.prepare("DELETE FROM social_discovery WHERE account_id=? AND subject_kind=? AND subject_id=?").run(accountId, input.subjectKind, input.subjectId);
+    for (const relay of relays) db.prepare("INSERT INTO social_discovery (account_id, subject_kind, subject_id, relay_node_id) VALUES (?,?,?,?)").run(accountId, input.subjectKind, input.subjectId, relay.relayNodeId);
+  });
+}
+
+export async function setDiscovery(accountId: string, input: { subjectKind: "person" | "assistant"; subjectId: string; relayNodeId: string; enabled: boolean }): Promise<void> {
+  await assertCanList(accountId, input);
   if (!(await socialRelays()).some(relay => relay.relayNodeId === input.relayNodeId)) throw new SocialPeerError("This machine is not on that relay", 404);
   const db = await socialDatabase();
   if (input.enabled) db.prepare("INSERT OR IGNORE INTO social_discovery (account_id, subject_kind, subject_id, relay_node_id) VALUES (?,?,?,?)").run(accountId, input.subjectKind, input.subjectId, input.relayNodeId);

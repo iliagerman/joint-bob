@@ -92,7 +92,7 @@ async function executeCronRun(task: CronTask, run: CronRun): Promise<void> {
       if (task.assistantId) {
         if (!task.creatorAccountId) throw new Error("Assistant scheduled task has no creator account");
         const turn = await runPersonalAssistantAutomationTurn(task.creatorAccountId, task.assistantId, run.id, scheduledPromptText(task.prompt), {
-          label: "Scheduled", automationProfile: automationProfileContext(task), scheduledAutoRespond: task.autoRespond ?? undefined,
+          label: "Scheduled", origin: "scheduled", automationProfile: automationProfileContext(task), scheduledAutoRespond: task.autoRespond ?? undefined,
           prepare: async destination => {
             cronStore().target(run.id, destination.sessionId);
             if (destination.isNew) await markCronConversation(task.projectId, destination.engine, destination.sessionId, task.id, task.ownerNodeId);

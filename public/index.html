@@ -438,8 +438,8 @@
         </div>
         <div class="conversation-lock done-conversation-notice" id="doneConversationNotice" role="status" data-testid="done-conversation-notice" hidden>
           <div class="conversation-lock-copy">
-            <strong>Done ticket</strong>
-            <span>This conversation is read-only. Continue in a new project chat to do more work.</span>
+            <strong id="doneConversationTitle">Done ticket</strong>
+            <span id="doneConversationDetail" data-testid="done-conversation-detail">This conversation is read-only. Continue in a new project chat to do more work.</span>
           </div>
           <button class="primary compact" id="doneConversationContinueButton" type="button" data-testid="done-conversation-continue-button">Continue in new chat</button>
         </div>
@@ -943,6 +943,8 @@
             <label class="checkbox-row"><input type="checkbox" id="settingsShowProjectsOnOtherNodes" data-testid="settings-show-projects-on-other-nodes" /> Show my projects on other nodes</label>
             <p class="settings-hint">Signed in on one of these nodes, you see your unshared projects there too. They run here and are never copied there. Hide a single project from its menu.</p>
           </fieldset>
+          <label class="checkbox-row"><input type="checkbox" id="settingsFocusUi" data-testid="settings-focus-ui-toggle" /> Focus interface (experimental)</label>
+          <p class="muted compact-copy">One screen at a time, with floating contextual controls. Saves immediately for your account on this node. Turn off here to restore the classic interface without leaving your conversation.</p>
           <fieldset class="phase-settings">
             <legend>Appearance</legend>
             <button class="ghost" id="themeToggleButton" type="button" aria-label="Switch to dark theme" title="Switch to dark theme" data-testid="settings-theme-toggle-button">☾ Switch to dark theme</button>
@@ -1400,6 +1402,7 @@
                   <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksEnabled" checked data-testid="webhooks-enabled-toggle" /><span><strong>Accept calls</strong><span class="settings-hint">Off rejects every call without starting anything.</span></span></label>
                   <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksAttachments" data-testid="webhooks-attachments-toggle" /><span><strong>Accept attachments</strong><span class="settings-hint">Files sent with a call are saved and passed to the agent: multipart file parts, or a JSON <code>attachments</code> list of <code>{"name", "mimeType", "data"}</code> with base64 data.</span></span></label>
                   <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksPreserveFiles" data-testid="webhooks-preserve-files-toggle" /><span><strong>Preserve files between runs</strong><span class="settings-hint">Off gives every run a new temporary workspace. On reuses this webhook's own workspace and its files.</span></span></label>
+                  <label class="checkbox-row webhooks-option" hidden><input type="checkbox" id="webhooksReplyTelegram" data-testid="webhooks-reply-telegram-toggle" /><span><strong>Reply in Telegram</strong><span class="settings-hint">Sends the assistant's answer back to the chat that asked. Select a secret account with TELEGRAM_BOT_TOKEN.</span></span></label>
                   <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksMarkForReview" data-testid="webhooks-mark-for-review-toggle" /><span><strong>Count toward Needs review</strong><span class="settings-hint">Off keeps these conversations out of the review badge and inbox until you reply.</span></span></label>
                   <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksSendersEnabled" data-testid="webhooks-senders-toggle" /><span><strong>Only listed senders</strong><span class="settings-hint">Refuse calls whose sender is not on the list. Refused calls show under Calls with an Allow button.</span></span></label>
                   <div class="webhooks-senders" id="webhooksSenders" data-testid="webhooks-senders" hidden>
@@ -3088,8 +3091,6 @@
           <label id="cronEngineLabel">Harness<select name="engine" required data-testid="cron-engine"></select></label>
           <label>Model<select name="model" data-testid="cron-model"></select></label>
           <label id="cronReasoningLabel">Reasoning<select name="reasoning" data-testid="cron-reasoning"></select></label>
-          <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
-          <label class="checkbox-row"><input name="pauseOnFailure" type="checkbox" data-testid="cron-pause-on-failure">Pause schedule after a failed run</label>
           <label class="checkbox-row"><input name="autoReplyEnabled" type="checkbox" data-testid="cron-auto-reply-enabled">Enable auto reply for each run</label>
           <fieldset id="cronAutoReply" class="relay-form-section" hidden disabled>
             <legend>Auto reply</legend>
@@ -3102,6 +3103,8 @@
             <label>Maximum replies<input name="autoReplyLimit" type="number" min="1" max="500" placeholder="Unlimited" data-testid="cron-auto-reply-limit"></label>
             <label class="checkbox-row"><input name="autoReplyUseTools" type="checkbox" checked data-testid="cron-auto-reply-use-tools">Let the responder inspect files and run checks</label>
           </fieldset>
+          <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
+          <label class="checkbox-row"><input name="pauseOnFailure" type="checkbox" data-testid="cron-pause-on-failure">Pause schedule after a failed run</label>
           <label class="checkbox-row"><input name="markForReview" type="checkbox" data-testid="cron-mark-for-review">Count completed runs toward Needs review</label>
           <label class="checkbox-row"><input name="hideFromHistory" type="checkbox" data-testid="cron-hide-from-history">Hide this task's conversations from history, even when Show scheduled is on</label>
           <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Failed runs retry at the next scheduled time unless pause on failure is selected.</p>

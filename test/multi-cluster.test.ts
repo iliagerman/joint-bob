@@ -125,6 +125,8 @@ test("a node in two clusters shares each project only with the cluster it was se
       const secretsOnB = await api<{ accounts: Array<{ id: string }> }>(b, sb, "GET", "/secrets");
       assert.ok(secretsOnB.body.accounts.some((candidate) => candidate.id === account.body.account.id), "the credential attached to X's project reaches X");
     });
+    const receivedOnB = (await api<{ accounts: Array<{ id: string; readOnly?: boolean; ownerTwin?: boolean }> }>(b, sb, "GET", "/secrets")).body.accounts.find((candidate) => candidate.id === account.body.account.id);
+    assert.deepEqual([receivedOnB?.readOnly, receivedOnB?.ownerTwin], [true, undefined], "another person's machine's account stays a read-only share, not a twin's");
     const secretsOnC = await api<{ accounts: Array<{ id: string }> }>(c, sc, "GET", "/secrets");
     assert.equal(secretsOnC.body.accounts.some((candidate) => candidate.id === account.body.account.id), false, "the credential never reaches Y");
 

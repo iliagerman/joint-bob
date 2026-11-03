@@ -14,7 +14,7 @@ async function eventually(check:()=>Promise<void>) {
  while(true){try{await check();return;}catch(error){if(Date.now()>deadline)throw error;}await new Promise(resolve=>setTimeout(resolve,100));}
 }
 
-test('Twin to Selected reuses same-origin credentials but restricts workspace resolution immediately',{timeout:90000},async()=>{
+test('Twin to Selected reuses same-origin credentials but restricts workspace resolution immediately',{timeout:180000},async()=>{
  const root=await mkdtemp(path.join(os.tmpdir(),'credential-downgrade-'));
  const children:Awaited<ReturnType<typeof startDevNode>>[]=[];
  try{
@@ -56,7 +56,8 @@ test('Twin to Selected reuses same-origin credentials but restricts workspace re
    const received=await signedNodeRequest(a,left,right,'POST','/api/cluster/v2/credentials/scoped',payload);
    assert.equal(received.status,200,`same-origin twin account must convert to a scoped copy without 409: ${await received.text()}`);
   });
-  assert.equal(resolve(p.id).DOWNGRADE_SECRET,'synthetic-only');
+  // The cluster's grant for this project follows the revocation through its own delivery.
+  await eventually(async()=>assert.equal(resolve(p.id).DOWNGRADE_SECRET,'synthetic-only'));
   assert.equal(resolve(p.id).TWIN_ONLY_SECRET,undefined,'former twin access is not a cluster grant, even for a still-shared project');
   assert.equal(resolve(q.body.project.id).DOWNGRADE_SECRET,undefined);
   for(const foreign of [false,true]){

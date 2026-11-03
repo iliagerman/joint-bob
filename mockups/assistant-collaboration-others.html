@@ -1,0 +1,72 @@
+<style>
+  .jb { --bg:#101215; --surface:#191c20; --field:#212529; --line:rgba(255,255,255,.09); --text:#ebeced; --muted:#9499a1; --accent:#3fcfa8; --amber:#e6b450; background:var(--bg); color:var(--text); border-radius:12px; padding:14px; font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; display:flex; flex-direction:column; gap:10px; min-height:360px }
+  .jb .head { display:flex; align-items:center; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--line) }
+  .jb .av { width:26px; height:26px; border-radius:8px; display:grid; place-items:center; font-size:12px; font-weight:700; background:#2a2f36 }
+  .jb .av.bot { background:color-mix(in srgb,var(--accent) 22%,var(--surface)) }
+  .jb .head b { font-size:13px } .jb .head small { color:var(--muted); display:block; font-size:11px; line-height:1.2 }
+  .jb .row { display:flex; gap:8px; align-items:flex-start }
+  .jb .msg { display:flex; flex-direction:column; gap:2px; max-width:86% }
+  .jb .msg .n { font-size:11px; color:var(--muted) }
+  .jb .b { padding:7px 11px; border-radius:12px; background:var(--surface); border:1px solid var(--line); white-space:pre-wrap }
+  .jb .b.a { border-left:2px solid var(--accent) }
+  .jb .card { border:1px solid var(--line); border-radius:12px; background:var(--surface); padding:10px 12px; display:flex; flex-direction:column; gap:6px }
+  .jb .card .top { display:flex; justify-content:space-between; gap:8px; align-items:center }
+  .jb .chip { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted) }
+  .jb .chip.ok { color:var(--accent); border-color:color-mix(in srgb,var(--accent) 40%,transparent) }
+  .jb .via { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; padding:4px 9px; border:1px dashed var(--line); border-radius:999px; align-self:flex-start }
+  .jb .via .dot { width:6px; height:6px; border-radius:50%; background:var(--accent) }
+  .jb .via u { text-decoration:none; color:var(--accent) }
+  .jb .fine { font-size:12px; color:var(--muted) }
+  .jb .tabs { display:flex; gap:14px; font-size:12px; color:var(--muted); border-bottom:1px solid var(--line); padding-bottom:6px }
+  .jb .tabs .on { color:var(--text); border-bottom:2px solid var(--accent); padding-bottom:4px }
+  .jb .side { display:flex; gap:12px }
+  .jb .side .list { width:130px; display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted) }
+  .jb .side .list span { padding:5px 8px; border-radius:8px } .jb .side .list .on { background:var(--field); color:var(--text) }
+  .jb .side .pane { flex:1; display:flex; flex-direction:column; gap:8px }
+  .jb .asst { display:flex; gap:10px; align-items:flex-start; padding:9px 10px; border:1px solid var(--line); border-radius:10px; background:var(--surface) }
+  .jb .asst .t { flex:1 } .jb .asst .t b { display:block } .jb .asst .t small { color:var(--muted) }
+  .jb .sw { width:30px; height:17px; border-radius:999px; background:var(--accent); position:relative; flex-shrink:0; margin-top:2px }
+  .jb .sw::after { content:""; position:absolute; right:2px; top:2px; width:13px; height:13px; border-radius:50%; background:#07241c }
+</style>
+
+<h2>Two more places: when someone else asks, and who knows whom</h2>
+<p class="subtitle">Tell me in the chat what's wrong or missing. Nothing to pick on this screen.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">1 · Noa asks your default assistant in "Launch crew" (Noa's view, then yours)</div>
+    <div class="mockup-body">
+      <div class="jb">
+        <div class="head"><span class="av">#</span><div><b>Launch crew</b><small>Group · 4 members</small></div></div>
+        <div class="row"><span class="av">N</span><div class="msg"><span class="n">Noa</span><div class="b">When is Ilia free on Thursday for 30 min?</div></div></div>
+        <div class="row"><span class="av bot">◉</span><div class="msg"><span class="n">Ilia's default assistant</span><div class="b a">Ilia is free Thursday 11:00–12:00 and 14:00–16:00.</div></div></div>
+        <p class="fine">Noa sees free times only. Nothing says another assistant helped, and no meeting names are shown.</p>
+        <div class="card">
+          <div class="top"><b>Activity · Default assistant</b><span class="chip ok">Done</span></div>
+          <div>Noa asked when you're free on Thursday, in Launch crew.</div>
+          <div class="via"><span class="dot"></span>Used <b>Work assistant</b>'s "Read free and busy times" <u>Show</u></div>
+          <div class="fine">The decision model allowed it under that public action's instructions. Had nothing you published covered it, the answer would have been no.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">2 · Resources → Other assistants (on each assistant)</div>
+    <div class="mockup-body">
+      <div class="jb">
+        <div class="head"><span class="av bot">◉</span><div><b>Default assistant</b><small>Resources</small></div></div>
+        <div class="tabs"><span>Chat</span><span class="on">Resources</span><span>Public actions</span><span>Settings</span></div>
+        <div class="side">
+          <div class="list"><span>Browser logins</span><span>Skills and plugins</span><span>MCP servers</span><span>Secrets</span><span class="on">Other assistants</span></div>
+          <div class="pane">
+            <div class="fine">Your other assistants. This one asks them when it can't do something itself. When you ask, they share freely. When someone else asks, they only help with what you've published.</div>
+            <div class="asst"><span class="av bot">◉</span><div class="t"><b>Work assistant</b><small>Work calendar, KMS Jira MCP, LinkedIn login · on Ilia's Macbook</small></div><span class="sw" title="On"></span></div>
+            <div class="asst"><span class="av bot">◉</span><div class="t"><b>Shopping assistant</b><small>Saved items, browser use · on Homeserver</small></div><span class="sw" title="On"></span></div>
+            <div class="fine">The switch: whether this assistant may ask that one. All on by default.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

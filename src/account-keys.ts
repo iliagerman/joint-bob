@@ -26,6 +26,7 @@ export const ACCOUNT_KEY_COLUMNS: Array<[table: string, column: string]> = [
   ["cluster_local_members", "account_id"],
   ["provider_profiles", "owner"],
   ["provider_profile_selections", "owner"],
+  ["personal_assistants", "account_id"],
 ];
 
 export const ACCOUNT_KEYED_EVENTS = new Set(["user.pin", "user.recent", "canvas.shortcut", "conversation.review", "conversation.notification", "conversation.notification.delivered"]);

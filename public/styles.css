@@ -2032,6 +2032,11 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
   .messages-wrap.activity-open .jump-to-bottom { right: 18px; }
   .activity-panel { position: absolute; z-index: 4; inset: 0 0 0 auto; width: min(92%, var(--activity-preferred-width, 380px)); box-shadow: var(--shadow); }
 }
+/* Beside the Browser panel the conversation column is too narrow to share with the panel, so
+   the panel floats as it does on a narrow window; activity-panel.js sets the class. */
+.messages-wrap.activity-floating.activity-open { flex-direction: column; }
+.messages-wrap.activity-floating.activity-open .jump-to-bottom { right: 18px; }
+.messages-wrap.activity-floating .activity-panel { position: absolute; z-index: 4; inset: 0 0 0 auto; width: min(92%, var(--activity-preferred-width, 380px)); box-shadow: var(--shadow); }
 /* A phone has no room for a strip of thread beside the panel, nor for two small scrolling
    boxes inside it: the panel covers the thread and scrolls as one page under its header. */
 @media (max-width: 640px) {

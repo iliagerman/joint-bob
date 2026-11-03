@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import type { Request, Response } from "express";
 import { securityHeaders } from "../src/server/http-auth.js";
+import { JOINT_BOB_TOOL_SERVER, jointBobTools } from "../src/assistant-collaboration/bridge-tools.js";
 import { appSource } from "./source.js";
 
 test("every app module ships in the offline service-worker shell", async () => {
@@ -46,4 +47,10 @@ test("the UI exposes no peer bearer tokens or hardcoded account token inputs", a
   const [html, app] = await Promise.all([readFile("public/index.html", "utf8"), appSource()]);
   assert.doesNotMatch(html, /clusterLocalToken|clusterPeerUrlInput|clusterPeerTokenInput/);
   assert.doesNotMatch(html + app, /personalTokenInput|selaTokenInput/);
+});
+
+test("built-in tool names survive the terminal and browser filters", () => {
+  const names = jointBobTools().map((tool) => `mcp__${JOINT_BOB_TOOL_SERVER}__${tool.name}`);
+  assert.deepEqual(names, ["mcp__joint_bob__list_assistants", "mcp__joint_bob__ask_assistant", "mcp__joint_bob__ask_result"]);
+  for (const name of names) assert.doesNotMatch(name, /(bash|shell|terminal|exec|command|browser)/i);
 });

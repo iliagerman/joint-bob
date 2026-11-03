@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { createServer } from "node:http";
 import { agentRunDescriptor } from "../src/agent-run-monitor.js";
@@ -41,6 +44,28 @@ test("background maintenance observes child completion even without viewers or c
     await pushRuntimeLeaseSnapshots();
     assert.equal(conversationWorkActive("pi", "headless-parent"), false, "child completion must not depend on a viewer or paired peer polling");
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
+test("a transcript refresh naming no files keeps an unflushed draft and reloads a session with a transcript", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "draft-refresh-"));
+  const projectId = "draft-refresh-test", disposed: string[] = [];
+  const open = (id: string, file: string) => {
+    const fixture = nativePiSessionFixture({ id, projectId, file, dispose: () => { disposed.push(id); } });
+    harnessSessions.set(harnessSessionKey(projectId, "pi", id), fixture.shared);
+  };
+  try {
+    const saved = path.join(directory, "saved.jsonl");
+    await writeFile(saved, "{}\n");
+    open("saved", saved);
+    open("draft", path.join(directory, "draft.jsonl"));
+    refreshHarnessTranscripts(projectId, []);
+    assert.deepEqual(disposed, ["saved"], "a draft has nothing on disk to reload, and reopening it would change its ID");
+    assert.ok(harnessSessions.has(harnessSessionKey(projectId, "pi", "draft")));
+  } finally {
+    harnessSessions.delete(harnessSessionKey(projectId, "pi", "saved"));
+    harnessSessions.delete(harnessSessionKey(projectId, "pi", "draft"));
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 for (const status of ["queued", "running"] as const) {

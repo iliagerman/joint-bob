@@ -536,6 +536,18 @@ export async function projectVisible(projectId: string, account: ActingAccount |
   return Boolean(canonical && projectVisibleToActor(db, canonical, account));
 }
 
+/** True when the project is one of this person's own (this node's, or an active twin's) and no cluster can see it. */
+export async function projectPrivateToOwner(projectId: string): Promise<boolean> {
+  const db = await projectDatabase();
+  const canonical = resolveProjectId(db, projectId);
+  if (!canonical) return false;
+  const owner = (db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(canonical) as { owner_node_id: string } | undefined)?.owner_node_id ?? localNodeId;
+  if (owner !== localNodeId && !isActiveTwin(db, owner)) return false;
+  // A project with no owner row was never registered for sharing. Any other failure propagates: unknown is not private.
+  if (!db.prepare("SELECT 1 FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(canonical)) return true;
+  return resourceClusterIds(db, localNodeId, "project", canonical).length === 0;
+}
+
 export async function canonicalProjectId(projectId: string): Promise<string | undefined> {
   return resolveProjectId(await projectDatabase(), projectId);
 }

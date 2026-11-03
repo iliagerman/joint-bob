@@ -604,6 +604,9 @@ test("twins expose unflagged secrets to attached conversations and preserve proj
       const remote = await api<{ accounts: Array<{ id: string; replicate: boolean }> }>(target, targetAuth, "GET", "/secrets");
       assert.equal(remote.body.accounts.find(account => account.id === id)?.replicate, false, "a twin must receive an account without enabling cluster export");
     });
+    // Not someone else's share: the same person's account, edited on the machine it came from.
+    const received = (await api<{ accounts: Array<{ id: string; readOnly?: boolean; ownerTwin?: boolean; ownerNodeName?: string }> }>(target, targetAuth, "GET", "/secrets")).body.accounts.find(account => account.id === id);
+    assert.deepEqual([received?.readOnly, received?.ownerTwin, received?.ownerNodeName], [true, true, source.name], "a twin's account names the twin it is edited on");
     assert.ok(!(await agentIds(target, projectId, conversationId.slice(3))).includes(id), "receipt alone does not attach the account");
     for (const ids of [[id], [], [id], []]) {
       assert.equal((await api(source, sourceAuth, "PUT", `/secrets/scopes/conversation/${conversationId}`, { accountIds: ids })).status, 200);

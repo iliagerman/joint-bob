@@ -10,6 +10,7 @@ import { guardianAgentIdentity } from "../guardian/agent-token.js";
 import { worktreeAgentIdentity } from "../worktree-agent.js";
 import { webhookTitleAgentIdentity } from "../webhook-title.js";
 import { webhookMemoryAgentIdentity } from "../webhook-agent.js";
+import { assistantMemoryAgentAssistant } from "../assistant-resources.js";
 import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../cluster-identity.js";
 import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
@@ -188,6 +189,10 @@ export async function requireHttpAuth(request: Request, response: Response, next
     const identity = webhookMemoryAgentIdentity(db, token, owner.id);
     if (identity) { response.locals.webhookMemoryAgent = identity; next(); return; }
   }
+  if (request.path === "/assistant-agent/memory" && request.method === "POST" && token) {
+    const assistantId = assistantMemoryAgentAssistant(token);
+    if (assistantId) { response.locals.assistantMemoryAgent = assistantId; next(); return; }
+  }
   if (request.path === "/ntfy/agent" && request.method === "POST" && token) {
     const identity = ntfyAgentIdentity(token);
     if (identity) { response.locals.ntfyAgent = identity; next(); return; }
@@ -220,7 +225,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent || response.locals.webhookTitleAgent || response.locals.webhookMemoryAgent || response.locals.guardianAgent || response.locals.mcpAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent || response.locals.webhookTitleAgent || response.locals.webhookMemoryAgent || response.locals.assistantMemoryAgent || response.locals.guardianAgent || response.locals.mcpAgent) {
     next();
     return;
   }
