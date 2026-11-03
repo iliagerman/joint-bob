@@ -41,7 +41,7 @@ import { acceptWebhookCall } from "../webhooks.js";
 import { updateWebhookHistory } from "../webhook-history.js";
 import { getPersonalAssistant } from "../../personal-assistants.js";
 import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
-import { ensureWebhookAgentSchema, webhookMemoryAgentIdentity, runWebhookMemoryAgentCommand } from "../../webhook-agent.js";
+import { ensureWebhookAgentSchema, runWebhookMemoryAgentCommand, type WebhookMemoryAgentIdentity } from "../../webhook-agent.js";
 import { readWebhookMemory, writeWebhookMemory, setWebhookMemoryEnabled } from "../../webhook-memory.js";
 import { webhookMemoryEnabled } from "../../webhook-resources.js";
 import { listWebhookSkills, listSelectableWebhookSkills, uploadWebhookSkill, importExistingWebhookSkill, discoverWebhookGitSkills, importWebhookGitSkill, removeWebhookSkill } from "../../webhook-skills.js";
@@ -144,12 +144,9 @@ const webhookMemoryAgentCommandSchema = z.discriminatedUnion("action", [
 ]);
 
 app.post("/api/webhook-agent/memory", handle(async (request, response) => {
-  const token = /^Bearer ([a-f0-9]{64})$/.exec(request.get("authorization") ?? "")?.[1];
-  if (!token) throw new WebhookError(403, "Webhook memory capability required");
+  const identity = response.locals.webhookMemoryAgent as WebhookMemoryAgentIdentity | undefined;
+  if (!identity) throw new WebhookError(403, "Webhook memory capability required");
   const db = await clusterV2Database();
-  const owner = await getClusterNode();
-  const identity = webhookMemoryAgentIdentity(db, token, owner.id);
-  if (!identity) throw new WebhookError(403, "Webhook memory capability is no longer valid");
   const command = webhookMemoryAgentCommandSchema.parse(request.body);
   response.json(await runWebhookMemoryAgentCommand(db, identity, command));
 }));

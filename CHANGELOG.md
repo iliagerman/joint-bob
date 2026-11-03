@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.204.1 — 2026-11-03
+
+- Fixed webhook agents being rejected when reading or saving their scoped memory.
+
 ## 2.204.0 — 2026-11-03
 
 - Added **This machine's own sign-in** to Assignments for Claude and ChatGPT: choose it as the default or as an exception to run on this machine's sign-in even when you have profiles. It stops the automatic single-profile default at that level, and a turn on it shows that connection under the message.
