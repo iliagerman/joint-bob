@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Page } from "playwright-core";
 import { api, signIn as apiSignIn } from "../dev-nodes.js";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+import { waitInPage } from "./wait-in-page.js";
 
 async function signIn(page: Page, url: string, username: string, password: string) {
   await page.goto(url);
@@ -30,7 +31,7 @@ test("the terminal button follows whether the execution node allows terminal acc
   await signIn(page, node.url, environment.username, environment.password);
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card").first().click();
-  await page.waitForFunction(async (count) => (await import("/app/state.js")).state.sessionNodes.length === count, PEERS.length + 1);
+  await waitInPage(page, async (count) => (await import("/app/state.js")).state.sessionNodes.length === count, PEERS.length + 1);
 
   const button = page.getByTestId("chat-open-terminal-button");
   const selectNode = (id: string) => page.evaluate(async (nodeId) => {
@@ -71,7 +72,8 @@ test("the global Settings save persists terminal access settings", { timeout: 12
   assert.equal(await policy.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
   assert.equal(await twins.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
   assert.equal(await others.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
-  assert.equal(await mode.inputValue(), "admin", "the fixture starts with terminal access enabled for its admin");
+  // The dev seed turns terminal access on for its admin; the page fills this in just after the response.
+  await page.waitForFunction(() => document.querySelector<HTMLSelectElement>('[data-testid="terminal-policy-mode"]')!.value === "admin");
   await mode.selectOption("off");
   const separateSave = page.waitForResponse((response) => response.url().endsWith("/api/terminal-policy") && response.request().method() === "PUT");
   await page.getByTestId("terminal-policy-save").click();

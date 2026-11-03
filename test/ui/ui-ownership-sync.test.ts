@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 import { launchChrome } from "./launch-chrome.js";
+import { waitInPage } from "./wait-in-page.js";
 
 test("takeover counts only its working folder, cancels cleanly, and surfaces status failures", { timeout: 90_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ownership-sync-"));
@@ -21,7 +22,7 @@ test("takeover counts only its working folder, cancels cleanly, and surfaces sta
     await page.getByTestId("login-username-input").fill(environment.username);
     await page.getByTestId("login-password-input").fill(environment.password);
     await page.getByTestId("login-submit-button").click();
-    await page.waitForFunction(async () => {
+    await waitInPage(page, async () => {
       const modulePath = "/app/state.js";
       const { state } = await import(modulePath);
       return state.authenticated && state.preferencesLoaded;
@@ -98,7 +99,7 @@ test("takeover counts only its working folder, cancels cleanly, and surfaces sta
     const responded = page.waitForResponse(response => response.url().includes(`/projects/${projectId}/sync/status`));
     release();
     await responded;
-    await page.waitForFunction(async () => {
+    await waitInPage(page, async () => {
       const modulePath = "/app/state.js";
       const { shared } = await import(modulePath);
       return !shared.ownershipWait && !shared.ownershipTaking;

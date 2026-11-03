@@ -13,7 +13,7 @@ async function signIn(page: Page, url: string, username: string, password: strin
 
 /** Every dropdown that fails to draw the shared chevron, or leaves its label no room beside it. */
 function unstyledDropdowns(): string[] {
-  const controls = [...document.querySelectorAll<HTMLElement>("select, .searchable-select-trigger, #modelButton")];
+  const controls = [...document.querySelectorAll<HTMLElement>("select:not([multiple]), .searchable-select-trigger, #modelButton")];
   return controls.flatMap((control) => {
     const style = getComputedStyle(control);
     const problems = [

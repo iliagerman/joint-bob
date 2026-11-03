@@ -60,6 +60,8 @@ test("markdown renders Hebrew and English blocks in their natural directions", {
 
     // English labels keep the paragraph LTR; embedded Hebrew still reads RTL.
     // Use logical-order text, not the terminal workaround that caused the report.
+    // Wide enough that the conversation column beside the Activity panel keeps each line whole.
+    await page.setViewportSize({ width: 1800, height: 900 });
     const source = "Tenant: fixture\nProject: ז'בוטינסקי 133 תל אביב\nSalesperson: דנה לוי\nSalesperson ID: 27105";
     const mixed = await page.evaluate(async (source) => {
       const { appendMessage, renderBubbleContent } = await import("/app/chat-transcript.js");

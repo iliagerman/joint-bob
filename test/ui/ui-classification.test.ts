@@ -6,6 +6,7 @@ import test from "node:test";
 import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { waitInPage } from "./wait-in-page.js";
 
 async function assertHorizontalStepper(page: Page): Promise<void> {
   await page.locator("#newSessionStepList .wizard-step").first().waitFor({ state: "visible" });
@@ -103,7 +104,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     const saved = await classified;
     const payload = saved.request().postDataJSON();
     assert.equal(payload.classification, "Support");
-    await page.waitForFunction(async ({ projectId, sessionId }) => {
+    await waitInPage(page, async ({ projectId, sessionId }) => {
       const response = await fetch(`/api/projects/${projectId}/sessions`);
       const { sessions } = await response.json();
       return sessions.some((session: { id: string; classification?: string }) => session.id === sessionId && session.classification === "Support");

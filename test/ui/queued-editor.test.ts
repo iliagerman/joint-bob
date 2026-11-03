@@ -7,6 +7,7 @@ import test, { after, before } from "node:test";
 import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { waitInPage } from "./wait-in-page.js";
 
 let root: string;
 let server: ChildProcess;
@@ -26,7 +27,7 @@ before(async () => {
   page = await context.newPage();
   await page.goto(node.url);
   await page.getByText("Internal Assistant", { exact: true }).waitFor();
-  await page.waitForFunction(async () => (await import("/app/state.js")).state.harnesses.some((harness) => harness.id === "kiro"));
+  await waitInPage(page, async () => (await import("/app/state.js")).state.harnesses.some((harness) => harness.id === "kiro"));
 });
 
 after(async () => {

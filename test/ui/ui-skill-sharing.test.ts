@@ -19,7 +19,7 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
       const name = `bulk-${String(index).padStart(2, "0")}`;
       const folder = path.join(environment.home, "JointBob/.agent-resources/shared/skills", name);
       await mkdir(folder, { recursive: true });
-      await writeFile(path.join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: Bulk fixture ${index}\n---\n`);
+      await writeFile(path.join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: ${index < 10 ? "First batch" : "Bulk fixture"} ${index}\n---\n`);
     }
     server = await startDevNode(environment, node);
     const session = await signIn(environment, node);
@@ -53,7 +53,8 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
     await page.getByTestId("resources-list-pager").getByTestId("resources-page-next").click();
     await pageLabel.getByText(new RegExp(`^${perPage + 1}–`)).waitFor();
 
-    await page.getByTestId("resources-search-input").fill("bulk-0");
+    // Names match fuzzily (bulk-0 also finds bulk-10), so select by the description's exact text.
+    await page.getByTestId("resources-search-input").fill("first batch");
     await page.getByTestId("resources-select-all").click();
     const bar = page.getByTestId("resources-share-bar");
     await bar.getByTestId("resources-selected-count").getByText("9 skills selected").waitFor();

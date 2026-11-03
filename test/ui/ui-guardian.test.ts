@@ -7,6 +7,7 @@ import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 import { guardianAskSettings, guardianDecisionModel, installGuardianClaude } from "../guardian-claude-fixture.js";
+import { waitInPage } from "./wait-in-page.js";
 
 async function choose(page: Page, testid: string, text: string): Promise<void> {
   await page.getByTestId(testid).click();
@@ -41,7 +42,7 @@ test("Guardian rules are switched, edited with searchable dropdowns and reviewed
     assert.equal(await rows.nth(0).locator(".guardian-rule-copy span").textContent(), "Before commands · ask me");
 
     await page.getByTestId("guardian-enabled").check();
-    await page.waitForFunction(async () => (await (await fetch("/api/guardian")).json()).settings.enabled === true);
+    await waitInPage(page, async () => (await (await fetch("/api/guardian")).json()).settings.enabled === true);
 
     await rows.nth(1).getByTestId("guardian-rule-edit").click();
     await page.getByTestId("guardian-rule-editor").waitFor();
@@ -66,7 +67,7 @@ test("Guardian rules are switched, edited with searchable dropdowns and reviewed
     await page.getByTestId("settings-tab-classifiers").click();
     await page.getByTestId("guardian-laya-row").waitFor();
     await choose(page, "guardian-model", "Laya");
-    await page.waitForFunction(async () => (await (await fetch("/api/guardian")).json()).settings.model === "laya-local");
+    await waitInPage(page, async () => (await (await fetch("/api/guardian")).json()).settings.model === "laya-local");
     await page.screenshot({ path: path.join(root, "guardian-classifiers.png") });
     await page.keyboard.press("Escape");
 
@@ -145,8 +146,9 @@ test("a review on a new Claude conversation's first turn shows its card until it
     await page.getByTestId("guardian-review-block").click();
     await card.waitFor({ state: "detached" });
     await page.getByText("Nothing was deleted.").first().waitFor({ timeout: 30_000 });
+    // Background runs (the summary, a title) use the same scripted Claude, so the blocked run need not be the last.
     const runs = (await readFile(capture, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { verdict: { action: string } | null });
-    assert.equal(runs.at(-1)?.verdict?.action, "block", "the person's Block reaches Claude");
+    assert.ok(runs.some((run) => run.verdict?.action === "block"), "the person's Block reaches Claude");
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

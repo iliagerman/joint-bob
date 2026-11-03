@@ -16,6 +16,7 @@ import test, { after, before } from "node:test";
 import { type Browser, type BrowserContext, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, pairTwinNodes } from "../dev-nodes.js";
+import { waitInPage } from "./wait-in-page.js";
 
 let root: string;
 let environment: DevEnvironment;
@@ -55,7 +56,7 @@ async function waitForApplication(page: Page): Promise<void> {
   await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
   // Project rows render before initializeApplication finishes. Do not tear down
   // that initialization with a reload while its login handler is still running.
-  await page.waitForFunction(async () => {
+  await waitInPage(page, async () => {
     const { state } = await import("/app/state.js");
     return state.authenticated && state.preferencesLoaded
       && !(document.querySelector("#loginSubmitButton") as HTMLButtonElement).disabled;

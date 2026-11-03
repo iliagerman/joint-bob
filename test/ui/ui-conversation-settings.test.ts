@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Page } from "playwright-core";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+import { waitInPage } from "./wait-in-page.js";
 
 const dialog = '[data-testid="conversation-classification-dialog"]';
 const select = '[data-testid="conversation-classification-select"]';
@@ -79,7 +80,7 @@ async function signInAndOpenProject(page: Page, url: string, username: string, p
   await page.getByTestId("login-username-input").fill(username);
   await page.getByTestId("login-password-input").fill(password);
   await page.getByTestId("login-submit-button").click();
-  await page.waitForFunction(async () => (await import('/app/state.js')).state.preferencesLoaded);
+  await waitInPage(page, async () => (await import('/app/state.js')).state.preferencesLoaded);
   await page.locator("#projectList .project-card", { hasText: "Internal Assistant" }).click();
   await page.locator('#sessionList [data-testid="session-menu-button"]').first().waitFor();
 }
@@ -184,7 +185,7 @@ test("conversation menus default review notifications off and persist their togg
   const toggle = page.getByTestId("session-review-notifications-button");
   assert.equal(await toggle.innerText(), "Stop review notifications");
   await toggle.click();
-  await page.waitForFunction(async ({ path }) => (await import('/app/state.js')).state.sessions.find((session) => session.path === path)?.reviewNotificationsEnabled === false, target);
+  await waitInPage(page, async ({ path }) => (await import('/app/state.js')).state.sessions.find((session) => session.path === path)?.reviewNotificationsEnabled === false, target);
   await page.locator(`[data-session-path="${target.path}"] [data-testid="session-menu-button"]`).click();
   assert.equal(await page.getByTestId("session-review-notifications-button").innerText(), "Notify when ready for review");
 });

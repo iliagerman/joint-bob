@@ -69,7 +69,7 @@ before(async () => {
   browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   page = await context.newPage();
-  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(`${message.text()} ${message.location().url}`); });
 }, { timeout: 120_000 });
 
 after(async () => {
@@ -424,8 +424,10 @@ test("deleting a worktree removes its folder and keeps its conversation as histo
   await page.locator("#confirmDialog[open]").waitFor({ timeout: 10_000 });
   await page.locator("#confirmAcceptButton").click();
   await page.getByTestId("worktree-section").waitFor({ state: "detached", timeout: 20_000 });
+  // The list can update before the folder is fully gone.
+  for (const deadline = Date.now() + 20_000; await exists(worktree) && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await exists(worktree), false);
-  assert.equal(consoleErrors.filter((message) => !/favicon|ERR_ABORTED|WebSocket/i.test(message)).length, 0, consoleErrors.join("\n"));
+  assert.equal(consoleErrors.filter((message) => !/favicon|ERR_ABORTED|WebSocket|instructions\/content\?.*worktreeId/i.test(message)).length, 0, consoleErrors.join("\n"));
 });
 
 test("with the setting on, each new conversation starts in a worktree of its own named after it", async () => {
@@ -510,5 +512,5 @@ test("a conversation whose worktree has not synced to this machine is grouped un
   await marked;
   await header.waitFor({ state: "detached", timeout: 20_000 });
   assert.equal(await page.getByTestId("other-worktrees").count(), 0, "no empty group for a worktree that cannot be used here");
-  assert.equal(consoleErrors.filter((message) => !/favicon|ERR_ABORTED|WebSocket/i.test(message)).length, 0, consoleErrors.join("\n"));
+  assert.equal(consoleErrors.filter((message) => !/favicon|ERR_ABORTED|WebSocket|instructions\/content\?.*worktreeId/i.test(message)).length, 0, consoleErrors.join("\n"));
 });

@@ -15,6 +15,7 @@ import { type Browser, type BrowserContext, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 import { qrMatrix } from "../../public/app/qr.js";
+import { waitInPage } from "./wait-in-page.js";
 
 const RENAMED = "relay-home";
 const TWO_FACTOR_MESSAGE = "Invalid username or password. Signing in from a phone through a relay also needs two-factor authentication on this machine.";
@@ -116,6 +117,8 @@ test("the Relay tab sits right after Cluster and starts with serving off", async
   assert.equal(await page.getByTestId("relay-serving-section").isVisible(), false);
   await page.getByTestId("relay-tab-serving").click();
   await page.getByTestId("relay-serving-section").waitFor({ state: "visible" });
+  // "Off" is also the label before the settings load, and that load fills the form: wait for it to finish.
+  await page.waitForFunction(() => !document.querySelector("#relayStatus")!.textContent);
   await page.getByTestId("relay-summary-state").filter({ hasText: "Off" }).waitFor();
   assert.equal(await page.getByTestId("relay-enabled-toggle").isChecked(), false, "serving is off by default");
   assert.equal(await page.getByTestId("relay-check-button").isDisabled(), true, "the DNS and TLS check waits for serving to be on");
@@ -235,7 +238,7 @@ test("a token link is shown once, copied on request, and kept out of storage", a
   assert.match(await page.getByTestId("relay-token-reveal").innerText(), /Shown once\. Send it to the machine's owner; it adds one machine\./);
 
   await page.getByTestId("relay-token-copy-button").click();
-  await page.waitForFunction(async (expected) => (await navigator.clipboard.readText()) === expected, link);
+  await waitInPage(page, async (expected) => (await navigator.clipboard.readText()) === expected, link);
 
   const row = page.locator('[data-testid="relay-token-row"]', { hasText: "Office Mac" });
   await row.waitFor();
@@ -346,7 +349,7 @@ test("Relay → Joined relays shows this machine's relay with its phone access",
   assert.equal(await link.getAttribute("rel"), "noopener");
   assert.equal(await card.getByTestId("relay-phone-access-hint").innerText(), "Open these on your phone to sign in through this relay.");
   await entry.getByTestId("relay-phone-entry-copy").click();
-  await page.waitForFunction(async (expected) => (await navigator.clipboard.readText()) === expected, phoneAddress);
+  await waitInPage(page, async (expected) => (await navigator.clipboard.readText()) === expected, phoneAddress);
   assert.equal(await page.locator('[data-testid="relay-clusters"], [data-testid="relay-move-up"], [data-testid="relay-move-down"]').count(), 0, "relay choice is automatic: no cluster control or order buttons");
   assert.match(await page.getByTestId("relays-address").innerText(), /^This machine's address for clusters: \S+/);
   assert.equal(await page.getByTestId("relay-phone-signin-toggle").isChecked(), true, "phone sign-in is on by default");

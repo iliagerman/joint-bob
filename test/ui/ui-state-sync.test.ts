@@ -7,6 +7,7 @@ import type { ChildProcess } from "node:child_process";
 import type { Browser, Page, Route } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment } from "../dev-nodes.js";
+import { waitInPage } from "./wait-in-page.js";
 
 let root: string;
 let environment: DevEnvironment;
@@ -35,7 +36,7 @@ async function openPage(): Promise<Page> {
   await page.goto(node.url, { waitUntil: "domcontentloaded" });
   await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click();
   await page.locator("#sessionList .session-card").first().waitFor();
-  await page.waitForFunction(async () => {
+  await waitInPage(page, async () => {
     const module = "/app/state.js";
     const { state } = await import(module);
     return !state.sessionsRefreshing && !state.sessionsLoading;
@@ -323,7 +324,7 @@ test("a pending-review scan still lands when more refreshes are asked for while 
     const trailing = await second.promise;
     assert.equal(await page.evaluate(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.some((group: { projectId: string }) => group.projectId === "scanned-project"); }), true, "the scan's result is applied while the trailing scan runs");
     await trailing.fulfill({ json: { projects: [] } });
-    await page.waitForFunction(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.length === 0; });
+    await waitInPage(page, async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.length === 0; });
   } finally { await page.context().close(); }
 });
 

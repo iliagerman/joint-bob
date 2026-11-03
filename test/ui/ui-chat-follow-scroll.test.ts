@@ -289,8 +289,8 @@ test("a live streaming reply follows the reader, releases on scroll-away, and re
   assert.equal(streamed.heading, "Stream heading", "heading renders before completion");
   assert.equal(streamed.bold, "Bold streaming text", "bold renders before completion");
   assert.equal(streamed.cell, "3b", "table renders before completion");
-  const duringStream = await metrics();
-  assert.ok(distanceFromBottom(duringStream) < BOTTOM_THRESHOLD_PX, `pane follows the live stream at the bottom, ${distanceFromBottom(duringStream)}px away`);
+  // New text lands a frame before the pane follows it, so one reading can be briefly behind.
+  await waitFor(async () => distanceFromBottom(await metrics()) < BOTTOM_THRESHOLD_PX, "pane to follow the live stream at the bottom");
 
   const box = await page.locator("#messages").boundingBox();
   assert.ok(box, "messages pane is on screen");

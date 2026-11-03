@@ -7,6 +7,7 @@ import test, { after, before } from "node:test";
 import { type Browser, type Page } from "playwright-core";
 import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment } from "../dev-nodes.js";
 import { launchChrome } from "./launch-chrome.js";
+import { waitInPage } from "./wait-in-page.js";
 
 let root: string;
 let environment: DevEnvironment;
@@ -35,7 +36,7 @@ async function openProject(page: Page) {
   await page.getByTestId("login-submit-button").click();
   await page.locator(".project-card", { hasText: "Joint Bob" }).first().click();
   await page.locator(".session-card").first().waitFor();
-  await page.waitForFunction(async () => {
+  await waitInPage(page, async () => {
     const { state } = await import("/app/state.js");
     return state.harnesses.some((h) => h.id === "pi" && h.ready) && state.sessionNodes.length > 0;
   });

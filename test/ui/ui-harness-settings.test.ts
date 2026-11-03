@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Page } from "playwright-core";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+import { waitInPage } from "./wait-in-page.js";
 
 async function signIn(page: Page, url: string, username: string, password: string) {
   await page.goto(url);
@@ -10,7 +11,7 @@ async function signIn(page: Page, url: string, username: string, password: strin
   await page.getByTestId("login-password-input").fill(password);
   await page.getByTestId("login-submit-button").click();
   await page.locator("#loginDialog[open]").waitFor({ state: "hidden" });
-  await page.waitForFunction(async () => (await import('/app/state.js')).state.preferencesLoaded);
+  await waitInPage(page, async () => (await import('/app/state.js')).state.preferencesLoaded);
   await page.locator(".project-card").first().waitFor({ state: "visible" });
   await page.getByTestId("settings-open-button").waitFor({ state: "attached" });
 }
@@ -23,7 +24,7 @@ async function openHarnessSettings(page: Page) {
 }
 
 async function waitForHarnesses(page: Page) {
-  await page.waitForFunction(async () => (await import("/app/state.js")).state.harnesses.some((harness) => harness.id === "kiro"));
+  await waitInPage(page, async () => (await import("/app/state.js")).state.harnesses.some((harness) => harness.id === "kiro"));
 }
 
 test("slow harness metadata does not hide projects", { timeout: 120_000 }, async (t) => {

@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { type Browser, type BrowserContext, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
+import { waitInPage } from "./wait-in-page.js";
 
 let root: string;
 let environment: DevEnvironment;
@@ -338,6 +339,8 @@ test("the project list shows every seeded project without browser automations", 
   await page.getByTestId("project-cron-button").waitFor();
   assert.equal(await page.getByTestId("project-automations-button").count(), 0);
   assert.equal(await page.locator("#automationsDialog").count(), 0);
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-cron-button").waitFor({ state: "hidden" });
 });
 
 test("opening a conversation renders its transcript", async () => {
@@ -1066,7 +1069,7 @@ test("a top toast stays above the mobile composer", async () => {
     const project = mobilePage.locator(".project-card", { hasText: "Internal Assistant" }).first();
     await project.waitFor({ state: "attached", timeout: 20_000 });
     await mobilePage.locator("#loginDialog").waitFor({ state: "hidden" });
-    await mobilePage.waitForFunction(async () => (await import('/app/state.js')).state.preferencesLoaded);
+    await waitInPage(mobilePage, async () => (await import('/app/state.js')).state.preferencesLoaded);
     await mobilePage.getByTestId("nav-projects-button").click();
     await project.waitFor({ timeout: 20_000 });
     await project.click();
@@ -1530,7 +1533,7 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
   await page.getByTestId("terminal-panel").locator(".xterm-helper-textarea").focus();
   await page.keyboard.type("printf '\\033[?1049h'; read -r line");
   await page.keyboard.press("Enter");
-  await page.waitForFunction(async (modulePath) => {
+  await waitInPage(page, async (modulePath) => {
     const { state } = await import(modulePath);
     return state.terminalEmulator?.buffer.active.type === "alternate";
   }, "/app/state.js");

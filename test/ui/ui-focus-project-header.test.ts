@@ -3,6 +3,7 @@ import test from "node:test";
 import { multiSelect } from "./multi-select.js";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 import { api, signIn } from "../dev-nodes.js";
+import { waitInPage } from "./wait-in-page.js";
 
 test("mobile project header hides clutter, offers copyable path and moves real filters into project actions", { timeout: 180_000 }, async t => {
   const { page, environment, node } = await nativeUiFixture(t);
@@ -26,7 +27,7 @@ test("mobile project header hides clutter, offers copyable path and moves real f
   assert.equal(await page.locator("#focusProjectPath").inputValue(), path);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.getByTestId("focus-project-copy-path").click();
-  await page.waitForFunction(async path => await navigator.clipboard.readText() === path, path);
+  await waitInPage(page, async path => await navigator.clipboard.readText() === path, path);
   await page.getByTestId("focus-project-info-close").click();
   await page.getByTestId("focus-controls-button").click();
   await page.locator("#focusContextActions button", { hasText: "Project actions" }).click();

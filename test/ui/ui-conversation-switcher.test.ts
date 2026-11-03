@@ -53,6 +53,8 @@ async function signIn(): Promise<void> {
 async function openConversation(title: string): Promise<void> {
   await page.locator(".session-card", { hasText: title }).first().click();
   await page.locator('.session-card[aria-current="true"]', { hasText: title }).first().waitFor({ timeout: 20_000 });
+  // Marked current on the click; it joins the recent list once its conversation connects.
+  await page.getByTestId("chat-message-input").and(page.locator(":enabled")).waitFor({ timeout: 20_000 });
 }
 
 const isCurrent = (title: string) => page.locator('.session-card[aria-current="true"]', { hasText: title }).count().then((count) => count === 1);

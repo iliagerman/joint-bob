@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { Locator, Page } from "playwright-core";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+import { waitInPage } from "./wait-in-page.js";
 
 async function choose(page: Page | Locator, testid: string, search: string, label: string): Promise<void> {
   await page.getByTestId(testid).click();
@@ -22,7 +23,7 @@ if(process.argv.includes('--version'))process.exit(0);
 if(process.argv.includes('--list-models')){console.log(JSON.stringify({models:[{model_id:'fixture-model',model_name:'Fixture model'}]}));process.exit(0)}
 if(process.argv.includes('whoami'))process.exit(fs.existsSync(marker)?0:1);
 if(process.argv.includes('logout')){fs.rmSync(marker,{force:true});process.exit(0)}
-if(process.argv.includes('login')){console.log('Open https://device.sso.us-east-1.amazonaws.com/?user_code=ABCD-EFGH');console.log('Confirmation code: ABCD-EFGH');console.error('fixture-private-provider-output');setTimeout(()=>{fs.writeFileSync(marker,'fixture-token');process.exit(0)},5000)}
+if(process.argv.includes('login')){console.log('Open https://device.sso.us-east-1.amazonaws.com/?user_code=ABCD-EFGH');console.log('Confirmation code: ABCD-EFGH');console.error('fixture-private-provider-output');setInterval(()=>{if(fs.existsSync(${JSON.stringify(path.join(root,'release-login'))})){fs.writeFileSync(marker,'fixture-token');process.exit(0)}},100)}
 `);await chmod(executable,0o700);
   const {page,environment,node}=await nativeUiFixture(t);
   page.on('pageerror', error => console.error('Kiro UI fixture page error:', error.message));
@@ -71,9 +72,11 @@ if(process.argv.includes('login')){console.log('Open https://device.sso.us-east-
   const link=first.getByTestId('provider-profile-login-link');await link.waitFor();
   assert.match((await link.getAttribute('href'))!,/^https:\/\/device\.sso\./);
   assert.match(await first.getByTestId('provider-profile-login').innerText(), /ABCD-EFGH/);
+  // The fixture's sign-in finishes when the test releases it, so a slow page cannot miss the link.
+  await writeFile(path.join(root,'release-login'),'');
   await first.getByTestId('provider-profile-status').filter({hasText:'Signed in on this node'}).waitFor();
   assert.doesNotMatch(await first.innerText(),/fixture-private|fixture-token/);
-  await page.waitForFunction(async()=>{const {state}=await import('/app/state.js');return state.harnesses.find((item:{id:string;ready?:boolean})=>item.id==='kiro')?.ready===true;});
+  await waitInPage(page, async()=>{const {state}=await import('/app/state.js');return state.harnesses.find((item:{id:string;ready?:boolean})=>item.id==='kiro')?.ready===true;});
 
   await page.getByTestId('provider-profiles-tab-pools').click();
   await page.getByTestId('subscription-pool-new').click();

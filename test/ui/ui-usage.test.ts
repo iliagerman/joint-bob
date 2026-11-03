@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 import { isoDate } from "../../public/app/usage-periods.js";
+import { waitInPage } from "./wait-in-page.js";
 
 async function until(check: () => Promise<boolean>, message: string): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -22,7 +23,7 @@ async function login(page: any, environment: any, url: string): Promise<void> {
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.getByTestId("usage-open").waitFor();
-  await page.waitForFunction(async () => {
+  await waitInPage(page, async () => {
     const { state } = await import("/app/state.js");
     return state.preferencesLoaded && state.harnesses.some((harness) => harness.id === "pi" && harness.label === "Pi");
   });
@@ -511,8 +512,8 @@ test("skills and time lists one row per skill, says what stands out, and pages i
 
   // One row per skill, most used first; the list pages, and neither it nor the dialog scrolls.
   assert.deepEqual((await names()).slice(0, 4), ["ponytail", "caveman", "flaky", "slow"]);
-  assert.equal(await page.evaluate(async () => (await import('/app/state.js')).state.harnesses.find((harness) => harness.id === 'pi')?.label), "Pi", "the loaded harness metadata supplies Pi's display name");
-  assert.equal(await rows.first().locator(".usage-name-detail").textContent(), "59 conversations · Pi · typed 4×");
+  // Agent names arrive with the harness metadata, which can follow the first report.
+  await rows.first().locator(".usage-name-detail", { hasText: /59 conversations · Pi · typed 4×/ }).waitFor();
   assert.deepEqual(await body.locator("thead th").allTextContents(), ["Skill", "Turns", "Trend", "Cost", "Per turn", "Failed", "Median", "Status"]);
   assert.deepEqual(await rows.first().locator("td").allTextContents(), ["ponytail59 conversations · Pi · typed 4×", "118", "", "$236", "$2", "5.0%", "1m 00s", "OK"]);
   assert.equal(await rows.filter({ hasText: "flaky" }).locator(".usage-status").textContent(), "Fails often", "a skill that fails clearly more is flagged");

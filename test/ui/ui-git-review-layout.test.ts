@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Page } from "playwright";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+import { waitInPage } from "./wait-in-page.js";
 
 const status = { branch: "main", ahead: 0, behind: 0, detached: false, staged: [], unstaged: [
   { path: "app.ts", kind: "modified", staged: false },
@@ -107,7 +108,7 @@ test("Settings Git PR file limit saves and reloads", { timeout: 120_000 }, async
   assert.equal(await limit.inputValue(), "1000");
   await limit.fill("750");
   await page.getByTestId("settings-save-button").click();
-  await page.waitForFunction(async () => (await (await fetch("/api/settings")).json()).gitPullFileLimit === 750);
+  await waitInPage(page, async () => (await (await fetch("/api/settings")).json()).gitPullFileLimit === 750);
   await page.reload();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-git").click();
@@ -117,7 +118,7 @@ test("Settings Git PR file limit saves and reloads", { timeout: 120_000 }, async
   assert.equal(await timeout.inputValue(), "360");
   await timeout.fill("600");
   await page.getByTestId("settings-save-button").click();
-  await page.waitForFunction(async () => (await (await fetch("/api/settings")).json()).gitPullTimeoutSeconds === 600);
+  await waitInPage(page, async () => (await (await fetch("/api/settings")).json()).gitPullTimeoutSeconds === 600);
   await page.reload();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-git").click();
@@ -134,7 +135,7 @@ test("Settings default Git reviewer overrides the conversation-based choice", { 
   await page.getByTestId("settings-git-reviewer-harness").selectOption("claude");
   await page.getByTestId("settings-git-reviewer-model").selectOption("claude|claude-sonnet-5-5");
   await page.getByTestId("settings-git-reviewer-thinking").selectOption("high");
-  await page.waitForFunction(async () => (await (await fetch("/api/preferences")).json()).gitReviewer?.thinkingLevel === "high");
+  await waitInPage(page, async () => (await (await fetch("/api/preferences")).json()).gitReviewer?.thinkingLevel === "high");
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("chat-git-button").click();
   await page.waitForFunction(() => document.querySelector<HTMLSelectElement>("#gitReviewThinking")?.value === "high");

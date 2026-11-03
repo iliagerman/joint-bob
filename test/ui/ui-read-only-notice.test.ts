@@ -12,6 +12,7 @@ import type { Page } from "playwright-core";
 import { claudeProjectDir } from "../../src/session-paths.js";
 import { projectNamed } from "../dev-nodes.js";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+import { waitInPage } from "./wait-in-page.js";
 
 const PROJECT_NAME = "Internal Assistant";
 const REFUSED_TITLE = "Makor deployment information";
@@ -87,7 +88,7 @@ test("a conversation whose machine refuses this one says so, where to change it,
   assert.deepEqual(await offeredWriteActions(page, REFUSED_TITLE), [], "the open conversation's menu offers nothing its machine would refuse");
 
   // A row that runs on the refusing machine, known from Runs on without opening it, and one that runs here.
-  await page.waitForFunction(async (id) => (await import("/app/state.js")).state.sessionNodes.some((candidate: { id: string }) => candidate.id === id), REFUSING_MACHINE.id);
+  await waitInPage(page, async (id) => (await import("/app/state.js")).state.sessionNodes.some((candidate: { id: string }) => candidate.id === id), REFUSING_MACHINE.id);
   assert.deepEqual(await offeredWriteActions(page, ROW_ON_REFUSING_MACHINE), [], "a row on a refusing machine offers no write actions");
   assert.deepEqual(await offeredWriteActions(page, ROW_HERE), WRITE_ACTIONS, "a row this machine runs keeps every action");
 
@@ -110,7 +111,7 @@ test("a sub-agent conversation says it can't be continued, not that it is a Done
   }
   await signInAndOpenProject(page, node.url, environment.username, environment.password);
   // The child is nested under its parent in the list; open it the way the board and the canvas do.
-  await page.waitForFunction(async () => (await import("/app/state.js")).state.sessions.some((session: { readOnly?: boolean }) => session.readOnly === true));
+  await waitInPage(page, async () => (await import("/app/state.js")).state.sessions.some((session: { readOnly?: boolean }) => session.readOnly === true));
   await page.evaluate(async () => {
     const { state } = await import("/app/state.js");
     const { openSession } = await import("/app/socket.js");
