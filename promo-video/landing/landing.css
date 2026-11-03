@@ -56,7 +56,6 @@ section { position: relative; }
 .wrap { width: min(1120px, 100vw - 40px); margin-inline: auto; }
 h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -0.012em; }
 .lede { color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.6; max-width: 56ch; }
-[data-flow] { will-change: transform, opacity; }
 
 /* ---- Buttons, as in the app ---- */
 .primary, .ghost, .send { border: 0; border-radius: var(--radius-ctl); min-height: 40px; padding: 0 15px; font-weight: 550; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 100ms ease; }
@@ -97,9 +96,10 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .quick-note a { color: var(--text); text-underline-offset: 3px; }
 .quick-note a:hover { color: var(--accent); }
 .enter-film { position: relative; width: min(600px, 88vw, calc((100svh - 600px) * 16 / 9)); min-width: min(88vw, 300px); }
-.frame { padding: 7px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--header); box-shadow: var(--shadow); }
+.frame { position: relative; padding: 7px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--header); box-shadow: var(--shadow); }
 .frame video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; background: #07080a; }
 .frame .screen { border-radius: 10px; overflow: hidden; }
+.frame .dim { position: absolute; inset: 0; border-radius: inherit; background: #000; opacity: 0; pointer-events: none; }
 .hint { position: absolute; left: 50%; bottom: 14px; translate: -50% 0; color: var(--muted); font: 600 10px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; animation: nudge 2.4s var(--ease) infinite; }
 @keyframes nudge { 50% { transform: translateY(6px); } }
 
@@ -167,16 +167,16 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
    pair, the film and its brief, centred together and turned about the film's middle. */
 .fleet-deck { position: relative; z-index: 1; }
 .fleet-space { position: absolute; inset: 0; perspective: 1000px; perspective-origin: 58% 42%; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
-.ship { position: absolute; left: 50%; top: 50%; display: flex; align-items: center; gap: var(--pair-gap); translate: -50% -50%; transform-origin: calc(var(--ship-w) / 2) 50%; will-change: transform, opacity; }
+.ship { position: absolute; left: 50%; top: 50%; display: flex; align-items: center; gap: var(--pair-gap); translate: -50% -50%; transform-origin: calc(var(--ship-w) / 2) 50%; }
 .craft { position: relative; flex: none; width: var(--ship-w); margin: 0; padding: 0; border: 0; background: none; color: inherit; text-align: left; -webkit-tap-highlight-color: transparent; }
 .craft:focus-visible { outline: none; }
 .craft:focus-visible .hull { outline: 2px solid var(--accent); outline-offset: 4px; }
 .hull { position: relative; display: block; padding: 8px 8px 0; border: 1px solid rgba(var(--glow), 0.22); border-radius: 18px; background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.015) 40%), #0b0e13; box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.08); transition: border-color 400ms ease, box-shadow 500ms ease; }
 .ship.docked .hull { border-color: rgba(var(--glow), 0.7); box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(var(--glow), 0.25), 0 0 80px rgba(var(--glow), 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
 /* The engines: a glow at the back of the hull and two trails behind it, as long as the speed. */
-.hull::after { content: ""; position: absolute; top: 20%; bottom: 34%; right: -4px; width: 10px; border-radius: 8px; background: radial-gradient(closest-side, #d9fff4, rgba(var(--glow), 0.6) 55%, transparent); opacity: calc(0.25 + var(--thrust, 0) * 0.9); }
+.hull::after { content: ""; position: absolute; top: 20%; bottom: 34%; right: -4px; width: 10px; border-radius: 8px; background: radial-gradient(closest-side, #d9fff4, rgba(var(--glow), 0.6) 55%, transparent); opacity: 0.35; }
 .fleet.reverse .hull::after { right: auto; left: -4px; }
-.engines { position: absolute; top: 26%; bottom: 40%; left: calc(100% - 8px); width: min(440px, 60vw); display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; transform-origin: 0 50%; transform: scaleX(var(--thrust, 0)); opacity: min(1, calc(var(--thrust, 0) * 1.5)); }
+.engines { position: absolute; top: 26%; bottom: 40%; left: calc(100% - 8px); width: min(440px, 60vw); display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; transform-origin: 0 50%; transform: scaleX(0); opacity: 0; }
 .engines i { height: 5px; border-radius: 5px; background: linear-gradient(90deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); box-shadow: 0 0 12px rgba(var(--glow), 0.55); }
 .fleet.reverse .engines { left: auto; right: calc(100% - 8px); transform-origin: 100% 50%; }
 .fleet.reverse .engines i { background: linear-gradient(270deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); }
@@ -191,7 +191,7 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .view video { opacity: 0; transition: opacity 500ms ease; }
 .ship.live .view video { opacity: 1; }
 /* The further a ship is from the dock, the darker it is. */
-.view::after { content: ""; position: absolute; inset: 0; background: rgba(3, 5, 9, calc(var(--far, 0) * 0.55)); pointer-events: none; }
+.view .shade { position: absolute; inset: 0; background: rgb(3, 5, 9); opacity: 0; pointer-events: none; }
 .play { position: absolute; left: 50%; top: 50%; z-index: 1; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; box-shadow: 0 0 0 9px rgba(var(--glow), 0.18), 0 0 40px rgba(var(--glow), 0.55); opacity: 0; scale: 0.6; transition: opacity 300ms ease, scale 500ms var(--spring); }
 .play::before { content: ""; border: solid transparent; border-width: 9px 0 9px 15px; border-left-color: #04231b; margin-left: 4px; }
 .ship.docked .play { opacity: 1; scale: 1; }
@@ -205,8 +205,8 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .plate em { color: var(--muted); font: 11px var(--mono); font-style: normal; }
 /* The brief: what the docked feature does, how to use it and what is good to know. It is glass,
    so the fleet waiting behind it shows through. */
-/* A brief shows only near the dock (--near, from fleet.js), so it arrives and leaves with its film. */
-.brief { position: relative; flex: none; width: var(--brief-w); height: var(--ship-h, 420px); opacity: var(--near, 0); pointer-events: none; user-select: text; -webkit-user-select: text; display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); gap: 10px; padding: 20px 22px 18px; border: 1px solid rgba(var(--glow), 0.22); border-radius: 18px; background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01) 40%), #090d13; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06); text-align: left; }
+/* A brief shows only near the dock (its opacity comes from fleet.js), so it arrives and leaves with its film. */
+.brief { position: relative; flex: none; width: var(--brief-w); height: var(--ship-h, 420px); opacity: 0; pointer-events: none; user-select: text; -webkit-user-select: text; display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); gap: 10px; padding: 20px 22px 18px; border: 1px solid rgba(var(--glow), 0.22); border-radius: 18px; background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01) 40%), #090d13; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06); text-align: left; }
 .ship.docked .brief { pointer-events: auto; border-color: rgba(var(--glow), 0.4); }
 .brief h3 { font-size: clamp(22px, 2vw, 30px); line-height: 1.1; letter-spacing: -0.01em; }
 .brief .message { justify-self: start; padding: 8px 12px; font-size: 14.5px; line-height: 1.5; }
@@ -225,7 +225,7 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .brief-body li::marker { color: var(--accent); font-weight: 700; }
 /* Under the fleet: back, where you are among the fourteen, and on. */
 .fleet-hud { position: relative; z-index: 3; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 0 12px; }
-.fleet-step { width: 46px; height: 46px; padding: 0; border: 1px solid rgba(var(--glow), 0.38); border-radius: 50%; background: rgba(8, 12, 18, 0.72); color: var(--accent); display: grid; place-items: center; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: background-color 200ms ease, scale 300ms var(--spring); }
+.fleet-step { width: 46px; height: 46px; padding: 0; border: 1px solid rgba(var(--glow), 0.38); border-radius: 50%; background: rgba(8, 12, 18, 0.72); color: var(--accent); display: grid; place-items: center; transition: background-color 200ms ease, scale 300ms var(--spring); }
 .fleet-step svg { width: 20px; height: 20px; }
 .fleet-step:hover { background: rgba(var(--glow), 0.16); scale: 1.06; }
 .fleet-track { display: grid; justify-items: center; gap: 2px; }
@@ -236,7 +236,8 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 .fleet-rail .past i { background: rgba(var(--glow), 0.45); }
 /* The docked film's dot fills up while it waits, and the next film flies in when it is full. */
 .fleet-rail .on i { position: relative; overflow: hidden; width: 22px; background: rgba(var(--glow), 0.28); box-shadow: 0 0 10px rgba(var(--glow), 0.5); }
-.fleet-rail .on i::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--accent); transform-origin: 0 50%; transform: scaleX(var(--fill, 1)); }
+.fleet-rail i b { display: none; }
+.fleet-rail .on i b { display: block; position: absolute; inset: 0; border-radius: inherit; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); }
 .fleet-now { display: inline-flex; align-items: center; gap: 6px; }
 .fleet-pause { width: 26px; height: 26px; padding: 0; border: 1px solid rgba(var(--glow), 0.35); border-radius: 50%; background: rgba(8, 12, 18, 0.72); color: var(--accent); display: grid; place-items: center; }
 .fleet-pause:hover { background: rgba(var(--glow), 0.16); }
@@ -317,7 +318,7 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
   .brief .message { font-size: 13.5px; padding: 6px 10px; }
   .brief-tabs button { min-height: 34px; font-size: 10px; padding: 0 4px; }
   .brief-body .lead-text, .brief-body ol, .brief-body ul { font-size: 14px; }
-  .fleet.upright .engines, .fleet.upright.reverse .engines { left: 22%; right: 22%; top: calc(100% - 8px); bottom: auto; width: auto; height: 46vh; flex-direction: row; transform-origin: 50% 0; transform: scaleY(var(--thrust, 0)); }
+  .fleet.upright .engines, .fleet.upright.reverse .engines { left: 22%; right: 22%; top: calc(100% - 8px); bottom: auto; width: auto; height: 46vh; flex-direction: row; transform-origin: 50% 0; }
   .fleet.upright.reverse .engines { top: auto; bottom: calc(100% - 8px); transform-origin: 50% 100%; }
   .fleet.upright .engines i { width: 5px; height: auto; background: linear-gradient(180deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); }
   .fleet.upright.reverse .engines i { background: linear-gradient(0deg, #d9fff4, rgba(var(--glow), 0.8) 12%, rgba(var(--glow), 0.2) 55%, transparent); }
@@ -332,6 +333,8 @@ h2.big { font-size: clamp(28px, 4vw, 52px); line-height: 1.08; letter-spacing: -
 
 @media (max-width: 820px) {
   .topbar .links { display: none; }
+  /* A blur behind a fixed bar is worked out again for every frame of scrolling; a phone gets a plain bar. */
+  .topbar.sunk { background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .answers { grid-template-columns: minmax(0, 1fr); }
   .film-bar > span { display: none; }
   .film-bar strong { margin-right: auto; }

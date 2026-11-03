@@ -169,6 +169,14 @@ the file to post is `out/short.mp4`.
 Besides the entrances and the fleet, the scroll does a few more things: headings rise a word
 at a time, and motes behind the page stretch into streaks at speed.
 
+A phone has little time per frame, so the page keeps its per-frame work small: the fleet writes
+only the styles that changed, straight onto the element that moves (no CSS variable changing on the
+section or a ship, which would make the browser work out everything inside again); nothing carries
+a permanent `will-change`; on a phone both star canvases draw at one pixel per point, the fleet's
+stars hold still while the fleet does, the top film loads its 720p copy, it darkens through a black
+layer rather than a filter, and the top bar has no blur behind it. On a touch screen the smoothed
+scroll keeps closer to the finger.
+
 The window scrolls as it always does. Every movement follows a smoothed copy of the scroll
 position (`draw` in `landing.js`), so things ease after the hand and settle. The features and
 their texts are in `features.js`.

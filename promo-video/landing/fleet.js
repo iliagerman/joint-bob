@@ -47,14 +47,14 @@ function createFleet({ cases, fresh, still, pageTop }) {
       <span class="engines" aria-hidden="true"><i></i><i></i></span>
       <span class="hull">
         <span class="reticle" aria-hidden="true"></span>
-        <span class="view"><img src="media/${item.id}.jpg" alt="" loading="lazy"><video muted loop playsinline preload="none" data-clip="media/${item.id}.mp4"></video><span class="play" aria-hidden="true"></span><span class="go" aria-hidden="true">▶ Watch with sound</span></span>
+        <span class="view"><img src="media/${item.id}.jpg" alt="" loading="lazy"><video muted loop playsinline preload="none" data-clip="media/${item.id}.mp4"></video><span class="shade" aria-hidden="true"></span><span class="play" aria-hidden="true"></span><span class="go" aria-hidden="true">▶ Watch with sound</span></span>
         <span class="plate"><b>${two(index + 1)}</b><strong>${item.title}</strong><em>${item.time}</em></span>
       </span>
     </button>
     ${brief(item, index)}
   </div>`).join("");
-  rail.innerHTML = cases.map((item) => `<button type="button" aria-label="Fly to ${item.title}"><i></i></button>`).join("");
-  const ships = [...space.children].map((element) => ({ element, craft: element.querySelector(".craft"), video: element.querySelector("video") }));
+  rail.innerHTML = cases.map((item) => `<button type="button" aria-label="Fly to ${item.title}"><i><b></b></i></button>`).join("");
+  const ships = [...space.children].map((element) => ({ element, craft: element.querySelector(".craft"), video: element.querySelector("video"), engines: element.querySelector(".engines"), shade: element.querySelector(".shade"), brief: element.querySelector(".brief") }));
   const ticks = [...rail.children];
   space.addEventListener("click", (event) => {
     const tab = event.target.closest('[role="tab"]');
@@ -70,6 +70,18 @@ function createFleet({ cases, fresh, still, pageTop }) {
   const tints = ["223, 233, 255", "223, 233, 255", "223, 233, 255", "55, 207, 171", "179, 155, 255"];
   const star = () => ({ x: random() * 2 - 1, y: random() * 2 - 1, z: 0.05 + random() * 0.95, tint: tints[Math.floor(random() * tints.length)] });
   let stars = [];
+
+  // Every frame writes only what changed, straight onto the element it moves. A phone has little
+  // time per frame, and a style that changes on the section or on a ship would be worked out again
+  // for everything inside it.
+  const written = new WeakMap();
+  function put(element, property, value) {
+    let seen = written.get(element);
+    if (!seen) written.set(element, (seen = {}));
+    if (seen[property] === value) return;
+    seen[property] = value;
+    element.style[property] = value;
+  }
 
   let top = 0;
   let tall = 1;
@@ -88,10 +100,13 @@ function createFleet({ cases, fresh, still, pageTop }) {
     section.style.setProperty("--ship-h", `${shipHeight}px`);
     section.style.setProperty("--deck-h", `${space.clientHeight}px`);
     size = { width: pin.clientWidth, height: pin.clientHeight };
-    const ratio = Math.min(2, devicePixelRatio);
+    // A phone draws the stars at one pixel per point: they are soft light, and a full-screen canvas
+    // at the screen's own density is a lot to send to its GPU every frame.
+    const ratio = narrow ? 1 : Math.min(2, devicePixelRatio);
     Object.assign(sky, { width: size.width * ratio, height: size.height * ratio });
     pen.setTransform(ratio, 0, 0, ratio, 0, 0);
     stars = Array.from({ length: narrow ? 150 : 280 }, star);
+    skyDrawn = false;
   }
 
   // Where the fleet is: `along` films on from the first, flying towards `target`. Both count on
@@ -165,6 +180,7 @@ function createFleet({ cases, fresh, still, pageTop }) {
   // A swipe that ends over a ship is not a tap on it.
   space.addEventListener("click", (event) => { if (dragged) { event.stopPropagation(); event.preventDefault(); dragged = false; } }, true);
 
+  let skyDrawn = false;
   let place = 0;
   let speed = 0;
   let arrived = 0;
@@ -227,7 +243,6 @@ function createFleet({ cases, fresh, still, pageTop }) {
     const flying = Math.abs(target - along) > 0.01;
     if (!(paused || hovering || watching || press || !inView || flying)) waited += seconds;
     if (waited >= dwell) step(1);
-    rail.style.setProperty("--fill", clamp(waited / dwell).toFixed(3));
 
     if (!press) along += (target - along) * (1 - Math.exp(-seconds * (still.matches ? 60 : 3.2)));
     if (Math.abs(target - along) < 0.0005) along = target;
@@ -238,36 +253,47 @@ function createFleet({ cases, fresh, still, pageTop }) {
     speed += (moving - speed) * 0.2;
     const fast = Math.abs(speed);
     const thrust = still.matches ? 0 : clamp(0.05 + Math.pow(clamp(fast / 4.5), 0.8));
-    section.style.setProperty("--thrust", thrust.toFixed(3));
     section.classList.toggle("reverse", speed < -0.05);
-    drawStars(still.matches ? 0 : (speed < -0.05 ? -1 : 1) * (0.05 + fast * 0.28 + dropping * 2.2), seconds);
+    const rush = still.matches ? 0 : (speed < -0.05 ? -1 : 1) * (0.05 + fast * 0.28 + dropping * 2.2);
+    // On a phone the stars hold still while the fleet does, so the canvas is not redrawn for nothing.
+    if (!(narrow && Math.abs(rush) < 0.06 && skyDrawn)) { drawStars(rush, seconds); skyDrawn = true; }
+    const engines = { transform: `${narrow ? "scaleY" : "scaleX"}(${thrust.toFixed(2)})`, opacity: Math.min(1, thrust * 1.5).toFixed(2) };
 
     // Banking into the turn: a ship going left dips its left side, and the other way round.
     const bank = -clamp(speed * (narrow ? 1.2 : 2.4), -16, 16);
     const time = now / 1000;
-    for (const [index, { element }] of ships.entries()) {
+    for (const [index, ship] of ships.entries()) {
+      const { element } = ship;
       const ahead = aheadOf(index);
       const { x, y, z, turn, tilt, shown: seen } = (narrow ? upright : wide)(ahead);
       const shown = seen * arrive;
+      put(element, "visibility", shown < 0.02 ? "hidden" : "");
+      // A ship nobody can see is left where it is until it comes back.
+      if (shown < 0.02) { element.classList.remove("docked"); continue; }
       const hover = still.matches ? 0 : Math.sin(time * 1.1 + index * 1.7);
       // Dropping out of warp: from far behind the first, on the side the fleet comes from.
       const late = 1 - arrive;
       const from = narrow ? { x: 0, y: late * shipHeight * 1.4 } : { x: late * shipWidth * 0.7, y: 0 };
-      element.style.transform = `translate3d(${(x + from.x).toFixed(1)}px, ${(y + from.y + hover * 5).toFixed(1)}px, ${(z - late * (1800 + index * 140)).toFixed(1)}px) rotateX(${tilt.toFixed(2)}deg) rotateY(${turn.toFixed(2)}deg) rotateZ(${(bank + hover * 0.6).toFixed(2)}deg)`;
-      element.style.opacity = shown.toFixed(3);
-      element.style.zIndex = String(500 - Math.round(ahead * 10));
-      element.style.visibility = shown < 0.02 ? "hidden" : "";
-      element.style.pointerEvents = shown < 0.35 ? "none" : "";
-      element.style.setProperty("--far", clamp(Math.abs(ahead)).toFixed(3));
-      // Its brief is there only near the dock, so it comes and goes with the film.
-      element.style.setProperty("--near", clamp(1 - Math.abs(ahead) * 2.2).toFixed(3));
+      put(element, "transform", `translate3d(${(x + from.x).toFixed(1)}px, ${(y + from.y + hover * 5).toFixed(1)}px, ${(z - late * (1800 + index * 140)).toFixed(1)}px) rotateX(${tilt.toFixed(2)}deg) rotateY(${turn.toFixed(2)}deg) rotateZ(${(bank + hover * 0.6).toFixed(2)}deg)`);
+      put(element, "opacity", shown.toFixed(2));
+      put(element, "zIndex", String(500 - Math.round(ahead * 10)));
+      put(element, "pointerEvents", shown < 0.35 ? "none" : "");
+      // The further from the dock, the darker; its brief is there only near the dock, so it comes
+      // and goes with the film.
+      put(ship.shade, "opacity", clamp(Math.abs(ahead) * 0.55).toFixed(2));
+      put(ship.brief, "opacity", clamp(1 - Math.abs(ahead) * 2.2).toFixed(2));
+      put(ship.engines, "transform", engines.transform);
+      put(ship.engines, "opacity", engines.opacity);
       element.classList.toggle("docked", Math.abs(ahead) < 0.5 && arrive > 0.9);
     }
 
     const nearest = wrap(Math.round(along));
     if (nearest !== docked) { docked = nearest; dockedSince = now; }
-    count.textContent = `${two(docked + 1)} / ${two(total)}`;
+    const counted = `${two(docked + 1)} / ${two(total)}`;
+    if (count.textContent !== counted) count.textContent = counted;
     for (const [index, tick] of ticks.entries()) { tick.classList.toggle("on", index === docked); tick.classList.toggle("past", index < docked); }
+    // The docked film's dot fills up while it waits.
+    put(ticks[docked].firstElementChild.firstElementChild, "transform", `scaleX(${clamp(waited / dwell).toFixed(3)})`);
 
     // The docked film plays, silent, once the fleet has stopped under it.
     const settled = fast < 0.3 && now - dockedSince > 450 && arrive > 0.95 && !watching && !still.matches;

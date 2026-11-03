@@ -48,6 +48,7 @@ const motes = Array.from({ length: 120 }, () => ({ x: random(), y: random(), dep
 const copy = document.querySelector("#enterCopy");
 const film = document.querySelector("#enterFilm");
 const frame = film.querySelector(".frame");
+const dim = frame.querySelector(".dim");
 const heroFilm = film.querySelector("video");
 const hint = document.querySelector("#hint");
 const machines = document.querySelector("#machines");
@@ -62,7 +63,9 @@ let furthest = 0;
 function measure() {
   view = { width: innerWidth, height: innerHeight };
   for (const flow of flows) { flow.top = pageTop(flow.element); flow.height = flow.element.offsetHeight; }
-  const ratio = Math.min(2, devicePixelRatio);
+  // A phone draws the motes at one pixel per point: a full-screen canvas at its own density is a
+  // lot to send to its GPU on every frame of scrolling.
+  const ratio = innerWidth < 820 ? 1 : Math.min(2, devicePixelRatio);
   Object.assign(sky, { width: innerWidth * ratio, height: innerHeight * ratio });
   pen.setTransform(ratio, 0, 0, ratio, 0, 0);
   // Where the hero film rests inside its pinned screen, before anything moves it.
@@ -75,12 +78,16 @@ function measure() {
   furthest = document.documentElement.scrollHeight - innerHeight;
 }
 
+// The motes' colour, read once and again when the theme changes, not on every frame.
+let accent = getComputedStyle(document.documentElement).getPropertyValue("--accent");
+const touch = matchMedia("(pointer: coarse)");
 let sound = false;
 let smooth = scrollY;
 let drawn = -1;
 function draw() {
   // The smoothed scroll: a twelfth of the remaining distance each frame.
-  smooth += (scrollY - smooth) * (still.matches ? 1 : 0.085);
+  // On a touch screen it keeps closer to the finger, so nothing seems to lag behind the scroll.
+  smooth += (scrollY - smooth) * (still.matches ? 1 : touch.matches ? 0.24 : 0.085);
   if (Math.abs(scrollY - smooth) < 0.1) smooth = scrollY;
   if (smooth !== drawn) {
     drawn = smooth;
@@ -99,7 +106,7 @@ function draw() {
     film.style.transform = `translate3d(0, ${(height / 2 - filmBox.centre) * grow}px, 0) scale(${1 + (cover - 1) * grow})`;
     frame.style.borderRadius = `${16 * (1 - grow)}px`;
     // It darkens as it comes, like a screen you are passing through.
-    frame.style.filter = `brightness(${1 - grow * 0.6})`;
+    dim.style.opacity = (grow * 0.6).toFixed(3);
     hint.style.opacity = String(clamp(1 - into * 6));
     // Once it has filled the window it thins out, and the inside of the page shows through.
     film.parentElement.style.opacity = String(clamp((1.72 - smooth / height) / 0.34));
@@ -126,7 +133,7 @@ function draw() {
 
     // The motes drift up as the page goes down, the near ones faster, and stretch into streaks at speed.
     pen.clearRect(0, 0, width, height);
-    pen.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--accent");
+    pen.strokeStyle = accent;
     pen.lineCap = "round";
     for (const mote of motes) {
       const y = (((mote.y * height - smooth * mote.depth * 0.3) % height) + height) % height;
@@ -167,15 +174,17 @@ const published = Date.parse(document.lastModified) || 0;
 const fresh = (address) => `${address}?v=${published}`;
 // The feature films near the top, as a fleet the scroll flies through (fleet.js).
 const fleet = createFleet({ cases, fresh, still, pageTop });
+// A phone gets the smaller copy of a film where there is one (the hero's).
+const source = (video) => fresh((innerWidth < 820 && video.dataset.srcSmall) || video.dataset.src);
 const near = new IntersectionObserver((entries) => {
-  for (const entry of entries) if (entry.isIntersecting && !entry.target.src) entry.target.src = fresh(entry.target.dataset.src);
+  for (const entry of entries) if (entry.isIntersecting && !entry.target.src) entry.target.src = source(entry.target);
 }, { rootMargin: "600px" });
 const playing = new IntersectionObserver((entries) => {
   for (const entry of entries) {
     seen.set(entry.target, entry.isIntersecting ? entry.intersectionRatio : 0);
     if (entry.isIntersecting && !still.matches && !watching) {
       // A jump down the page can bring a film on screen before it was ever near.
-      if (!entry.target.src) entry.target.src = fresh(entry.target.dataset.src);
+      if (!entry.target.src) entry.target.src = source(entry.target);
       entry.target.play().then(tune, () => {});
     } else entry.target.pause();
   }
@@ -306,6 +315,8 @@ document.querySelector("#soundButton").addEventListener("click", () => {
 });
 document.querySelector("#themeButton").addEventListener("click", () => {
   document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  accent = getComputedStyle(document.documentElement).getPropertyValue("--accent");
+  drawn = -1;
 });
 // The install command for the reader's system: the shell installer on macOS and Linux, and on
 // Windows the PowerShell one, which sets up WSL 2 and Ubuntu first and runs the same installer there.
