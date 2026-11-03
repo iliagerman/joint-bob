@@ -3,10 +3,6 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Added auto-reply settings to scheduled tasks, with persistent retries, restart recovery, explicit stop criteria and response limits. Removed hidden auto-reply failure and no-progress stops.
-
 ## 2.208.0 — 2026-11-03
 
 - Added auto reply to scheduled tasks, with model selection, custom instructions and stop criteria. Runs continue until those criteria, the reply limit or manual Stop.
