@@ -47,7 +47,7 @@ export const webhookInputSchema = z.object({
   markForReview: z.boolean().default(false),
   hideFromHistory: z.boolean().default(false),
   preserveFiles: z.boolean().default(false),
-  /** Where an assistant's answer also goes. Null: it stays in Joint Bob. */
+  /** Set only on the webhook behind a connected Telegram bot, which is managed from the assistant. */
   reply: z.enum(["telegram"]).nullable().default(null),
   /**
    * When set, only calls whose sender is on the list reach the conversation. The sender is the
@@ -286,6 +286,8 @@ export interface WebhookCall {
   sender?: { value: string; label: string };
   /** The parsed JSON body or form fields, when the body had any. */
   data?: unknown;
+  /** A message from a connected Telegram bot, already authorized. */
+  telegram?: { message: string; routing: { scope: string | null; message: string }; reply: (text: string) => Promise<void> };
 }
 
 const MIME_BY_EXTENSION: Record<string, string> = {

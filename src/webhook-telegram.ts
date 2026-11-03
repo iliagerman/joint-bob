@@ -69,19 +69,44 @@ export function telegramParts(text: string, limit = SOURCE_PART_LIMIT): string[]
   return parts;
 }
 
-export async function sendTelegramReply(token: string, chatId: string, text: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+async function callTelegram(token: string, method: string, body: Fields, fetchImpl: typeof fetch = fetch) {
   const api = process.env.JOINT_BOB_TELEGRAM_API || "https://api.telegram.org";
-  const send = async (message: Fields) => {
-    const response = await fetchImpl(`${api}/bot${token}/sendMessage`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, ...message }), signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-    });
-    const answer = await response.json().catch(() => ({})) as { description?: string };
-    return { ok: response.ok, description: answer.description ?? `status ${response.status}` };
-  };
+  const response = await fetchImpl(`${api}/bot${token}/${method}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+  });
+  const answer = await response.json().catch(() => ({})) as { description?: string; result?: unknown };
+  return { ok: response.ok, description: answer.description ?? `status ${response.status}`, result: answer.result };
+}
+
+async function requireTelegram(token: string, method: string, body: Fields): Promise<unknown> {
+  const answer = await callTelegram(token, method, body);
+  if (!answer.ok) throw new Error(answer.description);
+  return answer.result;
+}
+
+export async function telegramBot(token: string): Promise<{ id: string; username: string; readsAllGroupMessages: boolean }> {
+  const bot = fields(await requireTelegram(token, "getMe", {}));
+  if (!bot || typeof bot.username !== "string") throw new Error("Telegram didn't describe this bot");
+  return { id: String(bot.id), username: bot.username, readsAllGroupMessages: bot.can_read_all_group_messages === true };
+}
+
+/** Only messages and the bot's own membership reach Joint Bob, and each call carries the secret. */
+export async function telegramSetWebhook(token: string, url: string, secretToken: string): Promise<void> {
+  await requireTelegram(token, "setWebhook", { url, secret_token: secretToken, allowed_updates: ["message", "my_chat_member"], drop_pending_updates: true });
+}
+export async function telegramDeleteWebhook(token: string): Promise<void> { await requireTelegram(token, "deleteWebhook", {}); }
+export async function telegramLeaveChat(token: string, chatId: string): Promise<void> { await requireTelegram(token, "leaveChat", { chat_id: chatId }); }
+
+export async function sendTelegramReply(token: string, chatId: string, text: string, options: { replyTo?: number; fetchImpl?: typeof fetch } = {}): Promise<void> {
+  const send = (message: Fields) => callTelegram(token, "sendMessage", { chat_id: chatId, ...message }, options.fetchImpl);
+  let replying = options.replyTo === undefined ? {} : { reply_parameters: { message_id: options.replyTo, allow_sending_without_reply: true } };
   for (const part of telegramParts(text)) {
-    if ((await send({ text: telegramHtml(part), parse_mode: "HTML" })).ok) continue;
-    // Formatting Telegram rejects must not cost the person their answer.
-    const plain = await send({ text: part.slice(0, MESSAGE_LIMIT) });
-    if (!plain.ok) throw new Error(`Telegram refused the reply: ${plain.description}`);
+    const formatted = await send({ text: telegramHtml(part), parse_mode: "HTML", ...replying });
+    if (!formatted.ok) {
+      // Formatting Telegram rejects must not cost the person their answer.
+      const plain = await send({ text: part.slice(0, MESSAGE_LIMIT), ...replying });
+      if (!plain.ok) throw new Error(`Telegram refused the reply: ${plain.description}`);
+    }
+    replying = {};
   }
 }

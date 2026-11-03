@@ -5,11 +5,12 @@ import { saveAssistant } from "./settings.js";
 
 // Resources: what this assistant can use in its owner's private chat and every topic it opens.
 
-const SECTIONS = [["browser", "Browser logins", "globe"], ["files", "Files", "file"], ["memory", "Memory", "note"], ["skills", "Skills", "book"], ["plugins", "Plugins", "puzzle"], ["mcp", "MCP servers", "plug"], ["secrets", "Secrets", "key"]];
+const SECTIONS = [["browser", "Browser logins", "globe"], ["files", "Files", "file"], ["memory", "Memory", "note"], ["telegram", "Telegram", "send-out"], ["skills", "Skills", "book"], ["plugins", "Plugins", "puzzle"], ["mcp", "MCP servers", "plug"], ["secrets", "Secrets", "key"]];
 const COPY = {
   browser: "Sites this assistant stays signed in to. You sign in yourself, and it never sees your password or codes. One topic uses a login at a time.",
   files: "A folder this assistant keeps across all its topics, however a topic started. It can read and save files here.",
   memory: "Notes this assistant keeps between topics. It reads them before work and adds what's worth keeping. You can edit them anytime.",
+  telegram: "Talk to this assistant from Telegram through a bot of its own. Nobody reaches it until you approve them.",
   skills: "Every topic this assistant opens can use the skills you turn on, and the ones you add just for it.",
   plugins: "A plugin adds a set of skills and MCP servers. While it is off, none of them load.",
   mcp: "Servers this assistant can call. Install new servers in Joint Bob Resources first.",
@@ -28,10 +29,10 @@ export async function loadResources() {
     request(`/api/secrets/scopes/conversation/${scope()}`).catch(() => ({ accountIds: [] })),
   ]);
   const local = resources.executionNode.local;
-  const [files, memory, own] = local
-    ? await Promise.all([request(`${base()}/files`), request(`${base()}/memory`), request(`${base()}/own-skills`)])
-    : [{ files: [] }, null, { skills: [] }];
-  app.resources = { ...resources, files: files.files, memory, ownSkills: own.skills };
+  const [files, memory, own, telegram] = local
+    ? await Promise.all([request(`${base()}/files`), request(`${base()}/memory`), request(`${base()}/own-skills`), request(`${base()}/telegram`)])
+    : [{ files: [] }, null, { skills: [] }, null];
+  app.resources = { ...resources, files: files.files, memory, ownSkills: own.skills, telegram };
   secrets = { accounts: accounts.accounts, attached: attached.accountIds, error: accounts.error };
   return resources;
 }
@@ -42,7 +43,7 @@ const mcpEnabled = name => app.assistant.mcpServerNames === null || app.assistan
 
 function items(section) {
   const resources = app.resources;
-  return { browser: resources.logins, files: resources.files, memory: [], skills: [...resources.ownSkills.map(skill => ({ ...skill, own: true, enabled: true })), ...resources.skills], plugins: resources.plugins, mcp: resources.mcpServers, secrets: secrets.accounts }[section];
+  return { browser: resources.logins, files: resources.files, memory: [], telegram: [], skills: [...resources.ownSkills.map(skill => ({ ...skill, own: true, enabled: true })), ...resources.skills], plugins: resources.plugins, mcp: resources.mcpServers, secrets: secrets.accounts }[section];
 }
 
 function summary(section) {
@@ -52,6 +53,12 @@ function summary(section) {
     return `${list.length} login${list.length === 1 ? "" : "s"}${attention ? ` · ${attention} need${attention === 1 ? "s" : ""} you` : ""}`;
   }
   if (section === "files") return `${list.length} file${list.length === 1 ? "" : "s"}`;
+  if (section === "telegram") {
+    const telegram = app.resources.telegram;
+    if (!telegram) return "On its machine";
+    if (!telegram.connected) return "Not connected";
+    return `@${telegram.botUsername}${telegram.waiting.length ? ` · ${telegram.waiting.length} waiting` : ""}`;
+  }
   if (section === "memory") return !app.resources.memory ? "On its machine" : !app.resources.memory.enabled ? "Off" : app.resources.memory.content.trim() ? "On" : "On · Empty";
   if (section === "secrets") return `${list.filter(account => secrets.attached.includes(account.id)).length} of ${list.length} attached`;
   if (section === "mcp") return `${list.filter(server => mcpEnabled(server.name)).length} of ${list.length} on`;
@@ -161,6 +168,84 @@ function memoryPanel() {
   return [h("div", { class: "res-bar" }, h("span", {}, memory.enabled ? "Keeps notes between topics" : "Memory is off. Its notes stay saved."), box), text, h("div", { class: "actions" }, save)];
 }
 
+/** The one-time link, shown only for the assistant it's for, until the owner it would replace changes. */
+let pairing = null;
+const telegramBase = () => `${base()}/telegram`;
+
+async function telegramAct(work, message) {
+  try {
+    const status = await work();
+    app.resources.telegram = status;
+    if (status.pairingLink) pairing = { link: status.pairingLink, assistantId: app.assistant.id, ownerId: status.owner?.id ?? null };
+    if (message) notify(message);
+    renderResources();
+  } catch (error) { fail(error); }
+}
+
+function telegramConnectForm(status) {
+  const token = h("input", { name: "token", type: "password", required: true, autocomplete: "off", placeholder: "123456789:AA…", "aria-label": "Bot token", "data-testid": "assistant-telegram-token" });
+  const address = h("select", { name: "base", "aria-label": "Address Telegram uses" }, status.bases.map(item => h("option", { value: item.id }, item.label)));
+  const form = h("form", { "data-testid": "assistant-telegram-connect" },
+    h("ol", { class: "bullets numbered" },
+      h("li", {}, "In Telegram, open @BotFather, send /newbot and copy the token."),
+      h("li", {}, "Paste it here. Only Joint Bob uses it; the agent can't read it."),
+      h("li", {}, "Open the one-time link you get next, to link your own Telegram account.")),
+    h("label", { class: "field" }, "Bot token", token),
+    status.bases.length > 1 ? h("label", { class: "field" }, "Address Telegram uses", address) : null,
+    status.bases.length ? null : h("div", { class: "notice" }, icon("alert"), h("span", {}, "This machine has no address Telegram can reach. Join a relay in Settings → Relays first.")),
+    h("button", { type: "submit", class: "primary", disabled: !status.bases.length }, "Connect"));
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    telegramAct(() => post(telegramBase(), { token: token.value.trim(), ...(address.value ? { baseId: address.value } : {}) }), "Connected. Now link your Telegram account.");
+  });
+  return form;
+}
+
+function telegramAccessRow(item, controls) {
+  const glyph = siteBox(icon(item.kind === "chat" ? "people" : "send-out"));
+  return resRow({ glyph, title: item.name, chips: [chip(item.kind === "chat" ? "Group" : "Person")], detail: `Telegram ID ${item.id}`, control: h("span", { class: "res-actions" }, controls.map(([label, state, cls]) =>
+    h("button", { type: "button", class: cls, onclick: () => telegramAct(() => put(`${telegramBase()}/access`, { kind: item.kind, id: item.id, state })) }, label))) });
+}
+
+function telegramConnected(status) {
+  const owner = status.owner
+    ? h("div", { class: "res-bar", "data-testid": "assistant-telegram-owner" }, h("span", {}, `Linked to ${status.owner.name} (${status.owner.id})`),
+      h("button", { type: "button", class: "ghost", onclick: () => telegramAct(() => post(`${telegramBase()}/pairing`, {})) }, "Link another account"))
+    : null;
+  if (pairing && (pairing.assistantId !== app.assistant.id || pairing.ownerId !== (status.owner?.id ?? null))) pairing = null;
+  const linkNotice = pairing ? h("div", { class: "notice plain", "data-testid": "assistant-telegram-link" }, icon("lock"), h("span", {}, h("a", { href: pairing.link, target: "_blank", rel: "noopener" }, "Open this link in Telegram"), ` to link your account as @${status.botUsername}'s owner. It works once and expires in 10 minutes.`))
+    : status.owner ? null : h("div", { class: "notice" }, icon("alert"), h("span", {}, "No account is linked yet, so the bot answers nobody."), h("button", { type: "button", onclick: () => telegramAct(() => post(`${telegramBase()}/pairing`, {})) }, "New link"));
+  const list = (title, rows) => rows.length ? [h("h3", { class: "sec" }, title), h("div", { class: "res-list whole" }, rows)] : null;
+  return [
+    h("div", { class: "res-bar" }, h("a", { href: `https://t.me/${status.botUsername}`, target: "_blank", rel: "noopener" }, `@${status.botUsername}`),
+      h("button", { type: "button", class: "danger", "data-testid": "assistant-telegram-disconnect", onclick: () => confirmDelete(`Disconnect @${status.botUsername}?`, "The bot stops reaching this assistant at once, and its approvals are removed. Its conversations stay.", async () => {
+        await del(telegramBase());
+        app.resources.telegram = await request(telegramBase());
+      }) }, "Disconnect")),
+    owner, linkNotice,
+    status.readsAllGroupMessages ? null : h("div", { class: "notice", "data-testid": "assistant-telegram-privacy" }, icon("alert"), h("span", {}, "In groups, this bot only sees commands and replies to it. To let it read a whole group, send /setprivacy to @BotFather, turn privacy off, then add the bot to the group again. Or make it a group admin."),
+      h("button", { type: "button", onclick: () => telegramAct(() => post(`${telegramBase()}/refresh`, {}), "Checked with Telegram.") }, "Check again")),
+    list("Waiting for approval", status.waiting.map(item => telegramAccessRow(item, [["Block", "blocked", "ghost"], ["Approve", "approved", "primary"]]))),
+    list("Can use it", status.allowed.map(item => telegramAccessRow(item, [["Remove", null, "ghost"]]))),
+    list("Blocked", status.blocked.map(item => telegramAccessRow(item, [["Unblock", null, "ghost"]]))),
+    h("div", { class: "notice plain" }, icon("info"), h("span", {}, `Everyone in an approved group can use what ${app.assistant.name} can use, including its tools, secrets, files and memory, and can ask about them. For a group with other people, connect a separate assistant that has only what you're happy to share. A group you add the bot to yourself is approved automatically.`)),
+    list("Recent calls", status.calls.map(call => h("div", { class: "work" }, chip(call.status, call.status === "delivered" ? "ok" : call.status === "failed" ? "bad" : ""), h("div", {}, h("small", {}, `${call.detail} · ${formatTime(call.at)}`))))),
+  ];
+}
+
+function telegramPanel() {
+  const status = app.resources.telegram;
+  if (!status) return h("div", { class: "notice" }, icon("alert"), h("span", {}, "Open this assistant on its execution machine to manage Telegram."));
+  return status.connected ? telegramConnected(status) : telegramConnectForm(status);
+}
+
+/** Someone just linked, asked for access or was refused: show it while this section is open. */
+export async function refreshTelegram() {
+  if (document.querySelector("#resources-view").classList.contains("hidden") || view.section !== "telegram" || !app.resources?.telegram) return;
+  app.resources.telegram = await request(telegramBase());
+  renderResources();
+}
+
 async function reloadOwnSkills(message) {
   app.resources.ownSkills = (await request(`${base()}/own-skills`)).skills;
   closeOverlay();
@@ -224,7 +309,7 @@ function row(section, item) {
 }
 
 function topAction(section) {
-  if (section === "memory") return null;
+  if (section === "memory" || section === "telegram") return null;
   if (section === "files") return uploadControl();
   if (section === "skills") return h("button", { type: "button", "data-testid": "assistant-add-skill", disabled: !app.resources.executionNode.local, onclick: openAddSkill }, icon("plus"), "Add skill");
   if (section === "browser") return h("button", { type: "button", class: "primary", "data-testid": "assistant-add-login", disabled: !app.resources.executionNode.local, onclick: () => openAddLogin("new") }, icon("plus"), "Add login");
@@ -250,12 +335,12 @@ function detail() {
   const notices = [];
   if (section === "browser" && !app.resources.executionNode.local) notices.push(h("div", { class: "notice" }, icon("alert"), h("span", {}, "Open this assistant on its execution machine to manage its browser logins.")));
   if (section === "secrets" && secrets.error) notices.push(h("div", { class: "notice" }, icon("alert"), h("span", {}, `Secret management unavailable: ${secrets.error}`)));
-  const node = h("div", { class: "res-detail" },
+  const node = h("div", { class: `res-detail${section === "telegram" || section === "memory" ? " scrolls" : ""}` },
     isMobile() ? h("button", { type: "button", class: "link", style: "align-self:flex-start;margin-bottom:10px", onclick: () => { view.open = false; renderResources(); } }, "Back to resources") : null,
     h("div", { class: "res-top" }, h("div", {}, h("h2", {}, label), h("p", {}, COPY[section])), topAction(section)),
-    notices, section === "browser" ? browserBar() : null, section === "memory" ? memoryPanel() : [list, pager]);
+    notices, section === "browser" ? browserBar() : null, section === "memory" ? memoryPanel() : section === "telegram" ? telegramPanel() : [list, pager]);
   const empty = section === "files" ? "No files yet. Upload some, or ask the assistant to save one here." : section === "browser" ? "No logins yet. Add one and sign in yourself. Every topic can use it." : section === "secrets" ? "Create a secret account in Settings → Secrets first." : "Nothing installed yet. Add some in Joint Bob Resources.";
-  return { node, paint: () => { if (section === "memory") return; view.pages[section] = fitPage({ list, pager, items: items(section), rowHeight: 58, page: view.pages[section] ?? 0, renderRow: item => row(section, item), empty: h("div", { class: "empty" }, empty), onPage: next => { view.pages[section] = next; renderResources(); } }); } };
+  return { node, paint: () => { if (section === "memory" || section === "telegram") return; view.pages[section] = fitPage({ list, pager, items: items(section), rowHeight: 58, page: view.pages[section] ?? 0, renderRow: item => row(section, item), empty: h("div", { class: "empty" }, empty), onPage: next => { view.pages[section] = next; renderResources(); } }); } };
 }
 
 function sideList() {
@@ -265,7 +350,7 @@ function sideList() {
       h("strong", {}, icon(symbol), label), h("small", {}, summary(id)))),
     h("div", { class: "side-foot" },
       h("p", { class: "fine" }, `${app.assistant.name} runs on ${name ?? "another machine"}. Browser logins must be on the same machine.`),
-      h("p", { class: "fine" }, "Only your private chat and its topics use these. Groups and requests never do.")));
+      h("p", { class: "fine" }, "Your private chat, its topics and Telegram use these. Relay groups and requests never do.")));
 }
 
 export function renderResources() {

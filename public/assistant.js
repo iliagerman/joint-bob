@@ -6,7 +6,7 @@ import { app, closeOverlay, fail, isMobile, navigate, notify, setRouter } from "
 import { bot, h, icon, rowText } from "./assistant/dom.js";
 import { currentGroup, leftGroupScreen, loadGroups, openNewGroupSheet, pendingInvitations, showGroup, showInvitations } from "./assistant/groups.js";
 import { loadMe, showFind, showYou } from "./assistant/people.js";
-import { showResources } from "./assistant/resources.js";
+import { refreshTelegram, showResources } from "./assistant/resources.js";
 import { arrivesWithShare, bindSaved, prefillShare, showItems } from "./assistant/saved.js";
 import { bindSettings, fillSettings, showSettings } from "./assistant/settings.js";
 import { currentThread, leftThreadScreen, loadThreads, showThread, threadStatus } from "./assistant/threads.js";
@@ -172,6 +172,7 @@ function onChange(change) {
       renderRail();
       if (app.assistant?.id !== change.assistantId) return undefined;
       updateActivityBadge();
+      refreshTelegram().catch(fail);
       return activityOpen() ? activityChanged() : undefined;
     }).catch(fail);
   }

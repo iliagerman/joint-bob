@@ -85,7 +85,6 @@ test("personal assistant opens from conversation and saves a link with its scree
     await automationFrame.getByTestId("webhooks-form").waitFor({ state: "visible" });
     assert.equal(await automationFrame.getByTestId("webhooks-target-kind-select").inputValue(), "assistant");
     await automationFrame.getByTestId("webhooks-tab-access").click();
-    assert.equal(await automationFrame.getByTestId("webhooks-reply-telegram-toggle").isVisible(), true, "an assistant webhook can reply in Telegram");
     assert.equal(await automationFrame.getByTestId("webhooks-preserve-files-toggle").isVisible(), false, "an assistant's topics always keep their files");
     await automationFrame.getByTestId("webhooks-tab-setup").click();
     await automationFrame.getByTestId("webhooks-name-input").fill("Phone assistant webhook");

@@ -35,12 +35,12 @@ test("a long answer splits between paragraphs and stays under Telegram's limit",
 test("formatting Telegram rejects falls back to plain text, and a refused reply is an error", async () => {
   const sent: Array<Record<string, unknown>> = [];
   const answer = (status: number, description: string) => new Response(JSON.stringify({ description }), { status });
-  await sendTelegramReply("tok", "111", "**hi**", (async (url: string, init: RequestInit) => {
+  await sendTelegramReply("tok", "111", "**hi**", { fetchImpl: (async (url: string, init: RequestInit) => {
     assert.match(url, /\/bottok\/sendMessage$/);
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     sent.push(body);
     return body.parse_mode ? answer(400, "can't parse entities") : answer(200, "");
-  }) as typeof fetch);
+  }) as typeof fetch });
   assert.deepEqual(sent, [{ chat_id: "111", text: "<b>hi</b>", parse_mode: "HTML" }, { chat_id: "111", text: "**hi**" }]);
-  await assert.rejects(sendTelegramReply("tok", "111", "hi", (async () => answer(403, "bot was blocked by the user")) as typeof fetch), /bot was blocked by the user/);
+  await assert.rejects(sendTelegramReply("tok", "111", "hi", { fetchImpl: (async () => answer(403, "bot was blocked by the user")) as typeof fetch }), /bot was blocked by the user/);
 });

@@ -50,7 +50,7 @@ test("assistant shell: resources, public actions, activity and discovery without
     assert.equal(await page.locator("#rail").isVisible(), true, "desktop shows the rail");
     assert.equal(await page.locator("#tabbar").isVisible(), false, "desktop has no bottom tabs");
     await page.getByTestId("assistant-resources-section-browser").waitFor();
-    assert.equal(await page.locator(".side-item").count(), 7, "seven resource sections");
+    assert.equal(await page.locator(".side-item").count(), 8, "eight resource sections");
     await page.getByText("No logins yet. Add one and sign in yourself. Every topic can use it.").waitFor();
     await page.getByTestId("assistant-add-login").click();
     await page.locator("#add-login").waitFor();
@@ -83,6 +83,40 @@ test("assistant shell: resources, public actions, activity and discovery without
     await page.getByTestId("assistant-memory-switch").click();
     await page.getByText("Keeps notes between topics").waitFor();
 
+    // Telegram: connect a bot, link your account, and approve who can use it.
+    const telegramApi = `**/api/personal-assistants/${assistantId}/telegram`;
+    const connectedBot = { connected: true, botUsername: "family_bot", readsAllGroupMessages: false, owner: null, waiting: [{ kind: "user", id: "999", name: "Stranger", state: "pending" }, { kind: "chat", id: "-5", name: "Family", state: "pending" }], allowed: [], blocked: [], calls: [{ status: "refused", detail: "Refused Stranger: not approved", at: "2026-11-03T07:00:00.000Z" }] };
+    await page.route(telegramApi, route => route.request().method() === "POST"
+      ? route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ...connectedBot, pairingLink: "https://t.me/family_bot?start=code" }) })
+      : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ connected: false, bases: [{ id: "direct", label: "This machine's own address" }] }) }));
+    const accessCalls: unknown[] = [];
+    await page.route(`${telegramApi}/access`, route => {
+      accessCalls.push(route.request().postDataJSON());
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...connectedBot, owner: { id: "111", name: "Ilia" }, waiting: connectedBot.waiting.slice(1), allowed: [connectedBot.waiting[0]] }) });
+    });
+    await page.goto(`${node.url}/assistant.html?id=${assistantId}&view=resources`);
+    await page.getByTestId("assistant-resources-section-telegram").click();
+    const connectForm = page.getByTestId("assistant-telegram-connect");
+    await connectForm.waitFor();
+    assert.equal(await page.getByTestId("assistant-telegram-token").getAttribute("type"), "password", "the token isn't shown while typing");
+    await page.getByTestId("assistant-telegram-token").fill("123456:AAtestTOKENtestTOKENtestTOKEN");
+    await connectForm.getByRole("button", { name: "Connect" }).click();
+    await page.getByTestId("assistant-telegram-link").getByRole("link", { name: "Open this link in Telegram" }).waitFor();
+    assert.equal(await page.getByTestId("assistant-telegram-link").getByRole("link").getAttribute("href"), "https://t.me/family_bot?start=code");
+    await page.getByTestId("assistant-telegram-privacy").waitFor();
+    await page.getByText("Everyone in an approved group can use", { exact: false }).waitFor();
+    const waitingRow = page.locator(".res-row", { hasText: "Stranger" });
+    await waitingRow.getByRole("button", { name: "Approve" }).click();
+    await page.getByTestId("assistant-telegram-owner").getByText("Linked to Ilia (111)").waitFor();
+    assert.deepEqual(accessCalls, [{ kind: "user", id: "999", state: "approved" }]);
+    assert.equal(await page.getByTestId("assistant-telegram-link").count(), 0, "the link goes away once an account is linked");
+    const allowedRow = page.locator(".res-row", { hasText: "Stranger" });
+    await allowedRow.getByRole("button", { name: "Remove" }).waitFor();
+    assert.ok((await allowedRow.boundingBox())!.height >= 40, "the rows keep their height in the scrolling panel");
+    await page.unroute(telegramApi);
+    await page.unroute(`${telegramApi}/access`);
+
+    await page.goto(`${node.url}/assistant.html?id=${assistantId}&view=resources`);
     await page.getByTestId("assistant-resources-section-skills").click();
     await page.getByTestId("assistant-resources-skills").waitFor();
     await page.getByTestId("assistant-add-skill").click();
@@ -285,7 +319,7 @@ test("assistant shell: resources, public actions, activity and discovery without
     const tabsFit = await page.locator("#assistant-nav").evaluate(tabs => tabs.scrollWidth <= tabs.clientWidth + 1);
     assert.equal(tabsFit, true, "assistant tabs fit a phone width");
     await page.getByText("Back to resources").click();
-    assert.equal(await page.locator(".side-item").count(), 7);
+    assert.equal(await page.locator(".side-item").count(), 8);
     assert.deepEqual(errors, [], "the page runs without script errors");
   } finally {
     await browser?.close();

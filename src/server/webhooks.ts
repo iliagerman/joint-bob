@@ -29,8 +29,7 @@ import { createWebhookWorkspace, setWebhookConversationWorkspace } from "../webh
 import { queueConversationPrompt, type PromptAttachment, type PromptQueueSettings } from "./conversation-prompt.js";
 import { broadcastToProject } from "./realtime.js";
 import { runPersonalAssistantAutomationTurn } from "./routes/personal-assistants.js";
-import { secretAccountVariable } from "../secrets.js";
-import { sendTelegramReply, telegramChatId, telegramText, TELEGRAM_TOKEN_VARIABLE } from "../webhook-telegram.js";
+import { telegramChatId, telegramText } from "../webhook-telegram.js";
 
 /** What one chat-socket prompt may carry, as for a browser message (src/server/schemas.ts). */
 const SOCKET_IMAGES = 4;
@@ -79,27 +78,11 @@ async function attachSecrets(webhook: Webhook, engine: string, sessionId: string
 }
 
 /** Each chat or sender keeps its own conversations. The decision model reads their words, not this webhook's instructions. */
-function assistantRouting(webhook: Webhook, call: WebhookCall): { scope: string; message: string } {
+function assistantRouting(webhook: Webhook, call: WebhookCall): { scope: string | null; message: string } {
+  if (call.telegram) return call.telegram.routing;
   const caller = telegramChatId(call.data) ?? call.sender?.value ?? "";
   const words = telegramText(call.data) ?? call.body.trim();
   return { scope: `webhook:${webhook.id}:${caller}`, message: (words || "(no text; the call carried only files)").slice(0, 8000) };
-}
-
-/** A reply that can't be sent goes in the call history; the answer stays in Joint Bob either way. */
-async function replyInTelegram(webhook: Webhook, call: WebhookCall, text: string): Promise<void> {
-  if (webhook.reply !== "telegram") return;
-  const db = await clusterV2Database();
-  const token = secretAccountVariable(webhook.secretAccountIds, TELEGRAM_TOKEN_VARIABLE);
-  const chatId = telegramChatId(call.data);
-  try {
-    if (!token) throw new Error(`no selected secret account has ${TELEGRAM_TOKEN_VARIABLE}`);
-    if (!chatId) throw new Error("the call names no Telegram chat");
-    await sendTelegramReply(token, chatId, text);
-    recordWebhookDelivery(db, webhook.id, "delivered", "Replied in Telegram");
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    recordWebhookDelivery(db, webhook.id, "failed", `Reply not sent: ${token ? reason.split(token).join("[token]") : reason}`);
-  }
 }
 
 /** Checks the target and queues the message. Throws when the target cannot take it. */
@@ -133,7 +116,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   const placed = await placeAttachments(workspacePath, attachments);
   const titleTemplate = webhook.target.kind === "project" ? webhook.titleTemplate || webhook.name : "";
   const titleInstruction = automationTitleInstruction(titleTemplate);
-  const message = [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed].filter(Boolean).join("\n\n");
+  const message = call.telegram?.message ?? [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed].filter(Boolean).join("\n\n");
   if (webhook.target.kind === "assistant") {
     if (!webhook.creatorAccountId) throw new WebhookError(409, "Assistant webhook has no creator account");
     const assistantId = webhook.target.assistantId;
@@ -155,14 +138,14 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
         });
       },
     }).catch(async (error: unknown) => {
-      await replyInTelegram(webhook, call, "This message couldn't be handled. Please send it again.");
+      await call.telegram?.reply("This message couldn't be handled. Please send it again.");
       throw error;
     });
     const [engine, ...sessionParts] = turn.topicId.split(":");
     activeSessionId = sessionParts.join(":");
     if (!engine || !activeSessionId) throw new WebhookError(500, "Assistant webhook turn has no conversation target");
     transitionAutomationExecution(await clusterV2Database(), call.requestId!, "succeeded", null, activeSessionId, engine);
-    if (turn.response) await replyInTelegram(webhook, call, turn.response);
+    if (turn.response) await call.telegram?.reply(turn.response);
     return activeSessionId;
   }
   const engine = webhook.target.engine ?? defaultEngine();

@@ -31,6 +31,7 @@ const profileSchema = z.object({
 }).strict();
 import { addRoutingScopeTopic, personalAssistantDatabase, routingScopeTopicIds } from "../../personal-assistants.js";
 import { removeAssistantCapabilities } from "../../assistant-capabilities.js";
+import { disconnectTelegram } from "../telegram.js";
 
 /** What the person wrote, without the instructions and context added to the agent's copy of a turn. */
 function withoutAssistantContext(text: string): string {
@@ -185,11 +186,11 @@ export interface AssistantAutomationTurnOptions {
   onStarted?: (destination: AssistantDestination) => void;
   recentMessages?: () => Promise<string[]>;
   classifierFetch?: typeof fetch;
-  /** A caller from outside: its conversations are its own, and the decision model reads only its words. */
-  routing?: { scope: string; message: string };
+  /** The decision model reads only these words. With a scope, the caller's conversations are its own; without one, it's the owner. */
+  routing?: { scope: string | null; message: string };
 }
 /** New or continue, among only what this caller already started. The owner's private topics and history aren't candidates. */
-async function routeOutsideCaller(accountId: string, entry: AssistantEntry, context: AssistantRoutingContext, routing: NonNullable<AssistantAutomationTurnOptions["routing"]>, classifierFetch?: typeof fetch): Promise<AssistantRoute | null> {
+async function routeOutsideCaller(accountId: string, entry: AssistantEntry, context: AssistantRoutingContext, routing: { scope: string; message: string }, classifierFetch?: typeof fetch): Promise<AssistantRoute | null> {
   const own = await routingScopeTopicIds(entry.id, routing.scope);
   const candidates = await assistantTopicCandidates(context.project, context.topics.filter(topic => own.has(`${topic.engine}:${topic.sessionId}`)), context.listed);
   if (!candidates.length) return { kind: "new" };
@@ -240,12 +241,13 @@ async function processAssistantTurn(accountId: string, entry: AssistantEntry, se
     if (entry.nodeId && entry.nodeId !== local.id) throw new Error("Open this assistant on its execution node");
     const context = await assistantRoutingContext(accountId, entry, session, true);
     const routingInput = options?.recentMessages ? { ...input, recentMessages: await options.recentMessages() } : input;
-    const route = options?.routing
-      ? await routeOutsideCaller(accountId, entry, context, options.routing, options.classifierFetch)
-      : await classifyAssistantMessage(entry, routingInput, context, options?.classifierFetch);
+    const scope = options?.routing?.scope;
+    const route = options?.routing && scope
+      ? await routeOutsideCaller(accountId, entry, context, { scope, message: options.routing.message }, options.classifierFetch)
+      : await classifyAssistantMessage(entry, options?.routing ? { ...routingInput, message: options.routing.message } : routingInput, context, options?.classifierFetch);
     if (!route) throw new Error("Assistant could not classify this message. Retry without losing the conversation.");
     const destination = await assistantDestination(accountId, entry, context, route, routingInput, local.id);
-    if (options?.routing) await addRoutingScopeTopic(entry.id, options.routing.scope, destination.engine, destination.sessionId);
+    if (scope) await addRoutingScopeTopic(entry.id, scope, destination.engine, destination.sessionId);
     return executeAssistantTurn(accountId, entry, session, input, destination, context.project, origin, options);
   });
 }
@@ -413,6 +415,7 @@ app.put("/api/personal-assistants/:id", async (request, response, next) => {
 app.delete("/api/personal-assistants/:id", async (request, response, next) => {
   try {
     if (!await visible(actor(response), request.params.id)) { sendError(response, 404, "Assistant not found"); return; }
+    await disconnectTelegram(request.params.id);
     await deletePersonalAssistant(actor(response), request.params.id);
     await removeAssistantCapabilities(await personalAssistantDatabase(), request.params.id);
     announceAssistantChanges();

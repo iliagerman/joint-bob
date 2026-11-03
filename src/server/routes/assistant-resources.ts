@@ -219,7 +219,7 @@ async function localAssistant(response: Response, id: string): Promise<PersonalA
   return entry;
 }
 
-function resourceRoute(work: (request: Request, response: Response, entry: PersonalAssistant) => Promise<void>) {
+export function resourceRoute(work: (request: Request, response: Response, entry: PersonalAssistant) => Promise<void>) {
   return async (request: Request, response: Response, next: NextFunction): Promise<void> => {
     try {
       const entry = await localAssistant(response, request.params.id);

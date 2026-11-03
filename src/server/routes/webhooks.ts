@@ -40,8 +40,7 @@ import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
 import { acceptWebhookCall } from "../webhooks.js";
 import { updateWebhookHistory } from "../webhook-history.js";
 import { getPersonalAssistant } from "../../personal-assistants.js";
-import { secretAccountVariable } from "../../secrets.js";
-import { TELEGRAM_TOKEN_VARIABLE } from "../../webhook-telegram.js";
+import { handleTelegramCallHeader, handleTelegramUpdate } from "../telegram.js";
 import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, revertWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
 import { ensureWebhookAgentSchema, runWebhookMemoryAgentCommand, type WebhookMemoryAgentIdentity } from "../../webhook-agent.js";
 import { readWebhookMemory, writeWebhookMemory, setWebhookMemoryEnabled } from "../../webhook-memory.js";
@@ -82,11 +81,24 @@ async function handleHook(request: IncomingMessage, response: ServerResponse, se
   const webhook = webhookForSecret(database, secret);
   if (!webhook) { request.resume(); reply(response, 404, "Not found"); return; }
   if (!webhook.enabled) { request.resume(); reply(response, 403, "This webhook is turned off"); return; }
+  // A connected bot's calls must prove they come from Telegram before anything is read.
+  if (webhook.reply === "telegram" && !handleTelegramCallHeader(database, webhook.id, request.headers["x-telegram-bot-api-secret-token"])) {
+    request.resume();
+    recordWebhookDelivery(database, webhook.id, "refused", "Refused: the call didn't prove it came from Telegram");
+    reply(response, 401, "Unauthorized");
+    return;
+  }
   const body = await readBody(request);
   if (body === undefined) { reply(response, 413, "Payload too large"); return; }
   let payload: Awaited<ReturnType<typeof readWebhookPayload>>;
   try { payload = await readWebhookPayload(String(request.headers["content-type"] ?? ""), body, webhook.attachments); }
   catch (error) { reply(response, error instanceof WebhookError ? error.statusCode : 400, error instanceof Error ? error.message : "The body could not be read"); return; }
+  if (webhook.reply === "telegram") {
+    // Answered at once, so Telegram doesn't retry while the assistant works.
+    response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end("{}");
+    void handleTelegramUpdate(webhook, payload.data).catch((error: unknown) => console.warn("Telegram update failed", error instanceof Error ? error.message : error));
+    return;
+  }
   // A sender off the list never reaches the conversation. The answer is still 2xx, so a sender
   // such as Telegram does not retry the call and hold up the ones behind it.
   const sender = webhookSender(webhook.senders, payload.data);
@@ -182,7 +194,7 @@ app.post("/api/webhook-title/agent", handle(async (request, response) => {
 }));
 
 /** Where a webhook's secret goes to make a URL: each relay this machine is on, and its own address when it has one. */
-async function urlBases(): Promise<Array<{ id: string; label: string; base: string }>> {
+export async function urlBases(): Promise<Array<{ id: string; label: string; base: string }>> {
   const bases: Array<{ id: string; label: string; base: string }> = [];
   const node = await getClusterNode();
   const db = await clusterV2Database();
@@ -205,7 +217,7 @@ async function checkTarget(input: WebhookInput): Promise<void> {
     try { validateProjectSecretAccounts(project.id, input.secretAccountIds); }
     catch { throw new WebhookError(400, "Selected secret accounts are unavailable for this project or conflict"); }
   }
-  if (input.reply === "telegram" && !secretAccountVariable(input.secretAccountIds, TELEGRAM_TOKEN_VARIABLE)) throw new WebhookError(400, `To reply in Telegram, select a secret account with ${TELEGRAM_TOKEN_VARIABLE}`);
+  if (input.reply) throw new WebhookError(400, "Connect Telegram from the assistant's Resources");
   if (input.target.kind === "assistant") {
     const assistant = input.creatorAccountId ? await getPersonalAssistant(input.creatorAccountId, input.target.assistantId) : undefined;
     if (!assistant || assistant.projectId !== project.id || assistant.nodeId && assistant.nodeId !== (await getClusterNode()).id) throw new WebhookError(404, "Assistant not found on this machine");
@@ -272,7 +284,9 @@ function decodeResourceData(data: string): Buffer {
 async function manage(command: Command): Promise<unknown> {
   const db = await clusterV2Database();
   if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation") : [] };
-  if (command.action === "list") return { webhooks: listWebhooks(db), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
+  // The webhook behind a connected Telegram bot is managed from the assistant, not here.
+  if ("id" in command && typeof command.id === "string" && command.action !== "deliveries" && getWebhook(db, command.id)?.reply) throw new WebhookError(409, "Manage this webhook from the assistant's Telegram settings");
+  if (command.action === "list") return { webhooks: listWebhooks(db).filter(hook => !hook.reply), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
   if (command.action === "options") {
     const adapters = listHarnesses().filter(({ runtime }) => runtime);
     return {
