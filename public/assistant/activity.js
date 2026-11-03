@@ -43,26 +43,28 @@ function proposalRows(proposal) {
 
 function approvalCard(item) {
   const owner = app.me?.account.name || "you";
+  const isDraft = item.proposal?.operation === "reply.text";
   const isEditing = editing === item.id;
   const destination = item.sourceKind === "group" ? `Would post in ${item.sourceName} as ${app.assistant.name}, for ${owner}` : `Would reply to ${item.callerName} as ${app.assistant.name}`;
   const replyBlock = isEditing ? editForm(item) : h("div", { class: "exact" }, h("p", { class: "label" }, destination), h("p", {}, item.proposal?.reply ?? ""));
   return h("article", { class: "card attention", "data-testid": "assistant-approval" },
-    h("div", { class: "card-top" }, chip("Awaiting your approval", "amber"), h("small", {}, `Proposal ${item.proposalRevision}`)),
+    h("div", { class: "card-top" }, chip(isDraft ? "Draft ready" : "Awaiting your approval", "amber"), isDraft ? null : h("small", {}, `Proposal ${item.proposalRevision}`)),
     h("h3", {}, item.actionName ?? "Request"), h("p", { class: "muted" }, item.sourceKind === "group" ? `${item.callerName} asked in ${item.sourceName}` : `${item.callerName} · Direct request`),
-    h("div", { class: "gap" }, trail(requestSteps("awaiting-approval", "your"))),
-    h("blockquote", { class: "quote" }, `“${item.text}”`), kv(proposalRows(item.proposal)), replyBlock,
-    h("div", { class: "exact" }, h("p", { class: "label" }, "The decision model asked you first"), h("p", { class: "fine" }, "Your instructions for this action say to ask you, or don't clearly allow it.")),
+    isDraft ? null : h("div", { class: "gap" }, trail(requestSteps("awaiting-approval", "your"))),
+    h("blockquote", { class: "quote" }, `“${item.text}”`), isDraft ? null : kv(proposalRows(item.proposal)), replyBlock,
+    isDraft ? null : h("div", { class: "exact" }, h("p", { class: "label" }, "The decision model asked you first"), h("p", { class: "fine" }, "Your instructions for this action say to ask you, or don't clearly allow it.")),
     isEditing ? null : h("div", { class: "actions" },
-      h("button", { type: "button", onclick: () => act(item, "reject") }, "Reject"),
+      h("button", { type: "button", "data-testid": "assistant-reject", onclick: () => act(item, "reject") }, isDraft ? "Discard" : "Reject"),
       h("button", { type: "button", onclick: () => { editing = item.id; render(); } }, "Edit"),
-      h("button", { type: "button", class: "primary grow", "data-testid": "assistant-approve", onclick: () => act(item, "approve", { proposalRevision: item.proposalRevision }) }, "Approve once")),
-    isEditing ? null : h("p", { class: "fine", style: "margin-top:8px" }, "Approval covers only this proposal and this reply, one time."));
+      h("button", { type: "button", class: "primary grow", "data-testid": "assistant-approve", onclick: () => act(item, "approve", { proposalRevision: item.proposalRevision }) }, isDraft ? "Post" : "Approve once")),
+    isEditing ? null : h("p", { class: "fine", style: "margin-top:8px" }, isDraft ? "Drafted from your instructions and notes, without tools. Nothing is sent until you post it." : "Approval covers only this proposal and this reply, one time."));
 }
 
 function editForm(item) {
+  const isDraft = item.proposal?.operation === "reply.text";
   const box = h("textarea", { name: "reply", rows: 3, required: true, maxlength: 4000 }, item.proposal?.reply ?? "");
-  const form = h("form", {}, h("label", { class: "field gap" }, h("span", {}, "Reply"), box, h("small", {}, "Your edit becomes a new proposal, and the decision model checks it before you can approve it.")),
-    h("div", { class: "actions" }, h("button", { type: "button", onclick: () => { editing = null; render(); } }, "Cancel"), h("button", { type: "submit", class: "primary grow" }, "Send for a new check")));
+  const form = h("form", {}, h("label", { class: "field gap" }, h("span", {}, "Reply"), box, h("small", {}, isDraft ? "You can still post or discard it after saving." : "Your edit becomes a new proposal, and the decision model checks it before you can approve it.")),
+    h("div", { class: "actions" }, h("button", { type: "button", onclick: () => { editing = null; render(); } }, "Cancel"), h("button", { type: "submit", class: "primary grow" }, isDraft ? "Save edit" : "Send for a new check")));
   form.addEventListener("submit", event => { event.preventDefault(); editing = null; act(item, "edit", { reply: box.value }); });
   return form;
 }

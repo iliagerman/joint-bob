@@ -3,7 +3,7 @@
 // Google Calendar are loopback stand-ins; nothing reaches a real service.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -48,7 +48,7 @@ async function fixtures(): Promise<Fixture> {
             const text = String((state.new_message as { text: string }).text).toLowerCase();
             const actions = (state.published_actions as Array<{ option: string; name: string }>) ?? [];
             const action = (name: string) => actions.find(item => item.name === name)?.option;
-            choice = text.includes("notes") ? "unpublished" : text.includes("budget") ? "notify_owner" : text.includes("travel") ? action("Share my travel plan")! : /meet|30 minutes|vendor/.test(text) ? action("Arrange a meeting")! : "record";
+            choice = text.includes("what do you think") ? "draft_reply" : text.includes("notes") ? "unpublished" : text.includes("budget") ? "notify_owner" : text.includes("travel") ? action("Share my travel plan")! : /meet|30 minutes|vendor/.test(text) ? action("Arrange a meeting")! : "record";
           }
           if (id === "disposition") choice = (state.caller as { name: string }).name === "dan" ? "execute" : "ask_owner";
           answers[id] = { type: "choice", choice, confidence: 0.9 };
@@ -92,7 +92,9 @@ test("people and assistants find each other on a relay, request public actions a
       await seedDevEnvironment(path.join(root, "b"), 1, { username: "noa" }),
     ];
     const [r, a, b] = environments.map(environment => environment.nodes[0]);
-    const env = { JOINT_BOB_TYPESAFE_ENDPOINT: `${fixture.url}/v1/systemone`, JOINT_BOB_GOOGLE_TOKEN_ENDPOINT: `${fixture.url}/token`, JOINT_BOB_GOOGLE_CALENDAR_ENDPOINT: `${fixture.url}/calendar/v3` };
+    const draftWriter = path.join(os.tmpdir(), `draft-writer-${randomUUID()}.mjs`);
+    await writeFile(draftWriter, "export default async ({ material }) => { const { new_message: message } = JSON.parse(material); return `Thanks, ${message.author}. I like it.`; };\n");
+    const env = { JOINT_BOB_TYPESAFE_ENDPOINT: `${fixture.url}/v1/systemone`, JOINT_BOB_GOOGLE_TOKEN_ENDPOINT: `${fixture.url}/token`, JOINT_BOB_GOOGLE_CALENDAR_ENDPOINT: `${fixture.url}/calendar/v3`, JOINT_BOB_DRAFT_GENERATOR: draftWriter };
     for (const [index, node] of [r, a, b].entries()) children.push(await startDevNode(environments[index], node, env));
     const [sr, sa, sb] = await Promise.all([signIn(environments[0], r), signIn(environments[1], a), signIn(environments[2], b)]);
 
@@ -254,6 +256,43 @@ test("people and assistants find each other on a relay, request public actions a
     assert.equal(fixture.events.length, 2);
 
     // Membership rules: the creator can't remove a companion directly; Noa leaving ends her access.
+    // A message that expects Ilia's reply gets a draft. It waits for Ilia, and only the posted text is sent.
+    type DraftActivity = { approvals: Array<{ id: string; proposalRevision: number; actionName: string; proposal: { operation: string; reply: string } }>; work: Array<{ state: string; text: string; detail: string }> };
+    const nextDraft = () => eventually(async () => {
+      const activity = await api<DraftActivity>(a, sa, "GET", `/personal-assistants/${assistantId}/activity`);
+      assert.equal(activity.body.approvals.length, 1, JSON.stringify(activity.body));
+      return activity.body.approvals[0];
+    });
+    await api(b, sb, "POST", `/social/groups/${groupId}/messages`, { id: randomUUID(), text: "Ilia, what do you think of the new logo?" });
+    const logoDraft = await nextDraft();
+    assert.equal(logoDraft.proposal.operation, "reply.text");
+    assert.equal(logoDraft.proposal.reply, "Thanks, noa. I like it.");
+    const notPosted = await api<Detail>(b, sb, "GET", `/social/groups/${groupId}`);
+    assert.equal(notPosted.body.messages.some(message => message.text.includes("I like it")), false, "nothing reaches the group before Ilia posts it");
+    const checksBeforeEdit = fixture.decisions.length;
+    assert.equal((await api(a, sa, "POST", `/personal-assistants/${assistantId}/requests/${logoDraft.id}/edit`, { reply: "I like the new logo." })).status, 200);
+    const editedDraft = await nextDraft();
+    assert.equal(editedDraft.proposalRevision, logoDraft.proposalRevision + 1);
+    assert.equal(editedDraft.proposal.reply, "I like the new logo.");
+    assert.equal(fixture.decisions.length, checksBeforeEdit, "Ilia's own edit needs no decision");
+    assert.equal((await api(a, sa, "POST", `/personal-assistants/${assistantId}/requests/${logoDraft.id}/approve`, { proposalRevision: logoDraft.proposalRevision })).status, 409, "a stale version of the draft can't be posted");
+    assert.equal((await api(a, sa, "POST", `/personal-assistants/${assistantId}/requests/${logoDraft.id}/approve`, { proposalRevision: editedDraft.proposalRevision })).status, 200);
+    await eventually(async () => {
+      const detail = await api<Detail>(b, sb, "GET", `/social/groups/${groupId}`);
+      assert.ok(detail.body.messages.some(message => message.text === "I like the new logo."), JSON.stringify(detail.body.messages));
+    });
+    await api(b, sb, "POST", `/social/groups/${groupId}/messages`, { id: randomUUID(), text: "And what do you think of the color?" });
+    const unwanted = await nextDraft();
+    assert.equal((await api(a, sa, "POST", `/personal-assistants/${assistantId}/requests/${unwanted.id}/reject`)).status, 200);
+    const discarded = await api<DraftActivity>(a, sa, "GET", `/personal-assistants/${assistantId}/activity`);
+    assert.match(discarded.body.work.find(item => item.text.includes("the color"))?.detail ?? "", /discarded the draft/);
+    await api(b, sb, "POST", `/social/threads/${threadId}/messages`, { id: randomUUID(), text: "Ilia, what do you think of Tuesday?" });
+    const threadDraft = await nextDraft();
+    assert.equal((await api(a, sa, "POST", `/personal-assistants/${assistantId}/requests/${threadDraft.id}/reject`)).status, 200);
+    const threadAfter = await api<{ messages: Array<{ text: string }> }>(b, sb, "GET", `/social/threads/${threadId}`);
+    assert.equal(threadAfter.body.messages.at(-1)?.text, "Ilia, what do you think of Tuesday?", "discarding a draft sends nothing");
+    await rm(draftWriter, { force: true });
+
     const detailA = await api<Detail>(a, sa, "GET", `/social/groups/${groupId}`);
     const companion = detailA.body.members.find(member => member.kind === "assistant")!;
     assert.equal((await api(a, sa, "POST", `/social/groups/${groupId}/members/${companion.membershipId}/remove`)).status, 409);
