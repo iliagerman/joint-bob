@@ -1,9 +1,10 @@
 // How a request reaches a peer (RELAY-PLAN.md §4.4–4.6).
 //
 // `peerFetch` and `peerWebSocket` take the same arguments as `fetch` and `new WebSocket`.
-// A peer with a direct URL is tried directly first; if that cannot connect and a relay
-// both machines are on can reach it, the request goes through the relay instead. A peer
-// that only has relays advertises a URL under `.relay.invalid` and always goes through one.
+// A peer that a relay both machines are on reports online is reached through that relay;
+// its direct URL is used when the relay cannot open a channel to it, and for a while after,
+// and when no relay reports it. A peer that only has relays advertises a URL under
+// `.relay.invalid` and always goes through one.
 //
 // Choosing a path never changes what is asked or who answers: the request, its signature
 // and the receiving machine's checks are the same either way.
@@ -19,6 +20,8 @@ import { observeRelayRequest } from "./request-diagnostics.js";
 
 /** After a direct connection fails, prefer the relay for this long before trying direct again. */
 const DIRECT_RETRY_MS = 5 * 60_000;
+/** After a relay cannot open a channel to a peer, use the peer's direct URL for this long. */
+const RELAY_RETRY_MS = 5 * 60_000;
 /**
  * A peer on another network advertises an address that does not exist here: its name does not
  * resolve and it is only ever reached through a relay. Such an address is looked up again
@@ -36,12 +39,17 @@ const NULL_BODY = new Set([101, 103, 204, 205, 304]);
 let runtime: RelayRuntime | undefined;
 const directFailedUntil = new Map<string, number>();
 const directWorked = new Set<string>();
+/** By peer node ID: when the relay may be tried first again. */
+const relayFailedUntil = new Map<string, number>();
+/** Relay request errors whose channel never opened: nothing reached the peer, so sending again is safe. */
+const unopened = new WeakSet<object>();
 const agents = new Map<string, http.Agent>();
 
 export function setRelayTransport(active: RelayRuntime | undefined): void {
   runtime = active;
   directFailedUntil.clear();
   directWorked.clear();
+  relayFailedUntil.clear();
   probes.clear();
   for (const agent of agents.values()) agent.destroy();
   agents.clear();
@@ -49,7 +57,8 @@ export function setRelayTransport(active: RelayRuntime | undefined): void {
 
 export function activeRelayRuntime(): RelayRuntime | undefined { return runtime; }
 
-type Route = { kind: "direct"; nodeId?: string } | { kind: "relay"; nodeId: string } | { kind: "unreachable"; nodeId: string };
+/** `direct`: the peer has its own URL to fall back to if the relay cannot open a channel. */
+type Route = { kind: "direct"; nodeId?: string } | { kind: "relay"; nodeId: string; direct?: boolean } | { kind: "unreachable"; nodeId: string };
 
 /**
  * The caller names the peer it means: a URL is only where to find it. A relay-only URL must
@@ -66,6 +75,8 @@ function chooseRoute(url: URL, peerId: string | undefined): Route {
   // Without relays, or without knowing which peer is meant, the request goes direct as before relays existed.
   if (!peerId || !runtime?.hasAnyRelay()) return { kind: "direct" };
   runtime.ensureWatched(peerId);
+  // A relay that reports the peer online is the default way there; the peer's own URL is the fallback.
+  if (runtime.hasRoute(peerId) && !relayFailedRecently(peerId)) return { kind: "relay", nodeId: peerId, direct: true };
   if (directFailedRecently(url.origin)) {
     if (runtime.hasRoute(peerId)) return { kind: "relay", nodeId: peerId };
     // Reached through a relay before, its own address not working, and no relay reporting it
@@ -76,6 +87,18 @@ function chooseRoute(url: URL, peerId: string | undefined): Route {
 }
 
 function directFailedRecently(origin: string): boolean { return (directFailedUntil.get(origin) ?? 0) > Date.now(); }
+function relayFailedRecently(nodeId: string): boolean { return (relayFailedUntil.get(nodeId) ?? 0) > Date.now(); }
+
+function markRelayFailed(nodeId: string): void {
+  const fresh = !relayFailedRecently(nodeId);
+  relayFailedUntil.set(nodeId, Date.now() + RELAY_RETRY_MS);
+  // A peer that moved off the relay no longer needs its Syncthing tunnel.
+  if (fresh) runtime?.changed();
+}
+
+function markRelayWorked(nodeId: string): void {
+  if (relayFailedUntil.delete(nodeId)) runtime?.changed();
+}
 
 function retryAfter(origin: string, code: unknown): number {
   return typeof code === "string" && UNRESOLVED.has(code) && !directWorked.has(origin) ? UNKNOWN_ADDRESS_RETRY_MS : DIRECT_RETRY_MS;
@@ -160,20 +183,36 @@ export async function peerFetch(input: string | URL, init: RequestInit = {}, pee
 
 async function routedFetch(url: URL, input: string | URL, init: RequestInit, peerId: string | undefined): Promise<Response> {
   const route = chooseRoute(url, peerId);
-  if (route.kind === "relay") return relayFetch(route.nodeId, url, init, 0);
+  if (route.kind === "relay") {
+    if (!route.direct) return relayFetch(route.nodeId, url, init, 0);
+    try {
+      const response = await relayFetch(route.nodeId, url, init, 0);
+      markRelayWorked(route.nodeId);
+      return response;
+    } catch (error) {
+      // Only a channel that never opened is sent again: then nothing reached the peer.
+      if (!(error instanceof Object) || !unopened.has(error) || init.signal?.aborted || !replayable(init.body)) throw error;
+      markRelayFailed(route.nodeId);
+      return directFetch(url, input, init, route.nodeId, false);
+    }
+  }
   if (route.kind === "unreachable") throw new TypeError("fetch failed", { cause: Object.assign(new Error("No relay can reach that machine right now"), { code: "ERELAYUNREACHABLE" }) });
-  const relayed = route.nodeId && runtime?.hasRoute(route.nodeId) ? route.nodeId : undefined;
+  return directFetch(url, input, init, route.nodeId, true);
+}
+
+/** `fetch` to a peer's own URL. `relayFallback`: whether a relay may still carry the request if it cannot connect. */
+async function directFetch(url: URL, input: string | URL, init: RequestInit, nodeId: string | undefined, relayFallback: boolean): Promise<Response> {
+  const relayed = relayFallback && nodeId && runtime?.hasRoute(nodeId) ? nodeId : undefined;
   if (relayed && !await directReachable(url)) return relayFetch(relayed, url, init, 0);
   try {
     const response = await fetch(input, init);
-    if (route.nodeId) markDirectWorked(url.origin);
+    if (nodeId) markDirectWorked(url.origin);
     return response;
   } catch (error) {
-    const nodeId = route.nodeId;
     // A timeout before any answer also means the direct path is not working right now. It is
     // remembered whether or not a relay can step in, so an address that cannot work is left alone.
     if (nodeId && (isConnectFailure(error) || (error instanceof Error && error.name === "TimeoutError"))) markDirectFailed(url.origin, failureCode(error));
-    if (!nodeId || !runtime?.hasRoute(nodeId)) throw error;
+    if (!relayFallback || !nodeId || !runtime?.hasRoute(nodeId)) throw error;
     if (init.signal?.aborted || !isConnectFailure(error) || !replayable(init.body)) throw error;
     return relayFetch(nodeId, url, init, 0);
   }
@@ -213,6 +252,8 @@ async function relayFetch(nodeId: string, url: URL, init: RequestInit, hops: num
 
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
     const request = http.request({ agent: agentFor(nodeId), host: url.hostname, port: url.port || (url.protocol === "https:" ? 443 : 80), method, path: `${url.pathname}${url.search}`, headers });
+    let channel: RelayStream | undefined;
+    request.once("socket", (socket) => { channel = socket as unknown as RelayStream; });
     observeRelayRequest(request, nodeId, signal);
     const abort = (): void => { request.destroy(signal?.reason); reject(signal?.reason); };
     signal?.addEventListener("abort", abort, { once: true });
@@ -222,7 +263,11 @@ async function relayFetch(nodeId: string, url: URL, init: RequestInit, hops: num
     });
     request.on("error", (error) => {
       signal?.removeEventListener("abort", abort);
-      reject(signal?.aborted ? signal.reason : new TypeError("fetch failed", { cause: error }));
+      if (signal?.aborted) { reject(signal.reason); return; }
+      const failure = new TypeError("fetch failed", { cause: error });
+      // A channel buffers writes until it is open; a pooled one that was open may have carried the request.
+      if (!channel || channel.connecting) unopened.add(failure);
+      reject(failure);
     });
     if (buffered) request.end(buffered);
     else if (normalized.body) Readable.fromWeb(normalized.body as import("node:stream/web").ReadableStream).pipe(request);
@@ -267,23 +312,31 @@ export function peerWebSocket(address: string | URL, options: ClientOptions = {}
   }
   // An unreachable peer fails the way an unreachable host does, through the socket's error event.
   const nodeId = route.nodeId!;
-  return new WebSocket(url, {
+  let channel: RelayStream | undefined;
+  const socket = new WebSocket(url, {
     ...options,
     createConnection: () => {
       if (!runtime) throw new Error("Relays are not running");
-      return runtime.openStream(nodeId, "peer") as unknown as Socket;
+      channel = runtime.openStream(nodeId, "peer");
+      return channel as unknown as Socket;
     },
   });
+  if (route.kind === "relay" && route.direct) {
+    // The caller retries a failed socket; make the retry use the peer's own URL if the relay could not open a channel.
+    socket.once("open", () => markRelayWorked(nodeId));
+    socket.once("error", () => { if (!channel || channel.connecting) markRelayFailed(nodeId); });
+  }
+  return socket;
 }
 
 /** Whether a peer is reached through a relay right now (for Syncthing tunnels and the UI). */
 export function peerUsesRelay(nodeId: string, peerUrl: string | undefined): boolean {
   if (!runtime || !runtime.hasRoute(nodeId)) return false;
-  if (!peerUrl || virtualRelayNodeId(peerUrl)) return true;
+  if (!peerUrl || virtualRelayNodeId(peerUrl) || !relayFailedRecently(nodeId)) return true;
   try { return directFailedRecently(new URL(peerUrl).origin); } catch { return true; }
 }
 
-export function resetDirectFailures(): void { directFailedUntil.clear(); directWorked.clear(); probes.clear(); }
+export function resetDirectFailures(): void { directFailedUntil.clear(); directWorked.clear(); relayFailedUntil.clear(); probes.clear(); }
 
 export { virtualRelayUrl };
 export type { RelayStream };

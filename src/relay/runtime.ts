@@ -36,6 +36,13 @@ const WEBSOCKET_RETRY_MS = 5 * 60_000;
 const ROUTE_WAIT_MS = 5_000;
 /** The relay pings every 30 s and a long-poll answers within 25 s; silence this long means the link is dead. */
 const SILENCE_LIMIT_MS = 90_000;
+/**
+ * After WebSockets went silent on this network, they are tested again this many times less often:
+ * every test costs one silent stretch, while long-polling keeps working.
+ */
+const SILENT_WEBSOCKET_RETRY_FACTOR = 6;
+/** How long a channel may take to open. A relay link that went silent never answers the open. */
+const CHANNEL_OPEN_MS = 15_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Membership ID of the relay this node serves itself; it has no database row. */
 export const LOCAL_RELAY_ID = "local";
@@ -58,6 +65,10 @@ export interface RuntimeHandlers {
   preferPoll?: boolean;
   /** Override only in isolated transport tests. */
   websocketRetryMs?: number;
+  /** Override only in isolated transport tests. */
+  silenceLimitMs?: number;
+  /** Override only in isolated transport tests. */
+  channelOpenMs?: number;
 }
 
 export interface RelayRoute { membershipId: string; hub: ChannelHub }
@@ -83,6 +94,14 @@ class RelayConnection {
   /** Long-polling replaces the WebSocket after it repeatedly fails to open (RELAY-PLAN.md D1). */
   private usePoll: boolean;
   private failedToOpen = 0;
+  /**
+   * WebSockets that opened and then went silent, in a row. A VPN or proxy can pass the handshake
+   * and then stop delivering the relay's frames; long-polling still works through it.
+   */
+  private wentSilent = 0;
+  /** Polling because WebSockets went silent, not because they failed to open. */
+  private silentFallback = false;
+  private admittedAt = 0;
   hub: ChannelHub | undefined;
   readonly online = new Set<string>();
   connected = false;
@@ -131,14 +150,25 @@ class RelayConnection {
     let failure = "";
     const transport = this.usePoll ? "poll" : "websocket";
     let lastHeard = Date.now();
-    const heard = (): void => { lastHeard = Date.now(); this.refreshWorkspaceLease(lastHeard); };
+    let silent = false;
+    const silenceLimit = this.runtime.handlers.silenceLimitMs ?? SILENCE_LIMIT_MS;
+    const heard = (): void => {
+      lastHeard = Date.now();
+      this.refreshWorkspaceLease(lastHeard);
+      // A WebSocket still heard well past the silence limit works on this network again.
+      if (transport === "websocket" && this.connected && ws === this.ws && lastHeard - this.admittedAt > silenceLimit * 2) {
+        this.wentSilent = 0;
+        this.silentFallback = false;
+      }
+    };
     // A NAT that drops an idle mapping or a relay host that loses power sends no close; notice the silence.
     const watchdog = setInterval(() => {
-      if (Date.now() - lastHeard > SILENCE_LIMIT_MS) {
-        failure = "No relay frames for 90 seconds";
+      if (Date.now() - lastHeard > silenceLimit) {
+        silent = true;
+        failure = `No relay frames for ${Math.round(silenceLimit / 1000)} seconds`;
         ws.terminate();
       }
-    }, SILENCE_LIMIT_MS / 3);
+    }, silenceLimit / 3);
     watchdog.unref();
     ws.on("open", () => { opened = true; this.failedToOpen = 0; heard(); });
     ws.on("ping", heard);
@@ -179,6 +209,13 @@ class RelayConnection {
           this.usePoll = !this.usePoll;
           this.failedToOpen = 0;
           this.record(this.usePoll ? "poll" : "websocket", "fallback", `Switching from ${transport}`);
+        } else if (opened && silent && transport === "websocket" && (this.silentFallback || ++this.wentSilent >= 2)) {
+          // Opened, then nothing arrived: a VPN or proxy that passes the handshake but not the traffic.
+          // Reconnecting the same way only repeats it, so poll. One silent re-test returns straight here.
+          this.usePoll = true;
+          this.silentFallback = true;
+          this.wentSilent = 0;
+          this.record("poll", "fallback", "WebSocket went silent after opening");
         }
       }
       this.teardown("Relay connection closed");
@@ -245,6 +282,7 @@ class RelayConnection {
     this.relayPublicKey = handshake.relayPublicKey;
     this.attempt = 0;
     this.connected = true;
+    this.admittedAt = Date.now();
     this.hub = new ChannelHub({
       send: (out) => { if (ws.readyState === WebSocket.OPEN) ws.send(out); },
       onIncoming: (incoming) => this.runtime.acceptIncoming(incoming, this.id),
@@ -317,7 +355,7 @@ class RelayConnection {
       this.usePoll = false;
       this.record("websocket", "retry", "Testing WebSocket after polling fallback");
       this.ws?.close(1000, "Testing WebSocket");
-    }, this.runtime.handlers.websocketRetryMs ?? WEBSOCKET_RETRY_MS);
+    }, (this.runtime.handlers.websocketRetryMs ?? WEBSOCKET_RETRY_MS) * (this.silentFallback ? SILENT_WEBSOCKET_RETRY_FACTOR : 1));
     this.websocketRetry.unref();
   }
 
@@ -613,7 +651,13 @@ export class RelayRuntime extends EventEmitter {
     };
     // A relay that cannot reach the peer after all hands the stream to the next one.
     stream.retryOpen = () => tryOpen();
-    stream.once("relay-ready", () => { if (current) this.rememberRoute(nodeId, current); });
+    // Nothing is sent to the peer before the channel is ready, so a caller may safely try another way.
+    const openTimer = setTimeout(() => {
+      if (!stream.destroyed && stream.connecting) stream.fail(new RelayChannelError("The relay did not open a channel to that machine in time"));
+    }, this.handlers.channelOpenMs ?? CHANNEL_OPEN_MS);
+    openTimer.unref();
+    stream.once("relay-ready", () => { clearTimeout(openTimer); if (current) this.rememberRoute(nodeId, current); });
+    stream.once("close", () => clearTimeout(openTimer));
     if (tryOpen()) return stream;
     const stopWaiting = (): void => { clearTimeout(timer); this.off("changed", onChange); };
     const onChange = (): void => { if (stream.destroyed) stopWaiting(); else if (tryOpen()) stopWaiting(); };

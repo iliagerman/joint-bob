@@ -641,6 +641,68 @@ test("a direct address that silently drops packets falls back to the relay quick
   assert.ok(Date.now() - started < 8_000, `took ${Date.now() - started} ms; the direct connect timeout was waited out`);
 });
 
+/** A working direct address for `peer`: requests land in the same handler its relay channels use. */
+async function directAddress(t: TestContext, peer: Machine): Promise<string> {
+  const direct = http.createServer((request, response) => peer.server.emit("request", request, response));
+  const port = await listen(direct);
+  t.after(() => { direct.closeAllConnections(); direct.close(); });
+  return `http://127.0.0.1:${port}`;
+}
+
+test("a peer a relay reports online is reached through the relay even while its own address works", async (t) => {
+  const direct = await directAddress(t, b);
+  setRelayTransport(a.runtime);
+  a.runtime.ensureWatched(b.nodeId);
+  await eventually(() => assert.ok(a.runtime.hasRoute(b.nodeId)));
+  const response = await peerFetch(`${direct}/relay-first`, { method: "POST", body: "relay-first" }, b.nodeId);
+  assert.equal((await response.json() as { echo: string }).echo, "relay-first");
+  assert.equal(b.requests.at(-1)?.transport, "peer", "it arrived on a relay channel, not on the open direct address");
+});
+
+test("when the relay does not open a channel in time, the request goes to the peer's own address, which stays first for a while", async (t) => {
+  const p = await machine("open-timeout", () => [b.nodeId], { channelOpenMs: 300 });
+  t.after(() => { setRelayTransport(undefined); p.runtime.stop(); });
+  p.runtime.addWithToken(token("open-timeout"));
+  await eventually(() => assert.equal(listMemberships(p.db)[0]?.status, "admitted"));
+  p.runtime.refreshWatch();
+  await eventually(() => assert.ok(p.runtime.hasRoute(b.nodeId)));
+  const direct = await directAddress(t, b);
+  // A relay link that went quiet: the request to open a channel leaves, and no answer comes back.
+  const hub = (p.runtime as any).connections.get(listMemberships(p.db)[0].id).hub;
+  const send = hub.options.send;
+  hub.options.send = () => undefined;
+  setRelayTransport(p.runtime);
+  const started = Date.now();
+  const first = await peerFetch(`${direct}/around-the-silence`, { method: "POST", body: "around-the-silence" }, b.nodeId);
+  assert.equal((await first.json() as { echo: string }).echo, "around-the-silence");
+  assert.equal(b.requests.at(-1)?.transport, undefined, "it arrived on the peer's own address");
+  assert.ok(Date.now() - started < 5_000, `took ${Date.now() - started} ms`);
+  hub.options.send = send;
+  await (await peerFetch(`${direct}/still-direct`, {}, b.nodeId)).arrayBuffer();
+  assert.deepEqual(b.requests.at(-1) && { url: b.requests.at(-1)!.url, transport: b.requests.at(-1)!.transport }, { url: "/still-direct", transport: undefined }, "the relay is not tried first again right away");
+});
+
+test("a WebSocket that opens and then goes silent, as through some VPNs, moves the machine to long-polling", async (t) => {
+  const other = await secondRelay();
+  const original = other.server.handleUpgrade;
+  other.server.handleUpgrade = function (request, socket, head) {
+    // The handshake and the first frames pass; after that nothing more reaches the machine.
+    setTimeout(() => {
+      (socket as any).write = (...args: unknown[]) => { const done = args.find((item) => typeof item === "function") as (() => void) | undefined; if (done) process.nextTick(done); return true; };
+    }, 300);
+    return original.call(this, request, socket, head);
+  };
+  const client = await machine("goes-silent", () => [], { silenceLimitMs: 900, websocketRetryMs: 60_000 });
+  t.after(() => { client.runtime.stop(); other.close(); });
+  client.runtime.addWithToken(other.token("goes-silent"));
+  const id = listMemberships(client.db)[0].id;
+  await eventually(() => assert.ok(listRelayTransportEvents(client.db, id).some((entry) => entry.event === "fallback" && entry.detail === "WebSocket went silent after opening")), 15_000);
+  const silentWebSockets = listRelayTransportEvents(client.db, id).filter((entry) => entry.transport === "websocket" && entry.detail.startsWith("No relay frames"));
+  assert.equal(silentWebSockets.length, 2, "two silent WebSockets in a row, then polling");
+  await eventually(() => assert.ok(listRelayTransportEvents(client.db, id).some((entry) => entry.transport === "poll" && entry.event === "connected")));
+  assert.equal((client.runtime as any).connections.get(id).usePoll, true);
+});
+
 test("a request reaches only the peer the caller named, whatever URL it was given", async () => {
   setRelayTransport(a.runtime);
   // A relay-only URL naming a different node than the intended peer is refused, not followed.
