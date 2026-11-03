@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import WebSocket from "ws";
 import { runInRuntime } from "../account-runtime.js";
 import { bindToRuntime, runtimeForProject } from "../project-runtime.js";
@@ -116,12 +117,27 @@ function subscribe(shared: SharedHarnessSession): () => void {
   });
 }
 
+/** A transcript's size and time, or null while it does not exist. */
+async function transcriptStamp(sessionPath: string): Promise<string | null> {
+  try {
+    const { size, mtimeMs } = await stat(sessionPath.replace(/^[a-z][a-z0-9-]*:/, ""));
+    return `${size}:${mtimeMs}`;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 async function createSession(engine: HarnessId, options: HarnessOpenOptions): Promise<SharedHarnessSession> {
   // The session runs as the project's account from here on, whoever opened it.
   const runtime = await runtimeForProject(options.projectId);
+  const stampBefore = options.sessionPath ? await transcriptStamp(options.sessionPath) : null;
   const session = bindToRuntime(await runInRuntime(runtime, async () => (await getHarnessRuntime(engine)).open(options)), runtime);
   if (session.id !== options.sessionId) throw new Error(`Harness returned unexpected session ID: ${session.id}`);
-  const shared: SharedHarnessSession = { engine, projectId: options.projectId, conversationId: options.conversationId ?? options.sessionId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, lastActivityAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
+  // Opening can rewrite the transcript (Pi migrates an old format). That is this node's own write:
+  // treated as an outside change, the watcher would reconnect the page moments after it opened.
+  const rewritten = Boolean(options.sessionPath) && stampBefore !== await transcriptStamp(options.sessionPath!);
+  const shared: SharedHarnessSession = { engine, projectId: options.projectId, conversationId: options.conversationId ?? options.sessionId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: rewritten ? Date.now() : 0, lastActivityAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
   shared.unsubscribe = subscribe(shared);
   harnessSessions.set(harnessSessionKey(options.projectId, engine, session.id), shared);
   return shared;

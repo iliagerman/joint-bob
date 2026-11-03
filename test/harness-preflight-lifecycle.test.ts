@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import type WebSocket from "ws";
@@ -82,6 +83,30 @@ test("preflight pins a shared session against transcript refresh", async (contex
     assert.equal(fixture.shared.turnInFlight, 0);
     assert.ok(fixture.events.some((event) => event.type === "promptCompleted"));
   } finally { gate.resolve(); cleanup(fixture); }
+});
+
+test("a transcript the open itself rewrites is not an outside change; one changed later still is", async (context) => {
+  const id = crypto.randomUUID();
+  const project = await addProject(`rewrite-${id}`, path.join(process.env.HOME!, `project-${id}`), { writeInstructions: false });
+  const local = await getClusterNode();
+  await ensureConversationRecord(project.id, "kiro", id, local.id);
+  await claimConversationLocally("kiro", id, local.id);
+  const file = path.join(process.env.HOME!, `${id}.jsonl`);
+  await writeFile(file, "old format\n");
+  const runtime = await getHarnessRuntime("kiro");
+  context.mock.method(runtime, "open", async () => {
+    await writeFile(file, "migrated format, as Pi rewrites one on open\n");
+    return fakeHarnessSession(id, file, Promise.resolve(), () => {});
+  });
+  const key = harnessSessionKey(project.id, "kiro", id);
+  const shared = await openHarnessSession("kiro", { projectId: project.id, cwd: project.path, sessionId: id, sessionPath: file, conversationId: id, accountIds: [] });
+  try {
+    refreshHarnessTranscripts(project.id, [file]);
+    assert.equal(harnessSessions.get(key), shared, "the watcher reporting this node's own rewrite must not reconnect the page");
+    shared.lastLocalEventAt = 0;
+    refreshHarnessTranscripts(project.id, [file]);
+    assert.equal(harnessSessions.has(key), false, "a change after the open still reloads the conversation");
+  } finally { if (harnessSessions.get(key) === shared) disposeHarnessSession(shared); }
 });
 
 test("queued prompt rebinds after idle transcript invalidation", async (context) => {
