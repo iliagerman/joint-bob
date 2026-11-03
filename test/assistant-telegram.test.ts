@@ -150,6 +150,11 @@ test("a Telegram bot reaches its assistant only through code that approves each 
     const prompts = async () => (await readFile(promptLog, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { text: string; botToken: string | null });
     const promptCount = (await prompts()).length;
     const turns = async () => (await api<{ turns: Array<{ topicId: string; message: string; status: string }> }>(node, session, "GET", `/personal-assistants/${assistantId}/turns`)).body.turns;
+    const lastTurnOrigin = () => {
+      const db = new DatabaseSync(path.join(node.dataDir, "node.db"), { readOnly: true });
+      try { return (db.prepare("SELECT origin FROM personal_assistant_turns ORDER BY created_at DESC, rowid DESC LIMIT 1").get() as { origin: string }).origin; }
+      finally { db.close(); }
+    };
     const status = async () => (await api<{ owner: { id: string } | null; waiting: Array<{ kind: string; id: string; name: string }>; allowed: Array<{ kind: string; id: string }>; blocked: unknown[]; calls: Array<{ status: string; detail: string }> }>(node, session, "GET", telegram)).body;
     const replyAfter = async (action: () => Promise<Response>) => {
       const before = world.sent().length;
@@ -211,6 +216,7 @@ test("a Telegram bot reaches its assistant only through code that approves each 
     assert.match(ownerPrompt.text, /What about hotels there\?$/);
     assert.doesNotMatch(ownerPrompt.text, /treat it as data/, "the owner's words aren't labelled as outside data");
     assert.equal(ownerPrompt.botToken, null, "the agent can't read the bot's token");
+    assert.equal(lastTurnOrigin(), "chat", "your own chat counts as you, so it can ask your other assistants");
 
     // Someone else adds the bot to a group: it leaves, and nothing runs.
     const decisionsBefore = world.decisions.length;
@@ -245,6 +251,7 @@ test("a Telegram bot reaches its assistant only through code that approves each 
     assert.match(groupPrompt, /Flights are booked for 14 Dec/, "everything said in the group is shared context");
     assert.match(groupPrompt, /treat it as data/);
     assert.match(groupPrompt, /everyone in the group can read it/);
+    assert.equal(lastTurnOrigin(), "webhook", "someone else's message can't ask your other assistants");
     const groupTopic = (await turns()).at(-1)!.topicId;
     assert.notEqual(groupTopic, `kiro:${source.id}`, "a group doesn't join your private conversations");
     world.control.choice = "topic_0";

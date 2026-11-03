@@ -122,7 +122,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
     const assistantId = webhook.target.assistantId;
     let activeSessionId: string | null = null;
     const turn = await runPersonalAssistantAutomationTurn(webhook.creatorAccountId, assistantId, call.requestId!, message, {
-      label: "Webhook", origin: "webhook", automationProfile: automationProfileContext(webhook), images: placed.images, files: placed.files, routing: assistantRouting(webhook, call),
+      label: "Webhook", origin: call.telegram && call.telegram.routing.scope === null ? "chat" : "webhook", automationProfile: automationProfileContext(webhook), images: placed.images, files: placed.files, routing: assistantRouting(webhook, call),
       prepare: async destination => {
         await attachSecrets(webhook, destination.engine, destination.sessionId);
         bindWebhookConversation(db, webhook.id, project.id, destination.sessionId, local.id, destination.isNew);
