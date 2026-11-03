@@ -10,7 +10,7 @@ import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { nanoid } from "nanoid";
-import { ensureWorkspaceSecretsMigration, rekeySecretAssignments } from "./secrets-migration.js";
+import { ensureDedicatedSecretTypesMigration, ensureWorkspaceSecretsMigration, rekeySecretAssignments } from "./secrets-migration.js";
 import { getClusterNode } from "./cluster.js";
 import {
   applyResourcePolicy, deleteSharedResource, ensureResourceSharingSchema, registerLocalSharingResource,
@@ -465,6 +465,7 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
     }
     // Reads the github_* tables and workspaces.github_group, so it must precede the drop below.
     ensureWorkspaceSecretsMigration(db);
+    ensureDedicatedSecretTypesMigration(db);
     dropLegacyGitHubSchema(db);
     await migrateLegacyProjects(db);
     ensureResourceSharingSchema(db);

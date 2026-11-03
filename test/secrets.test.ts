@@ -209,7 +209,7 @@ test("certificate accounts validate matching PEM files and expose private file p
 test("new provider types retain encrypted values and export their chosen variable", async () => {
   await withSecrets("more-providers", async (secrets) => {
     for (const [provider, variable] of [
-      ["openai", "OPENAI_API_KEY"], ["elevenlabs", "ELEVENLABS_API_KEY"], ["zai", "ZAI_API_KEY"], ["grafana", "GRAFANA_API_KEY"],
+      ["openai", "OPENAI_API_KEY"], ["typesafe", "TYPESAFE_AI_API_KEY"], ["tavily", "TAVILY_API_KEY"], ["elevenlabs", "ELEVENLABS_API_KEY"], ["zai", "ZAI_API_KEY"], ["grafana", "GRAFANA_API_KEY"],
       ["datadog", "DD_API_KEY"], ["postgres", "DATABASE_URL"],
       ["mssql", "MSSQL_CONNECTION_STRING"], ["mongodb", "MONGODB_URI"],
     ] as const) {
@@ -505,12 +505,14 @@ test("deleting an account removes its attachments and a dangling attachment is i
 test("deleting a project or a workspace deletes its attachments, and an alias merge re-keys them", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-secrets-lifecycle-"));
   const previous = process.env.PI_WEB_DATA_DIR;
+  const previousSecretKey = process.env.JOINT_BOB_SECRET_KEY;
   process.env.PI_WEB_DATA_DIR = root;
   try {
     const tag = `${Date.now()}-${Math.random()}`;
     const store = await import(`../src/store.js?lifecycle=${tag}`);
     const secrets = await import(`../src/secrets.js?lifecycle=${tag}`);
     const account = await secrets.saveSecretAccount({ label: "shared", provider: "custom", variables: [{ name: "TOKEN", kind: "value", value: "shared" }] });
+    process.env.JOINT_BOB_SECRET_KEY = (await readFile(path.join(root, "secret.key"), "utf8")).trim();
 
     const canonical = await store.addProject("Canonical", path.join(root, "canonical"), { type: "work" });
     const merged = await store.addProject("Merged", path.join(root, "merged"), { type: "work" });
@@ -534,6 +536,7 @@ test("deleting a project or a workspace deletes its attachments, and an alias me
     }
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previous;
+    if (previousSecretKey === undefined) delete process.env.JOINT_BOB_SECRET_KEY; else process.env.JOINT_BOB_SECRET_KEY = previousSecretKey;
     await rm(root, { recursive: true, force: true });
   }
 });

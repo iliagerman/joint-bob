@@ -9,6 +9,38 @@ const MARKER = "github-groups-v1";
 interface GitHubAccountRow { account: string; token: string; label: string; is_default: number }
 interface ProjectAuthRow { project_id: string; account: string; token: string | null }
 
+const DEDICATED_PROVIDER_MIGRATION = "dedicated-secret-providers-v1";
+const DEDICATED_PROVIDER_BY_VARIABLE = new Map([
+  ["TYPESAFE_AI_API_KEY", "typesafe"],
+  ["TAVILY_API_KEY", "tavily"],
+  ["ELEVENLABS_API_KEY", "elevenlabs"],
+  ["GITLAB_API_KEY", "gitlab"],
+]);
+
+/** Changes only provider metadata for custom accounts whose complete variable shape is known. */
+export function ensureDedicatedSecretTypesMigration(db: DatabaseSync): void {
+  ensureSecretSchema(db);
+  db.exec("CREATE TABLE IF NOT EXISTS secrets_migrations (source TEXT PRIMARY KEY, migrated_at TEXT NOT NULL);");
+  if (db.prepare("SELECT 1 FROM secrets_migrations WHERE source = ?").get(DEDICATED_PROVIDER_MIGRATION)) return;
+
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const accounts = db.prepare("SELECT id, variables_encrypted FROM secret_accounts WHERE provider = 'custom'").all() as Array<{ id: string; variables_encrypted: string }>;
+    for (const account of accounts) {
+      const variables = JSON.parse(decryptSecretValue(account.variables_encrypted)) as Array<{ name: string; kind: string }>;
+      if (variables.length !== 1 || variables[0].kind !== "value") continue;
+      const provider = DEDICATED_PROVIDER_BY_VARIABLE.get(variables[0].name);
+      if (provider) db.prepare("UPDATE secret_accounts SET provider = ? WHERE id = ?").run(provider, account.id);
+    }
+    db.prepare("INSERT INTO secrets_migrations (source, migrated_at) VALUES (?, ?)").run(DEDICATED_PROVIDER_MIGRATION, now);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function tableExists(db: DatabaseSync, name: string): boolean {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
 }

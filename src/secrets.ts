@@ -14,7 +14,7 @@ import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 import { applyGithubAccounts, assertGithubAccountsDistinct, assertGithubVariableNames, finalizeGithubVariables, githubAccount, githubAccountContext, githubAccountSummary, githubOwnerFromRemote, GITHUB_TOKEN_VARIABLE, type GithubAccount, type GithubAccountSummary } from "./github-credentials.js";
 
-export type SecretProvider = "aws" | "azure" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "elevenlabs" | "zai" | "grafana" | "datadog" | "jira" | "gitlab" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
+export type SecretProvider = "aws" | "azure" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "typesafe" | "tavily" | "elevenlabs" | "zai" | "grafana" | "datadog" | "jira" | "gitlab" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -124,7 +124,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "elevenlabs", "zai", "grafana", "datadog", "jira", "gitlab", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
+  if (!(["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "typesafe", "tavily", "elevenlabs", "zai", "grafana", "datadog", "jira", "gitlab", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -146,6 +146,10 @@ function assertInput(input: SecretAccountInput): void {
   }
   if (input.provider === "certificate") {
     if (input.variables.length !== 2 || input.variables.some((variable) => !["TLS_CERTIFICATE", "TLS_PRIVATE_KEY"].includes(variable.name) || variable.kind !== "file")) throw new Error("Certificate accounts need TLS_CERTIFICATE and TLS_PRIVATE_KEY files");
+  }
+  if ((input.provider === "typesafe" || input.provider === "tavily" || input.provider === "elevenlabs")
+    && (input.variables.length !== 1 || input.variables[0].name !== ({ typesafe: "TYPESAFE_AI_API_KEY", tavily: "TAVILY_API_KEY", elevenlabs: "ELEVENLABS_API_KEY" } as const)[input.provider] || input.variables[0].kind !== "value")) {
+    throw new Error(`${input.provider} secret accounts need their matching API key value`);
   }
   // The GitHub provider owns its variable names, so a typo cannot silently disable git push.
   if (input.provider === "github") assertGithubVariableNames(input.variables);
@@ -719,11 +723,13 @@ const providerHints: Record<SecretProvider, string> = {
   stripe: "use STRIPE_API_KEY to configure the Stripe CLI or SDK",
   cloudflare: "use configured Cloudflare API or Stream credentials (CLOUDFLARE_STREAM_*)",
   openai: "use OPENAI_API_KEY with OpenAI tools and SDKs",
+  typesafe: "use TYPESAFE_AI_API_KEY for TypeSafe AI's Jev decision model",
+  tavily: "use TAVILY_API_KEY with Tavily search",
   elevenlabs: "use ELEVENLABS_API_KEY with ElevenLabs tools and SDKs",
   zai: "use ZAI_API_KEY with Z.AI tools and SDKs",
   grafana: "use GRAFANA_API_KEY with Grafana APIs",
   datadog: "use DD_API_KEY with Datadog tools and SDKs",
-  gitlab: "use GITLAB_URL as the GitLab instance URL and GITLAB_TOKEN for GitLab REST API authentication through the PRIVATE-TOKEN header. Use read_repository for repository reads and read_api for API reads. These variables do not automatically configure git authentication. Never print credentials or put them in command arguments or URLs",
+  gitlab: "use GITLAB_URL as the GitLab instance URL and GITLAB_TOKEN for GitLab REST API authentication through the PRIVATE-TOKEN header. GITLAB_API_KEY is also available to custom integrations. Use read_repository for repository reads and read_api for API reads. These variables do not automatically configure git authentication. Never print credentials or put them in command arguments or URLs",
   jira: "use JIRA_URL as the Jira site URL and JIRA_EMAIL with JIRA_API_TOKEN for Jira Cloud REST API basic authentication. Never print credentials or put them in command arguments",
   postgres: "use DATABASE_URL to connect to PostgreSQL",
   mssql: "use MSSQL_CONNECTION_STRING to connect to Microsoft SQL Server",

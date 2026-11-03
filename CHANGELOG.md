@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added assistant collaboration: your assistants can ask your other private assistants for help, and answer other people's requests with the public actions your other assistants publish.
+- Added TypeSafe AI and Tavily as secret types with their own setup hints, and existing custom accounts that hold only their keys now move to those types automatically.
 
 ## 2.208.4 — 2026-11-03
 
