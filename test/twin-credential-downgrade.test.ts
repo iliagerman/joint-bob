@@ -69,7 +69,11 @@ test('Twin to Selected reuses same-origin credentials but restricts workspace re
    assert.equal(accounts.body.accounts.find(account=>account.id===protectedAccount.body.account.id)?.label,foreign?'Other origin':'Local account');
   }
   assert.equal(runningSnapshot.DOWNGRADE_SECRET,'synthetic-only','already resolved turn snapshot stays unchanged');
-  assert.equal((await api(left,sa,'PUT',`/clusters/${clusterId}/sharing`,{projectIds:[],workspaceIds:[],confirmOwnedData:true})).status,200);
+  // The revocation reaches this node on a later flush; until then it still forwards to its former twin, which refuses.
+  await eventually(async()=>{
+   const revoked=await api(left,sa,'PUT',`/clusters/${clusterId}/sharing`,{projectIds:[],workspaceIds:[],confirmOwnedData:true});
+   assert.equal(revoked.status,200,JSON.stringify(revoked.body));
+  });
   await eventually(async()=>assert.equal(resolve(p.id).DOWNGRADE_SECRET,undefined,'full revoke blocks subsequent resolution'));
   assert.equal(runningSnapshot.DOWNGRADE_SECRET,'synthetic-only');
  }finally{await Promise.all(children.map(stopDevNode));await rm(root,{recursive:true,force:true});}
