@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { loadHarnesses as loadSharedHarnesses } from "./chat-controls.js";
 import { state } from "./state.js";
 import { confirmAction, toast } from "./shell.js";
 import { createMultiSelect } from "./multi-select.js";
@@ -175,12 +176,9 @@ function updateHarnessOptions(selected = "") {
   select.value = selected;
 }
 async function loadHarnesses() {
-  if (state.harnesses?.length) {
-    harnesses = state.harnesses;
-  } else {
-    const data = await api("/api/harnesses");
-    harnesses = data.harnesses || [];
-  }
+  // Shared, because the tables here label agents from the same metadata, with no conversation open yet.
+  if (!state.harnesses?.length) await loadSharedHarnesses();
+  harnesses = state.harnesses;
   updateHarnessOptions(planForm.elements.harnessId.value);
   renderPlans();
 }

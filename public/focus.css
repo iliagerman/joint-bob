@@ -79,18 +79,20 @@ body.focus-ui #abortButton:disabled { display: none; }
 /* Outline glyphs and transparent targets, with one accent on the floating handle. */
 .focus-action-icon { display: none; }
 body.focus-ui .focus-action-icon { display: block; }
-#focusControlsButton { position: fixed; z-index: 55; right: 20px; bottom: max(24px, env(safe-area-inset-bottom)); display: grid; place-items: center; width: 52px; height: 52px; padding: 0; border: 0; background: transparent; color: var(--text); touch-action: none; user-select: none; cursor: grab; }
+#focusControlsButton { position: fixed; z-index: 55; right: 20px; bottom: max(24px, env(safe-area-inset-bottom)); display: grid; place-items: center; width: 52px; height: 52px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel); color: var(--text); box-shadow: 0 6px 24px rgb(0 0 0 / .22); touch-action: none; user-select: none; cursor: grab; }
 body.view-chat #focusControlsButton { bottom: 160px; }
 #focusControlsButton img { display: block; width: 32px; height: 32px; pointer-events: none; }
 .focus-pending-badge { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px; border: 2px solid var(--panel); border-radius: 999px; background: var(--danger); color: #fff; font: 700 11px/1 var(--sans); pointer-events: none; }
 #focusRunningCount { background: var(--live); }
-#focusControlsButton[aria-expanded="true"] { filter: drop-shadow(0 0 4px var(--accent)); }
+#focusControlsButton[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
 #focusControlsButton:active { cursor: grabbing; }
 .focus-controls { position: fixed; z-index: 56; width: 336px; max-width: calc(100vw - 24px); max-height: min(690px, calc(var(--focus-height, 100dvh) - 24px)); display: flex; flex-direction: column; overflow: hidden; padding: 8px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); box-shadow: 0 16px 64px rgb(0 0 0 / .28); }
 .focus-controls [hidden] { display: none !important; }
 .focus-controls > header { flex-shrink: 0; display: flex; align-items: center; min-height: 44px; gap: 4px; padding: 0 4px 4px; border-bottom: 1px solid var(--line); }
 .focus-controls > header strong { flex: 1; padding-left: 8px; font: 600 17px var(--serif); }
 .focus-controls button:not(.searchable-select-trigger) { appearance: none; display: flex; align-items: center; gap: 10px; min-height: 44px; min-width: 0; padding: 10px; border: 0; border-radius: 10px; background: transparent; box-shadow: none; color: var(--text); font: 500 13px/1.3 var(--sans); text-align: left; cursor: pointer; }
+/* The model picker opens a list, so it keeps the shared chevron and room for it. */
+.focus-controls button.model-button:not(.searchable-select-trigger) { padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.75 6 6.25l4.5-4.5' fill='none' stroke='%238b9198' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; background-size: 11px; }
 .focus-controls button:hover:not(:disabled) { background: var(--field); box-shadow: none; }
 .focus-controls button:disabled { opacity: .4; cursor: not-allowed; }
 .focus-controls button:focus-visible, #focusControlsButton:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

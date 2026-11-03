@@ -4780,7 +4780,8 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-row-head input { width: 16px; height: 16px; min-width: auto; margin: 0; flex: none; accent-color: var(--ink); }
 .resources-share-bar { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 8px 12px; background: var(--surface); }
 .resources-share-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.resources-share-line > span { flex: 1 1 180px; font-size: 12px; color: var(--muted); }
+/* Two lines reserved, so the list below stays put between tabs and as a selection changes this text. */
+.resources-share-line > span { display: flex; flex: 1 1 180px; align-items: center; min-height: 2lh; font-size: 12px; color: var(--muted); }
 .resources-share-line > details { flex-basis: 100%; }
 .resources-target-members { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .resources-conversation-picker { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
@@ -5325,7 +5326,8 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .file-sync-overview > *, .file-sync-detail > * { flex: none; }
 .file-sync-overview > .relay-list, .file-sync-detail > .relay-list { flex: 1 1 0; min-height: 56px; }
 .file-sync-overview > .file-sync-peers { flex: 0 1 auto; }
-.file-sync-overview > .file-sync-projects { min-height: 72px; }
+/* Room for a whole row, even in a font that wraps its facts onto another line. */
+.file-sync-overview > .file-sync-projects { min-height: 96px; }
 .file-sync-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
 .file-sync-detail-head strong { font-size: 14px; overflow-wrap: anywhere; }
 .file-sync-detail-actions { justify-content: flex-start; }

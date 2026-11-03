@@ -349,7 +349,8 @@ document.addEventListener("conversation-chat-changed", (event) => {
   if (event.detail.projectId !== state.activeProjectId || event.detail.conversationId !== state.activeConversationId) return;
   void refreshChat().then(() => { if (event.detail.error && loadedUrl === conversationUrl()) status.textContent = event.detail.error; });
 });
-document.addEventListener("conversation-chat-reconnected", () => { if (!panel.hidden) void refreshChat(); });
+// A tab opened before the conversation connected has nothing loaded to refresh yet.
+document.addEventListener("conversation-chat-reconnected", () => { if (!panel.hidden) void (loadedUrl === conversationUrl() ? refreshChat() : loadChat()); });
 document.addEventListener("activity-show-steps", () => showTab(false));
 document.addEventListener("activity-conversation-changed", () => {
   generation += 1;

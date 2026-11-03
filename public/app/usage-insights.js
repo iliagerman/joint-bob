@@ -627,6 +627,9 @@ export function initUsageInsights({ scopeParameters, periodRange, projectId, act
     return `Highlighted: failed tool calls or cost per turn at least 1.5× the average for turns with a skill (${percent(rate)}, ${average ? money(average) : "—"}), or a median turn at least twice theirs (${formatDuration(report.withSkill.medianDurationMs)}). `;
   }
 
+  // Agent names come from the harness metadata, which can arrive after the first report.
+  window.addEventListener("harnesses-changed", () => { if (active()) render(view !== "suggest"); });
+
   function render(updateBody = true) {
     setIndependent(independent());
     // Suggestions and the reports with their own controls have the room to themselves.
