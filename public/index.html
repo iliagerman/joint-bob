@@ -2881,6 +2881,7 @@
           <button class="settings-tab" type="button" data-task-tab="conversation" role="tab" id="taskTab-conversation" aria-controls="taskChatHost" aria-selected="false" tabindex="-1" data-testid="task-tab-conversation">Conversation</button>
         </div>
       <form method="dialog" id="taskForm" role="tabpanel" aria-labelledby="taskTab-settings">
+        <div class="task-form-body">
         <label>
           Title
           <input id="taskTitleInput" name="title" autocomplete="off" placeholder="Fix login flow" required data-testid="task-form-title-input" />
@@ -2921,6 +2922,7 @@
           </select>
         </label>
         <p class="muted compact-copy">Plan mode adds a Planning phase. Use ▶ to get a plan, iterate in chat, then move to In progress to implement. Completed implementation moves to Review.</p>
+        </div>
         <div class="dialog-actions">
           <button class="ghost danger" value="cancel" type="button" id="deleteTaskButton" hidden data-testid="task-form-delete-button">Delete</button>
           <button class="ghost" value="cancel" type="button" id="cancelTaskButton">Cancel</button>

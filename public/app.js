@@ -28,6 +28,7 @@ import { state } from "./app/state.js";
 import { openUsageDashboard } from "./app/usage-dashboard.js";
 import "./app/state.js";
 import "./app/error-reporting.js";
+import "./app/dialog-layout.js";
 import "./app/elements.js";
 import "./app/project-files.js";
 import "./app/dashboards.js";

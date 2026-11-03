@@ -2215,6 +2215,13 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   box-shadow: var(--shadow);
 }
 .dialog-card > * { min-width: 0; }
+.dialog-card.dialog-scroll-layout, .budget-dialog.dialog-scroll-layout[open] { display: flex; flex-direction: column; overflow: hidden; }
+.budget-dialog.dialog-scroll-layout { gap: 14px; max-height: calc(100dvh - 32px); }
+.dialog-scroll-layout > :not(.dialog-body) { flex: 0 0 auto; }
+.dialog-body { display: grid; align-content: start; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: -4px; padding: 4px; }
+.dialog-body > * { min-width: 0; }
+.dialog-card.dialog-scroll-layout > .dialog-actions { position: static; margin: 0; padding: 2px 0 0; }
+.ntfy-share-dialog .dialog-body > label { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
 
 .by-the-way-card {
   width: min(1100px, calc(100vw - 48px));
@@ -2284,10 +2291,12 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 
 /* Wide enough to read a transcript in; the chat host owns its own scroll so the
    card itself never grows past the viewport. */
-.task-dialog-card { width: min(760px, calc(100vw - 24px)); }
+.task-dialog-card { width: min(760px, calc(100vw - 24px)); display: flex; flex-direction: column; overflow: hidden; }
+.task-dialog-card > :not(#taskForm):not(.task-chat-host) { flex: 0 0 auto; }
+.task-form-body { display: grid; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: -4px; padding: 4px; }
 /* #taskForm is a tab panel inside the card now, so it owns the field layout the
    card used to provide. */
-#taskForm { display: grid; gap: 14px; min-width: 0; }
+#taskForm { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 14px; min-width: 0; min-height: 0; }
 #taskForm[hidden] { display: none; }
 .task-description-field { display: grid; gap: 8px; padding: 2px; border-radius: var(--radius-ctl); }
 .task-description-field.dragging { outline: 2px dashed var(--accent); outline-offset: 2px; }
