@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.206.0 — 2026-11-03
+
+- Added a GitHub secret picker to pull request and pipeline views, so you can choose an eligible saved account when GitHub denies access. The choice applies to all GitHub reads and actions, including on another machine, without changing project secret attachments. Tokens stay on the machine that owns them.
+
 ## 2.205.1 — 2026-11-03
 
 - Fixed overlapping Activity panel controls in narrow panels by showing icons without labels, while preserving accessible names and hover titles.
