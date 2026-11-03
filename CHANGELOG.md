@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.208.3 — 2026-11-03
+
+- Fixed the mobile conversation menu’s Add secret action to attach an existing secret with a searchable dropdown instead of creating an account.
+- Replaced the mobile Runs on buttons with a searchable node dropdown. Offline nodes remain unavailable.
+
 ## 2.208.2 — 2026-11-03
 
 - The personal assistant's message box now empties as soon as you send. If sending fails, your message returns to the box, and sending it again can't start a second turn.

@@ -3,7 +3,7 @@
  * current choice behind a chevron and cannot be typed into. Opening it shows a search box over
  * the list; typing narrows the list, and only a listed option can be chosen.
  *
- * Options are `{ value, label, detail?, keywords? }`; search matches label, value, detail, and keywords.
+ * Options are `{ value, label, detail?, keywords?, disabled? }`; search matches label, value, detail, and keywords.
  */
 export function createSearchableSelect({ id, testid, label, prompt = "Choose…", placeholder = "Search", emptyText = "No matches", optionTestid = `${testid}-option`, listTestid = `${testid}-options`, icon }) {
   const root = document.createElement("div");
@@ -78,6 +78,7 @@ export function createSearchableSelect({ id, testid, label, prompt = "Choose…"
       const item = document.createElement("button");
       item.type = "button"; item.role = "option"; item.id = `${id}Option${index}`; item.tabIndex = -1;
       item.className = "searchable-select-option"; item.dataset.testid = optionTestid; item.dataset.value = option.value;
+      item.disabled = Boolean(option.disabled);
       item.setAttribute("aria-selected", String(option.value === trigger.dataset.value));
       if (icon) item.append(icon(option.value));
       item.append(document.createTextNode(option.label));

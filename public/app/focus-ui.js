@@ -10,7 +10,7 @@ import { initializeMobileProjectControls, syncMobileProjectControls, mobileFocus
 import { installCreationGestures } from "./focus-creation-gestures.js";
 import { createSearchableSelect } from "./searchable-select.js";
 import { sendSocket } from "./chat-controls.js";
-import { openNewSecretAccount } from "./secrets.js";
+import { openConversationSecretPicker } from "./focus-secrets.js";
 
 const fab = document.querySelector("#focusControlsButton");
 const menu = document.querySelector("#focusControls");
@@ -42,6 +42,9 @@ const viewPlacement = {
 
 const harnessPicker = createSearchableSelect({ id: "focusHarness", testid: "focus-harness", label: "Harness", prompt: "Choose a harness", placeholder: "Search harnesses", emptyText: "No harnesses found" });
 const modelPicker = createSearchableSelect({ id: "focusModel", testid: "focus-model", label: "Model", prompt: "Choose a model", placeholder: "Search models", emptyText: "No models found" });
+const nodePicker = createSearchableSelect({ id: "focusNode", testid: "focus-node", optionTestid: "focus-node-option", label: "Runs on", prompt: "Choose a node", placeholder: "Search nodes", emptyText: "No nodes found" });
+nodeList.append(nodePicker.root);
+nodePicker.onChange(value => chooseSelectValue(elements.chatNodeSelect, value));
 const effortPicker = createSearchableSelect({ id: "focusEffort", testid: "focus-effort", label: "Effort", prompt: "Choose an effort level", placeholder: "Search effort levels", emptyText: "No effort levels found" });
 document.querySelector("#focusHarnessSelect").append(harnessPicker.root);
 document.querySelector("#focusModelSelect").append(modelPicker.root);
@@ -181,7 +184,9 @@ export function syncQuickActionLabels() {
   effortPicker.setOptions(selectOptions(elements.reasoningLevelSelect));
   effortPicker.setValue(elements.reasoningLevelSelect.value);
   effortPicker.disabled = elements.reasoningLevelSelect.disabled;
-  renderNodeSegments();
+  nodePicker.setOptions(Array.from(elements.chatNodeSelect.options, option => ({ value: option.value, label: option.textContent, disabled: option.disabled })));
+  nodePicker.setValue(elements.chatNodeSelect.value);
+  nodePicker.disabled = elements.chatNodeSelect.disabled;
   // Chat-only buttons are detached outside a chat, so they are reached through actionButtons, not the document.
   actionButtons.focusMarkDone.querySelector("#focusMarkDoneLabel").textContent = elements.chatDoneButton.querySelector(".chat-action-label").textContent;
   actionButtons.focusMarkDone.disabled = elements.chatDoneButton.disabled;
@@ -207,20 +212,6 @@ function modelIdentity(key) {
   const model = state.models.find(candidate => `${candidate.provider}/${candidate.id}` === key);
   return { provider: model.provider, modelId: model.id };
 }
-/** Runs-on choices as segments. Choosing one keeps the menu open. */
-function renderNodeSegments() {
-  nodeList.replaceChildren(...Array.from(elements.chatNodeSelect.options, option => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = option.textContent;
-    button.dataset.testid = "focus-node-option";
-    button.disabled = option.disabled || elements.chatNodeSelect.disabled;
-    button.setAttribute("aria-pressed", String(option.value === elements.chatNodeSelect.value));
-    button.addEventListener("click", () => { chooseSelectValue(elements.chatNodeSelect, option.value); renderNodeSegments(); });
-    return button;
-  }));
-}
-
 /** Layout only: never reload a session or change the user's panel-collapse preferences.
  *  Mobile screens always use the focus interface; desktops keep the classic layout. */
 export function applyFocusUi() {
@@ -269,7 +260,7 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#conversationSearchCreateButton").onclick = start;
   decorateControls();
   actionButtons.focusMarkDone.onclick = () => { showMenu(false); elements.chatDoneButton.click(); };
-  actionButtons.focusAddSecret.onclick = () => { showMenu(false); openNewSecretAccount(); };
+  actionButtons.focusAddSecret.onclick = () => { showMenu(false); openConversationSecretPicker().catch(error => toast(error.message)); };
   actionButtons.focusAutoRespond.onclick = () => { showMenu(false); elements.autoRespondButton.click(); };
   actionButtons.focusActivity.onclick = () => { showMenu(false); elements.activityToggleButton.click(); };
   actionButtons.focusTools.onclick = (event) => { event.stopPropagation(); syncMenuLayout("tools"); document.querySelector("#focusBack").focus(); };
