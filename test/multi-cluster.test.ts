@@ -214,8 +214,9 @@ test("a node in two clusters shares each project only with the cluster it was se
       draft.close();
       assert.equal(database.prepare("SELECT owner_node_id FROM conversation_ownership WHERE engine = 'claude' AND session_id = ?").get(parentId), undefined,
         "viewing must not claim conversation ownership");
-      assert.equal(database.prepare("SELECT worktree FROM conversation_records WHERE engine = 'claude' AND session_id = ?").get(parentId), undefined,
-        "viewing must not create conversation/worktree records");
+      // The background transcript pass records a shared project's conversations by itself; viewing must not add the worktree.
+      const parentRecord = database.prepare("SELECT worktree FROM conversation_records WHERE engine = 'claude' AND session_id = ?").get(parentId) as { worktree: string | null } | undefined;
+      assert.equal(parentRecord?.worktree ?? null, null, "viewing must not attach a conversation to a worktree");
     } finally { database.close(); }
     const denied = routedConversation(b, sb, a, forX.id, "claude:new");
     sockets.push(denied);
