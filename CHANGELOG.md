@@ -3,10 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.209.0 — 2026-11-03
 
 - Added assistant collaboration: your assistants can ask your other private assistants for help, and answer other people's requests with the public actions your other assistants publish.
-- Added TypeSafe AI and Tavily as secret types with their own setup hints, and existing custom accounts that hold only their keys now move to those types automatically.
+- Added TypeSafe AI/Jev and Tavily secret types; matching TypeSafe AI, Tavily, ElevenLabs, and GitLab accounts now migrate without changing credentials or assignments.
+- Webhooks can now send replies through Telegram.
+- Assistant Resources now has Files and Memory sections: a folder the assistant keeps across all its topics, and notes it keeps between topics that you can edit or switch off.
+- The activity panel steps aside when the browser opens on a narrow window, and floats over the chat when there isn't room beside it.
+- Read-only conversations now say why: a Done ticket, a machine that refuses runs from this one (with the setting that allows them), or a sub-agent conversation.
+- The message box names the engine a conversation runs on.
+- Guardian review cards show how many more reviews are waiting, and their buttons stay off once you have answered.
 
 ## 2.208.4 — 2026-11-03
 
