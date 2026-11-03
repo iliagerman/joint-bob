@@ -1,6 +1,7 @@
 import { queuedAutomationProfileSchema } from "../prompt-queue.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
+import { webhookConversationWorkspace } from "../webhook-workspaces.js";
 import { randomUUID } from "node:crypto";
 import { projectFolderConfined, runtimeForProject } from "../project-runtime.js";
 import { liveSocketSession, relayLiveSocket } from "./live-link.js";
@@ -519,6 +520,9 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
         if (!known) await markWorktreeConversation(project.id, worktree.id, sessionRequest.engine, ownershipSessionId);
       }
     }
+  }
+  if (!requestedTask && !task && !worktree && !peerReadOnly) {
+    cwd = webhookConversationWorkspace(await clusterV2Database(), project.id, sessionRequest.engine, ownershipSessionId) ?? cwd;
   }
   if (refreshSessionsAfterReady && !peerReadOnly) {
     try {

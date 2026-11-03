@@ -170,6 +170,7 @@ export interface AssistantAutomationTurnOptions {
   onStarted?: (destination: AssistantDestination) => void;
   recentMessages?: () => Promise<string[]>;
   classifierFetch?: typeof fetch;
+  forceNewConversation?: boolean;
 }
 async function executeAssistantTurn(accountId: string, entry: AssistantEntry, session: AuthSession, input: z.infer<typeof turnSchema>, destination: AssistantDestination, project: AssistantProject, options?: AssistantAutomationTurnOptions): Promise<Awaited<ReturnType<typeof getPersonalAssistantTurn>> & {}> {
   const topicId = `${destination.engine}:${destination.sessionId}`;
@@ -212,7 +213,7 @@ async function processAssistantTurn(accountId: string, entry: AssistantEntry, se
     if (entry.nodeId && entry.nodeId !== local.id) throw new Error("Open this assistant on its execution node");
     const context = await assistantRoutingContext(accountId, entry, session, true);
     const routingInput = options?.recentMessages ? { ...input, recentMessages: await options.recentMessages() } : input;
-    const route = await classifyAssistantMessage(entry, routingInput, context, options?.classifierFetch);
+    const route = options?.forceNewConversation ? { kind: "new" as const } : await classifyAssistantMessage(entry, routingInput, context, options?.classifierFetch);
     if (!route) throw new Error("Assistant could not classify this message. Retry without losing the conversation.");
     const destination = await assistantDestination(accountId, entry, context, route, routingInput, local.id);
     return executeAssistantTurn(accountId, entry, session, input, destination, context.project, options);

@@ -40,7 +40,7 @@ import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
 import { acceptWebhookCall } from "../webhooks.js";
 import { updateWebhookHistory } from "../webhook-history.js";
 import { getPersonalAssistant } from "../../personal-assistants.js";
-import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
+import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, revertWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
 import { ensureWebhookAgentSchema, runWebhookMemoryAgentCommand, type WebhookMemoryAgentIdentity } from "../../webhook-agent.js";
 import { readWebhookMemory, writeWebhookMemory, setWebhookMemoryEnabled } from "../../webhook-memory.js";
 import { webhookMemoryEnabled } from "../../webhook-resources.js";
@@ -218,8 +218,9 @@ async function checkTarget(input: WebhookInput): Promise<void> {
 const webhookResourceCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("resource-list"), id: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("resource-download"), id: z.string().uuid(), resourceId: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
-  z.object({ action: z.literal("resource-save"), id: z.string().uuid(), resource: z.object({ kind: z.enum(["file", "tool"]), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(240), description: z.string().min(1).max(2000), usage: z.string().max(2000).nullable().optional(), mimeType: z.string().max(120).optional(), data: z.string().max(5_592_408) }).strict(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("resource-save"), id: z.string().uuid(), resource: z.object({ kind: z.enum(["file", "tool"]), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(240), description: z.string().min(1).max(2000), usage: z.string().max(2000).nullable().optional(), expectedVersionId: z.string().uuid().optional(), mimeType: z.string().max(120).optional(), data: z.string().max(5_592_408) }).strict(), creatorAccountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("resource-remove"), id: z.string().uuid(), resourceId: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("resource-revert"), id: z.string().uuid(), resourceId: z.string().uuid(), expectedVersionId: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("skill-list"), id: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("skill-inventory"), id: z.string().uuid(), harness: z.enum(["pi", "claude", "kiro"]).optional(), creatorAccountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("skill-upload"), id: z.string().uuid(), files: z.array(z.object({ relativePath: z.string().min(1).max(1000), data: z.string().max(5_592_408) }).strict()).max(200), creatorAccountId: z.string().nullable().optional() }).strict(),
@@ -298,10 +299,11 @@ async function manage(command: Command): Promise<unknown> {
       return { name: resource.name, mimeType: resource.mimeType, data: (await readFile(resource.path)).toString("base64") };
     }
     if (command.action === "resource-save") {
-      const resource = await saveWebhookResource(db, webhook.id, { kind: command.resource.kind, id: command.resource.resourceId, name: command.resource.name, description: command.resource.description, usage: command.resource.usage, mimeType: command.resource.mimeType, bytes: decodeResourceData(command.resource.data) });
+      const resource = await saveWebhookResource(db, webhook.id, { kind: command.resource.kind, id: command.resource.resourceId, name: command.resource.name, description: command.resource.description, usage: command.resource.usage, expectedVersionId: command.resource.expectedVersionId, mimeType: command.resource.mimeType, bytes: decodeResourceData(command.resource.data) });
       const { path: _path, ...publicResource } = resource;
       return { resource: publicResource };
     }
+    if (command.action === "resource-revert") return await revertWebhookResource(db, webhook.id, command.resourceId, command.expectedVersionId).then(({ path: _path, ...resource }) => resource);
     if (command.action === "resource-remove") { await removeWebhookResource(db, webhook.id, command.resourceId); return { ok: true }; }
     if (command.action === "skill-list") return { skills: listWebhookSkills(db, webhook.id).map(({ path: _path, ...item }) => item) };
     if (command.action === "skill-inventory") {
@@ -425,11 +427,15 @@ app.get("/api/webhooks/:id/resources", handle(async (request, response) => {
   response.json(await route(request, { action: "resource-list", id: webhookIdParam(request) }));
 }));
 app.post("/api/webhooks/:id/resources", handle(async (request, response) => {
-  const body = z.object({ kind: z.enum(["file", "tool"]), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(240), description: z.string().min(1).max(2000), usage: z.string().max(2000).nullable().optional(), mimeType: z.string().max(120).optional(), data: z.string().max(5_592_408) }).strict().parse(request.body);
+  const body = z.object({ kind: z.enum(["file", "tool"]), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(240), description: z.string().min(1).max(2000), usage: z.string().max(2000).nullable().optional(), expectedVersionId: z.string().uuid().optional(), mimeType: z.string().max(120).optional(), data: z.string().max(5_592_408) }).strict().parse(request.body);
   response.status(body.resourceId ? 200 : 201).json(await route(request, { action: "resource-save", id: webhookIdParam(request), resource: { ...body, resourceId: body.resourceId } }));
 }));
 app.get("/api/webhooks/:id/resources/:resourceId/download", handle(async (request, response) => {
   response.json(await route(request, { action: "resource-download", id: webhookIdParam(request), resourceId: z.string().uuid().parse(request.params.resourceId) }));
+}));
+app.post("/api/webhooks/:id/resources/:resourceId/revert", handle(async (request, response) => {
+  const body = z.object({ expectedVersionId: z.string().uuid() }).strict().parse(request.body);
+  response.json(await route(request, { action: "resource-revert", id: webhookIdParam(request), resourceId: z.string().uuid().parse(request.params.resourceId), expectedVersionId: body.expectedVersionId }));
 }));
 app.delete("/api/webhooks/:id/resources/:resourceId", handle(async (request, response) => {
   await route(request, { action: "resource-remove", id: webhookIdParam(request), resourceId: z.string().uuid().parse(request.params.resourceId) });

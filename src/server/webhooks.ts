@@ -25,6 +25,7 @@ import { markSilentWebhookRequest } from "./scheduled-review.js";
 import { snapshotWebhookResources, resolveWebhookResources, webhookResourceInstructions } from "../webhook-resources.js";
 import { bindWebhookConversation } from "../webhook-agent.js";
 import { readWebhookMemory } from "../webhook-memory.js";
+import { createWebhookWorkspace, setWebhookConversationWorkspace } from "../webhook-workspaces.js";
 import { queueConversationPrompt, type PromptAttachment, type PromptQueueSettings } from "./conversation-prompt.js";
 import { broadcastToProject } from "./realtime.js";
 import { runPersonalAssistantAutomationTurn } from "./routes/personal-assistants.js";
@@ -81,6 +82,9 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
 }
 
 async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<string> {
+  if (!webhook.preserveFiles && webhook.target.kind === "conversation") {
+    return deliverWithProfile({ ...webhook, target: { kind: "project", projectId: webhook.target.projectId, engine: webhook.target.kind === "conversation" ? webhook.target.engine : defaultEngine() } }, call);
+  }
   const local = await getClusterNode();
   const project = await getProject(webhook.target.projectId);
   if (!project) throw new WebhookError(404, "The webhook's project no longer exists");
@@ -98,7 +102,8 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   });
   const attachments = [...(call.attachments ?? [])];
   if (call.body.trim().length > MAX_PAYLOAD_CHARS) attachments.push({ name: PAYLOAD_FILE_NAME, mimeType: "text/plain", data: Buffer.from(call.body) });
-  const placed = await placeAttachments(project.path, attachments);
+  const workspacePath = webhook.target.kind === "conversation" && webhook.preserveFiles ? project.path : await createWebhookWorkspace(webhook.id, webhook.preserveFiles);
+  const placed = await placeAttachments(workspacePath, attachments);
   const titleTemplate = webhook.target.kind === "project" ? webhook.titleTemplate || webhook.name : "";
   const titleInstruction = automationTitleInstruction(titleTemplate);
   const message = [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed].filter(Boolean).join("\n\n");
@@ -107,8 +112,9 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
     const assistantId = webhook.target.assistantId;
     let activeSessionId: string | null = null;
     const turn = await runPersonalAssistantAutomationTurn(webhook.creatorAccountId, assistantId, call.requestId!, message, {
-      label: "Webhook", automationProfile: automationProfileContext(webhook), images: placed.images, files: placed.files,
+      label: "Webhook", automationProfile: automationProfileContext(webhook), images: placed.images, files: placed.files, forceNewConversation: !webhook.preserveFiles,
       prepare: async destination => {
+        if (destination.isNew) setWebhookConversationWorkspace(db, project.id, destination.engine, destination.sessionId, webhook.id, workspacePath);
         await attachSecrets(webhook, destination.engine, destination.sessionId);
         bindWebhookConversation(db, webhook.id, project.id, destination.sessionId, local.id, destination.isNew);
         if (destination.isNew) setWebhookConversationHistory(db, project.id, destination.sessionId, webhook.id, webhook.hideFromHistory, local.id);
@@ -167,6 +173,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   const sessionId = randomUUID();
   activeSessionId = sessionId;
   await ensureConversationRecord(project.id, engine, sessionId, local.id);
+  setWebhookConversationWorkspace(db, project.id, engine, sessionId, webhook.id, workspacePath);
   const current = getWebhook(db, webhook.id);
   if (!current) throw new WebhookError(404, "Webhook was deleted before this conversation started");
   bindWebhookConversation(db, webhook.id, project.id, sessionId, local.id, true);

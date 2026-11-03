@@ -1,9 +1,13 @@
 // Settings → Webhooks → Files & tools. Each picked file becomes a staged card with its own type
 // and description. On an existing webhook "Add file" uploads it; on a new one the cards upload
-// after the webhook is created. Saved files edit their description in place.
+// after the webhook is created. Saved text files edit in place; all files can be replaced or reverted.
 import { api } from "./api.js";
 import { createFittedList, formatBytes, makeButton, makeNode, makeTwoStepButton } from "./relay-ui.js";
 import { byId, encodeFile, makeSegmented, saveBlob } from "./webhook-ui.js";
+
+function editableTextMimeType(mimeType) {
+  return mimeType.startsWith("text/") || ["application/json", "application/xml", "application/javascript", "application/x-yaml"].includes(mimeType);
+}
 
 function textInput(testid, label, placeholder) {
   const input = document.createElement("input");
@@ -71,7 +75,19 @@ export function createWebhookFiles({ url, run, onCount }) {
 
   async function saveDetails(resource, description, usage) {
     const current = await api(url(`/resources/${resource.id}/download`));
-    await api(url("/resources"), { method: "POST", body: JSON.stringify({ kind: resource.kind, resourceId: resource.id, name: resource.name, description: description.value, usage: usage?.value || null, mimeType: current.mimeType, data: current.data }) });
+    await api(url("/resources"), { method: "POST", body: JSON.stringify({ kind: resource.kind, resourceId: resource.id, expectedVersionId: resource.versionId, name: resource.name, description: description.value, usage: usage?.value || null, mimeType: current.mimeType, data: current.data }) });
+    await reload();
+  }
+
+  async function saveText(resource, editor) {
+    const current = await api(url(`/resources/${resource.id}/download`));
+    const bytes = new TextEncoder().encode(editor.value);
+    await api(url("/resources"), { method: "POST", body: JSON.stringify({ kind: resource.kind, resourceId: resource.id, expectedVersionId: resource.versionId, name: resource.name, description: resource.description, usage: resource.usage, mimeType: current.mimeType, data: await encodeFile(new Blob([bytes])) }) });
+    await reload();
+  }
+
+  async function replaceFile(resource, file) {
+    await api(url("/resources"), { method: "POST", body: JSON.stringify({ kind: resource.kind, resourceId: resource.id, expectedVersionId: resource.versionId, name: file.name, description: resource.description, usage: resource.usage, mimeType: file.type || "application/octet-stream", data: await encodeFile(file) }) });
     await reload();
   }
 
@@ -93,6 +109,33 @@ export function createWebhookFiles({ url, run, onCount }) {
     for (const input of [description, usage].filter(Boolean)) input.addEventListener("change", () => void run(() => saveDetails(resource, description, usage)));
     notes.append(description, ...(usage ? [usage] : []));
     const actions = makeNode("div", "relay-row-actions");
+    const edit = makeButton("Edit file", "webhook-resource-edit-content-button", () => void run(async () => {
+      const current = await api(url(`/resources/${resource.id}/download`));
+      if (!editableTextMimeType(current.mimeType)) throw new Error("This file is not a text file; replace or download it instead");
+      let content;
+      try { content = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(current.data), character => character.charCodeAt(0))); }
+      catch { throw new Error("This file is not valid UTF-8 text; replace or download it instead"); }
+      const editor = document.createElement("textarea");
+      editor.dataset.testid = "webhook-resource-content-editor";
+      editor.setAttribute("aria-label", `Contents of ${resource.name}`);
+      editor.value = content;
+      const saveContent = makeButton("Save contents", "webhook-resource-content-save-button", () => void run(() => saveText(resource, editor)), "primary compact");
+      const cancel = makeButton("Cancel", "webhook-resource-content-cancel-button", () => { editor.remove(); saveContent.remove(); cancel.remove(); edit.hidden = false; });
+      notes.append(editor, saveContent, cancel);
+      edit.hidden = true;
+    }));
+    edit.hidden = !editableTextMimeType(resource.mimeType);
+    const replacePicker = document.createElement("input");
+    replacePicker.type = "file";
+    replacePicker.hidden = true;
+    replacePicker.dataset.testid = "webhook-resource-replace-picker";
+    replacePicker.addEventListener("change", () => { const file = replacePicker.files?.[0]; if (file) void run(() => replaceFile(resource, file)); replacePicker.value = ""; });
+    const replace = makeButton("Replace", "webhook-resource-replace-button", () => replacePicker.click());
+    const revert = makeButton("Revert", "webhook-resource-revert-button", () => void run(async () => {
+      await api(url(`/resources/${resource.id}/revert`), { method: "POST", body: JSON.stringify({ expectedVersionId: resource.versionId }) });
+      await reload();
+    }));
+    revert.hidden = !resource.hasPreviousVersion;
     const save = makeButton("⤓", "webhook-resource-download-button", () => void run(() => download(resource)));
     save.setAttribute("aria-label", `Download ${resource.name}`);
     const remove = makeTwoStepButton({ label: "✕", armedLabel: "Delete it?", testid: "webhook-resource-delete-button", onConfirm: () => run(async () => {
@@ -100,7 +143,7 @@ export function createWebhookFiles({ url, run, onCount }) {
       await reload();
     }) });
     remove.setAttribute("aria-label", `Delete ${resource.name}`);
-    actions.append(save, remove);
+    actions.append(edit, replacePicker, replace, revert, save, remove);
     row.append(name, notes, actions);
     return row;
   }

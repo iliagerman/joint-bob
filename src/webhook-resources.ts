@@ -9,12 +9,12 @@ const MAX_RESOURCES: Record<WebhookResourceKind, number> = { file: 6, tool: 6 };
 export type WebhookResourceKind = "file" | "tool";
 export interface WebhookResourceRecord {
   id: string; webhookId: string; kind: WebhookResourceKind; name: string; description: string; usage: string | null;
-  versionId: string; mimeType: string; bytes: number; createdAt: string; updatedAt: string; path: string;
+  versionId: string; mimeType: string; bytes: number; createdAt: string; updatedAt: string; path: string; hasPreviousVersion: boolean;
 }
 export interface WebhookResourceVersion { id: string; versionId: string; description: string; usage: string | null; mimeType: string; bytes: number }
 export interface WebhookResourceSnapshot { webhookId: string; ownerNodeId: string; resources: WebhookResourceVersion[]; skillVersionIds: string[]; memoryEnabled: boolean }
 export interface WebhookResourceOptions { root?: string }
-export interface SaveWebhookResourceInput { kind: WebhookResourceKind; id?: string; name: string; description: string; usage?: string | null; mimeType?: string; bytes: Buffer }
+export interface SaveWebhookResourceInput { kind: WebhookResourceKind; id?: string; expectedVersionId?: string; name: string; description: string; usage?: string | null; mimeType?: string; bytes: Buffer }
 export interface WebhookResourceInstructions {
   files: Array<{ name: string; description: string; path: string }>;
   tools: Array<{ name: string; description: string; usage: string | null; path: string }>;
@@ -92,11 +92,12 @@ function validate(input: SaveWebhookResourceInput): void {
 }
 
 function record(row: Record<string, unknown>, filePath: string): WebhookResourceRecord {
-  return { id: String(row.id), webhookId: String(row.webhook_id), kind: row.kind === "tool" ? "tool" : "file", name: String(row.name), description: String(row.description), usage: row.usage === null ? null : String(row.usage), versionId: String(row.version_id), mimeType: String(row.mime_type), bytes: Number(row.byte_count), createdAt: String(row.created_at), updatedAt: String(row.updated_at), path: filePath };
+  return { id: String(row.id), webhookId: String(row.webhook_id), kind: row.kind === "tool" ? "tool" : "file", name: String(row.name), description: String(row.description), usage: row.usage === null ? null : String(row.usage), versionId: String(row.version_id), mimeType: String(row.mime_type), bytes: Number(row.byte_count), createdAt: String(row.created_at), updatedAt: String(row.updated_at), path: filePath, hasPreviousVersion: row.has_previous_version === 1 };
 }
 
 function activeRows(db: DatabaseSync, webhookId: string, kind?: WebhookResourceKind): Array<Record<string, unknown>> {
   const sql = `SELECT r.id,r.webhook_id,r.kind,v.name,v.description,v.usage,v.version_id,v.mime_type,v.byte_count,r.created_at,r.updated_at,v.relative_path
+    , EXISTS(SELECT 1 FROM webhook_resource_versions previous WHERE previous.resource_id=r.id AND previous.webhook_id=r.webhook_id AND previous.rowid < v.rowid) AS has_previous_version
     FROM webhook_resources r JOIN webhook_resource_versions v ON v.version_id=r.current_version_id WHERE r.webhook_id=?${kind ? " AND r.kind=?" : ""} ORDER BY r.created_at,r.id`;
   return (kind ? db.prepare(sql).all(webhookId, kind) : db.prepare(sql).all(webhookId)) as Array<Record<string, unknown>>;
 }
@@ -111,9 +112,10 @@ export async function saveWebhookResource(db: DatabaseSync, webhookId: string, i
   ensureWebhookResourceSchema(db);
   validate(input);
   const now = new Date().toISOString();
-  const existing = input.id ? db.prepare("SELECT id,webhook_id,kind,created_at FROM webhook_resources WHERE webhook_id=? AND id=?").get(webhookId, input.id) as Record<string, unknown> | undefined : undefined;
+  const existing = input.id ? db.prepare("SELECT id,webhook_id,kind,current_version_id,created_at FROM webhook_resources WHERE webhook_id=? AND id=?").get(webhookId, input.id) as Record<string, unknown> | undefined : undefined;
   if (input.id && !existing) throw new WebhookResourceError("Webhook resource not found", 404);
   if (existing && existing.kind !== input.kind) throw new WebhookResourceError("Resource kind cannot change");
+  if (input.expectedVersionId && existing?.current_version_id !== input.expectedVersionId) throw new WebhookResourceError("Webhook resource changed; reload and try again", 409);
   if (!existing && activeRows(db, webhookId, input.kind).length >= MAX_RESOURCES[input.kind]) throw new WebhookResourceError(`A webhook can have at most ${MAX_RESOURCES[input.kind]} ${input.kind} resources`);
   const id = existing ? String(existing.id) : randomUUID();
   const versionId = randomUUID();
@@ -128,13 +130,33 @@ export async function saveWebhookResource(db: DatabaseSync, webhookId: string, i
     try {
       db.prepare(`INSERT INTO webhook_resource_versions(version_id,webhook_id,resource_id,kind,name,description,usage,mime_type,byte_count,relative_path,created_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(versionId, webhookId, id, input.kind, input.name, input.description.trim(), input.usage?.trim() || null, input.mimeType?.trim() || "application/octet-stream", input.bytes.byteLength, fileName, now);
-      if (existing) db.prepare("UPDATE webhook_resources SET current_version_id=?,updated_at=? WHERE webhook_id=? AND id=?").run(versionId, now, webhookId, id);
+      if (existing && input.expectedVersionId) {
+        const updated = db.prepare("UPDATE webhook_resources SET current_version_id=?,updated_at=? WHERE webhook_id=? AND id=? AND current_version_id=?").run(versionId, now, webhookId, id, input.expectedVersionId);
+        if (!updated.changes) throw new WebhookResourceError("Webhook resource changed; reload and try again", 409);
+      } else if (existing) db.prepare("UPDATE webhook_resources SET current_version_id=?,updated_at=? WHERE webhook_id=? AND id=?").run(versionId, now, webhookId, id);
       else db.prepare("INSERT INTO webhook_resources(id,webhook_id,kind,current_version_id,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(id, webhookId, input.kind, versionId, now, now);
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   } catch (error) { await rm(temporary, { force: true }); await rm(target, { force: true }); throw error; }
   const row = activeRows(db, webhookId).find(item => item.id === id)!;
   return record(row, path.join(directory, String(row.relative_path)));
+}
+
+export async function revertWebhookResource(db: DatabaseSync, webhookId: string, id: string, expectedVersionId: string, options: WebhookResourceOptions = {}): Promise<WebhookResourceRecord> {
+  ensureWebhookResourceSchema(db);
+  const current = db.prepare(`SELECT v.* FROM webhook_resources r JOIN webhook_resource_versions v ON v.version_id=r.current_version_id
+    WHERE r.webhook_id=? AND r.id=?`).get(webhookId, id) as Record<string, unknown> | undefined;
+  if (!current) throw new WebhookResourceError("Webhook resource not found", 404);
+  if (current.version_id !== expectedVersionId) throw new WebhookResourceError("Webhook resource changed; reload and try again", 409);
+  const previous = db.prepare(`SELECT * FROM webhook_resource_versions WHERE webhook_id=? AND resource_id=? AND rowid < (SELECT rowid FROM webhook_resource_versions WHERE version_id=?) ORDER BY rowid DESC LIMIT 1`)
+    .get(webhookId, id, expectedVersionId) as Record<string, unknown> | undefined;
+  if (!previous) throw new WebhookResourceError("No previous version to restore", 409);
+  const root = await ensureWebhookResourceDirectory(webhookId, options);
+  const previousPath = path.join(root, String(previous.relative_path));
+  const info = await lstat(previousPath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size !== Number(previous.byte_count)) throw new WebhookResourceError("Previous resource version is unavailable", 409);
+  const bytes = await import("node:fs/promises").then(fs => fs.readFile(previousPath));
+  return saveWebhookResource(db, webhookId, { kind: previous.kind === "tool" ? "tool" : "file", id, expectedVersionId, name: String(previous.name), description: String(previous.description), usage: previous.usage === null ? null : String(previous.usage), mimeType: String(previous.mime_type), bytes }, options);
 }
 
 export async function removeWebhookResource(db: DatabaseSync, webhookId: string, id: string, _options: WebhookResourceOptions = {}): Promise<void> {

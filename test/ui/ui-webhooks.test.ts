@@ -16,7 +16,7 @@ import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
-interface Hook { id: string; name: string; titleTemplate: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; tags: { managedTagIds: string[]; manualTags: string[] }; target: { engine?: string }; enabled: boolean; attachments: boolean; hideFromHistory: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
+interface Hook { id: string; name: string; titleTemplate: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; tags: { managedTagIds: string[]; manualTags: string[] }; target: { engine?: string }; enabled: boolean; attachments: boolean; preserveFiles: boolean; hideFromHistory: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
 
 let root: string;
 let environment: DevEnvironment;
@@ -123,6 +123,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-new-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), false, "a new webhook reads calls as text unless asked");
+  assert.equal(await page.getByTestId("webhooks-preserve-files-toggle").isChecked(), false, "new webhook runs start in fresh workspaces");
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="webhooks-tags-managed"] option').length > 0);
   await page.getByTestId("webhooks-tags-managed").selectOption(managedTag.body.tag.id);
   await page.getByTestId("webhooks-tags-manual").fill("Manual webhook label");
@@ -149,16 +150,18 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-tab-access").click();
   await page.getByTestId("webhooks-secret-account-checkbox").filter({ visible: true }).first().check();
   await page.getByTestId("webhooks-attachments-toggle").check();
+  await page.getByTestId("webhooks-preserve-files-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
   await page.getByTestId("webhooks-reveal-done-button").click();
   await page.getByTestId("webhooks-back-button").click();
   await page.getByTestId("webhooks-list").getByText("accepts attachments").waitFor();
-  assert.deepEqual((await hooks()).map(({ name, enabled, attachments, tags }) => [name, enabled, attachments, tags]), [["Deals", true, true, { managedTagIds: [managedTag.body.tag.id], manualTags: ["Manual webhook label"] }]]);
+  assert.deepEqual((await hooks()).map(({ name, enabled, attachments, preserveFiles, tags }) => [name, enabled, attachments, preserveFiles, tags]), [["Deals", true, true, true, { managedTagIds: [managedTag.body.tag.id], manualTags: ["Manual webhook label"] }]]);
 
   await page.getByTestId("webhooks-toggle-button").click();
   await until(async () => (await hooks())[0].enabled === false, "the webhook is off");
   assert.equal((await hooks())[0].attachments, true, "turning a webhook off leaves its attachments option alone");
+  assert.equal((await hooks())[0].preserveFiles, true, "turning a webhook off leaves its workspace option alone");
   await page.getByTestId("webhooks-toggle-button").filter({ hasText: "Turn on" }).click();
   await until(async () => (await hooks())[0].enabled, "the webhook is on again");
 
@@ -195,6 +198,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-tab-access").click();
   assert.equal(await page.getByTestId("webhooks-secret-account-checkbox").first().isChecked(), true);
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true, "the editor shows the stored option");
+  assert.equal(await page.getByTestId("webhooks-preserve-files-toggle").isChecked(), true, "the editor shows the stored workspace option");
   assert.equal(await page.getByTestId("webhooks-savebar").isVisible(), false, "nothing to save until something changes");
   await page.getByTestId("webhooks-attachments-toggle").uncheck();
   await page.getByTestId("webhooks-save-button").click();
@@ -240,8 +244,20 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhook-resource-description-input").fill("Rates used by the agent");
   await page.getByTestId("webhook-resource-add-button").click();
   await page.getByTestId("webhook-resource-list").getByText("rates.csv", { exact: true }).waitFor();
-  const resources = await api<{ resources: Array<{ name: string; description: string; path?: string }> }>(node, session, "GET", `/webhooks/${hook.id}/resources`);
+  const resources = await api<{ resources: Array<{ id: string; name: string; description: string; path?: string }> }>(node, session, "GET", `/webhooks/${hook.id}/resources`);
   assert.deepEqual(resources.body.resources.map(({ name, description, path: filePath }) => [name, description, filePath]), [["rates.csv", "Rates used by the agent", undefined]]);
+  const resourceRow = page.getByTestId("webhook-resource-list").locator(".webhooks-file-row");
+  await resourceRow.getByTestId("webhook-resource-edit-content-button").click();
+  const editedText = "day,rate\\n1,9\\n";
+  await page.getByTestId("webhook-resource-content-editor").fill(editedText);
+  await page.getByTestId("webhook-resource-content-save-button").click();
+  await until(async () => Buffer.from((await api<{ data: string }>(node, session, "GET", `/webhooks/${hook.id}/resources/${resources.body.resources[0].id}/download`)).body.data, "base64").toString() === editedText, "inline file edit is saved");
+  await resourceRow.getByTestId("webhook-resource-replace-button").click();
+  await resourceRow.getByTestId("webhook-resource-replace-picker").setInputFiles({ name: "rates-new.csv", mimeType: "text/csv", buffer: Buffer.from("day,rate\\n1,12\\n") });
+  await until(async () => (await api<{ resources: Array<{ name: string; hasPreviousVersion: boolean }> }>(node, session, "GET", `/webhooks/${hook.id}/resources`)).body.resources[0].name === "rates-new.csv", "file is replaced in place");
+  assert.equal((await api<{ resources: Array<{ hasPreviousVersion: boolean }> }>(node, session, "GET", `/webhooks/${hook.id}/resources`)).body.resources[0].hasPreviousVersion, true);
+  await resourceRow.getByTestId("webhook-resource-revert-button").click();
+  await until(async () => Buffer.from((await api<{ data: string }>(node, session, "GET", `/webhooks/${hook.id}/resources/${resources.body.resources[0].id}/download`)).body.data, "base64").toString() === editedText, "one previous file version is restored");
 
   await page.getByTestId("webhooks-tab-skills").click();
   const inventoryApi = await api<{ skills: Array<{ name: string }> }>(node, session, "GET", `/webhooks/${hook.id}/skills?inventory=1`);

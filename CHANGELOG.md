@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added editing, replacing, and reverting a webhook's files, plus a **Preserve files between runs** option: webhook runs now start in a fresh workspace unless it is on, in which case they reuse the webhook's own files.
+
 ## 2.204.1 — 2026-11-03
 
 - Fixed webhook agents being rejected when reading or saving their scoped memory.

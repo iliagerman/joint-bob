@@ -46,6 +46,7 @@ export const webhookInputSchema = z.object({
   /** Conversations this webhook starts or adds to count toward the review badge only when set. */
   markForReview: z.boolean().default(false),
   hideFromHistory: z.boolean().default(false),
+  preserveFiles: z.boolean().default(false),
   /**
    * When set, only calls whose sender is on the list reach the conversation. The sender is the
    * first of `fields` (dot paths into a JSON body or form fields) that holds a value. Null: anyone
@@ -77,6 +78,7 @@ export interface Webhook {
   attachments: boolean;
   markForReview: boolean;
   hideFromHistory: boolean;
+  preserveFiles: boolean;
   senders: WebhookSenders | null;
   createdAt: string;
   updatedAt: string;
@@ -118,6 +120,7 @@ export function ensureWebhookSchema(db: DatabaseSync): void {
   CREATE INDEX IF NOT EXISTS webhook_deliveries_hook ON webhook_deliveries(webhook_id, id);`);
   const columns = db.prepare("PRAGMA table_info(webhooks)").all() as Array<{ name: string }>;
   if (!columns.some((column) => column.name === "attachments")) db.exec("ALTER TABLE webhooks ADD COLUMN attachments INTEGER NOT NULL DEFAULT 0");
+  if (!columns.some((column) => column.name === "preserve_files")) db.exec("ALTER TABLE webhooks ADD COLUMN preserve_files INTEGER NOT NULL DEFAULT 1");
   if (!columns.some((column) => column.name === "mark_for_review")) db.exec("ALTER TABLE webhooks ADD COLUMN mark_for_review INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "hide_from_history")) db.exec("ALTER TABLE webhooks ADD COLUMN hide_from_history INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "senders")) db.exec("ALTER TABLE webhooks ADD COLUMN senders TEXT");
@@ -154,6 +157,7 @@ function webhookRow(row: Record<string, unknown>): Webhook {
     titleTemplate: String(row.title_template ?? ""),
     context: String(row.context), enabled: row.enabled === 1, attachments: row.attachments === 1, markForReview: row.mark_for_review === 1,
     hideFromHistory: row.hide_from_history === 1,
+    preserveFiles: row.preserve_files === 1,
     senders: row.senders ? JSON.parse(String(row.senders)) as WebhookSenders : null,
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     lastReceivedAt: row.last_received_at ? String(row.last_received_at) : null, receivedCount: Number(row.received_count),
@@ -194,8 +198,8 @@ export function createWebhook(db: DatabaseSync, input: WebhookInput): { webhook:
   const id = randomUUID();
   const now = new Date().toISOString();
   const { targetKind, sessionId, engine, assistantId } = targetColumns(input.target);
-  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,assistant_id,context,enabled,attachments,mark_for_review,senders,model,reasoning,secret_account_ids,title_template,created_at,updated_at,creator_account_id,provider_profile_id,tags)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, now, now, input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags));
+  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,assistant_id,context,enabled,attachments,preserve_files,mark_for_review,senders,model,reasoning,secret_account_ids,title_template,created_at,updated_at,creator_account_id,provider_profile_id,tags)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.preserveFiles ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, now, now, input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags));
   db.prepare("UPDATE webhooks SET hide_from_history=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, id);
   return { webhook: getWebhook(db, id)!, secret };
 }
@@ -203,8 +207,8 @@ export function createWebhook(db: DatabaseSync, input: WebhookInput): { webhook:
 export function updateWebhook(db: DatabaseSync, id: string, input: WebhookInput): Webhook {
   ensureWebhookSchema(db);
   const { targetKind, sessionId, engine, assistantId } = targetColumns(input.target);
-  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,assistant_id=?,context=?,enabled=?,attachments=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,title_template=?,updated_at=?,creator_account_id=?,provider_profile_id=?,tags=? WHERE id=?`)
-    .run(input.name, targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, new Date().toISOString(), input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags), id);
+  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,assistant_id=?,context=?,enabled=?,attachments=?,preserve_files=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,title_template=?,updated_at=?,creator_account_id=?,provider_profile_id=?,tags=? WHERE id=?`)
+    .run(input.name, targetKind, input.target.projectId, sessionId, engine, assistantId, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.preserveFiles ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, new Date().toISOString(), input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags), id);
   if (!result.changes) throw new WebhookError(404, "Webhook not found");
   db.prepare("UPDATE webhooks SET hide_from_history=? WHERE id=?").run(input.hideFromHistory ? 1 : 0, id);
   return getWebhook(db, id)!;

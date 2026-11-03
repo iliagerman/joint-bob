@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createWebhook, webhookInputSchema } from "../src/webhooks.js";
-import { listWebhookResources, removeWebhookResource, resolveWebhookResources, saveWebhookResource, snapshotWebhookResources, webhookResourceInstructions } from "../src/webhook-resources.js";
+import { listWebhookResources, removeWebhookResource, resolveWebhookResources, revertWebhookResource, saveWebhookResource, snapshotWebhookResources, webhookResourceInstructions } from "../src/webhook-resources.js";
 
 const input = webhookInputSchema.parse({ name: "Issues", target: { kind: "project", projectId: "p1" } });
 
@@ -28,6 +28,24 @@ test("webhook files have descriptions and immutable versions retained by accepte
     db.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("webhook resources can revert to the previous immutable version", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "webhook-resource-revert-"));
+  const db = new DatabaseSync(path.join(root, "node.db"));
+  try {
+    const { webhook } = createWebhook(db, input);
+    const original = await saveWebhookResource(db, webhook.id, { kind: "file", name: "note.txt", description: "Original", bytes: Buffer.from("one") }, { root });
+    const updated = await saveWebhookResource(db, webhook.id, { kind: "file", id: original.id, name: "note.txt", description: "Updated", bytes: Buffer.from("two") }, { root });
+    const reverted = await revertWebhookResource(db, webhook.id, original.id, updated.versionId, { root });
+    assert.equal(await readFile(reverted.path, "utf8"), "one");
+    assert.notEqual(reverted.versionId, original.versionId);
+    assert.equal(reverted.description, "Original");
+    assert.equal((await listWebhookResources(db, webhook.id))[0].versionId, reverted.versionId);
+    const only = await saveWebhookResource(db, webhook.id, { kind: "file", name: "only.txt", description: "Only", bytes: Buffer.from("only") }, { root });
+    await assert.rejects(revertWebhookResource(db, webhook.id, only.id, only.versionId, { root }), /no previous version/i);
+    await assert.rejects(revertWebhookResource(db, webhook.id, original.id, updated.versionId, { root }), /changed/i);
+  } finally { db.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("webhook resources reject empty descriptions, oversized files and unsafe names", async () => {

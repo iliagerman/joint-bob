@@ -15,6 +15,7 @@ import { listTurnFailures } from "../src/turn-failures.js";
 import { webhookConversationTitle } from "../src/webhook-title.js";
 import { createWebhook, updateWebhook, webhookDeliveries, webhookInputSchema } from "../src/webhooks.js";
 import { saveWebhookResource } from "../src/webhook-resources.js";
+import { webhookConversationWorkspace } from "../src/webhook-workspaces.js";
 
 // A machine whose agent has no model sign-in still accepts the call and lists a new
 // conversation for it. The conversation used to open blank, with the reason only under
@@ -52,12 +53,13 @@ test("a webhook call whose agent cannot start leaves the reason in the new conve
 
 // A call's files travel with the prompt the way a browser sends pasted ones, so the agent sees
 // images as images. What a chat message cannot carry is saved in the project and listed by path.
-test("a webhook call's files reach the conversation as attachments, and the rest are saved in the project", async (context) => {
+test("a webhook call's files reach its fresh conversation workspace", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-webhook-attachments-"));
   const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(endpoint, "listening");
   context.mock.method(server, "address", () => endpoint.address());
   const prompts: Array<{ message: string; images?: Array<{ name: string; mimeType: string; data: string }>; files?: Array<{ name: string; data: string }> }> = [];
+  let workspacePath: string | undefined;
   endpoint.on("connection", (socket) => {
     socket.send(JSON.stringify({ type: "ready", status: { model: { provider: "zai", id: "glm-5.3-flash" }, thinkingLevel: "low" } }));
     socket.on("message", (raw) => {
@@ -79,6 +81,9 @@ test("a webhook call's files reach the conversation as attachments, and the rest
     });
     for (let attempt = 0; attempt < 200 && !webhookDeliveries(db, webhook.id).length; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.deepEqual(webhookDeliveries(db, webhook.id).map(({ status, detail }) => [status, detail.replace(/[0-9a-f-]{36}/, "<id>")]), [["delivered", "Started conversation <id> with 6 files"]]);
+    const sessionId = /Started conversation ([0-9a-f-]{36})/.exec(webhookDeliveries(db, webhook.id)[0].detail)![1];
+    workspacePath = webhookConversationWorkspace(db, project.id, "pi", sessionId);
+    assert.ok(workspacePath && workspacePath !== project.path && !workspacePath.startsWith(project.path));
     const [prompt] = prompts;
     assert.match(prompt.message, /Current price source/);
     assert.ok(prompt.message.includes(resource.path));
@@ -87,7 +92,7 @@ test("a webhook call's files reach the conversation as attachments, and the rest
     assert.deepEqual(prompt.files?.map(({ name }) => name), ["spec.pdf", "webhook-payload.txt"], "a payload too long for the message travels whole as a file");
     assert.equal(Buffer.from(prompt.files![1].data, "base64").toString().length, 25_000);
     const saved = /- shot-4\.png: (\S+)/.exec(prompt.message)?.[1];
-    assert.match(saved ?? "", /\/project\/\.joint-bob-attachments\/[^/]+-shot-4\.png$/, `the fifth image is saved in the project: ${prompt.message}`);
+    assert.ok(saved?.startsWith(`${workspacePath}/.joint-bob-attachments/`), `the fifth image is saved in the run workspace: ${prompt.message}`);
     assert.equal(await readFile(saved!, "utf8"), "png 4");
   } finally {
     for (const socket of endpoint.clients) socket.terminate();
@@ -131,7 +136,7 @@ test("webhook model and effort travel with the queued turn for new and existing 
         { reasoning: "medium" },
         {},
       ]) {
-        const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Configured [EROR TITLE]", titleTemplate: Object.keys(settings).length ? "pr-[PR_REVIEW]" : "", secretAccountIds: [selected.id], target: { kind, projectId: project.id, engine: "pi", ...(kind === "conversation" ? { sessionId: "existing" } : {}) }, ...settings }));
+        const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Configured [EROR TITLE]", titleTemplate: Object.keys(settings).length ? "pr-[PR_REVIEW]" : "", secretAccountIds: [selected.id], target: { kind, projectId: project.id, engine: "pi", ...(kind === "conversation" ? { sessionId: "existing" } : {}) }, preserveFiles: kind === "conversation", ...settings }));
         acceptWebhookCall(webhook, { method: "POST", headers: {}, query: "", body: "{}" });
         for (let attempt = 0; attempt < 200 && !webhookDeliveries(db, webhook.id).length; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
         assert.equal(webhookDeliveries(db, webhook.id)[0]?.status, "delivered");
