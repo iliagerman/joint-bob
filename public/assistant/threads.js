@@ -1,6 +1,6 @@
 import { post, request } from "./api.js";
 import { app, fail, isMobile } from "./context.js";
-import { bot, h, icon, requestSteps, stateLabel, trail } from "./dom.js";
+import { bot, h, icon, markdownBubble, requestSteps, stateLabel, trail } from "./dom.js";
 
 // Direct requests: your thread with someone else's assistant, hosted on its machine.
 
@@ -18,7 +18,7 @@ function messageNodes(detail) {
   const owner = detail.assistant.ownerName.split(" ")[0] || detail.assistant.ownerName;
   return detail.messages.flatMap(message => message.author === "requester"
     ? [h("div", { class: "m me" }, h("div", { class: "bubble" }, message.text)), message.state && message.state !== "recorded" ? h("div", { "aria-label": stateLabel(message.state) }, trail(requestSteps(message.state, `${owner}'s`))) : null]
-    : [h("div", { class: "m bot-msg" }, bot("other"), h("div", {}, h("div", { class: "who" }, h("b", {}, detail.assistant.name), `Assistant · For ${owner}`), h("div", { class: "bubble" }, message.text)))]);
+    : [h("div", { class: "m bot-msg" }, bot("other"), h("div", {}, h("div", { class: "who" }, h("b", {}, detail.assistant.name), `Assistant · For ${owner}`), markdownBubble("bubble", message.text)))]);
 }
 
 export async function showThread(threadId) {

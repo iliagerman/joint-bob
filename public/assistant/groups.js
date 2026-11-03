@@ -1,6 +1,6 @@
 import { post, request } from "./api.js";
 import { app, closeOverlay, fail, isMobile, navigate, notify, openSheet } from "./context.js";
-import { avatar, bot, chip, formatTime, h, icon, rowText } from "./dom.js";
+import { avatar, bot, chip, formatTime, h, icon, markdownBubble, rowText } from "./dom.js";
 
 // Groups: the chat, its members and whose assistant is whose, and invitations.
 
@@ -26,7 +26,7 @@ function head(title, subtitle, right = []) {
 function messageNode(message, detail) {
   if (message.authorKind === "system") return h("div", { class: "sys" }, message.text);
   if (detail.me && message.authorMembershipId === detail.me.membershipId) return h("div", { class: "m me" }, h("div", {}, h("div", { class: "bubble" }, message.text), h("div", { class: "send-state" }, formatTime(message.createdAt))));
-  if (message.authorKind === "assistant") return h("div", { class: "m bot-msg" }, bot("other"), h("div", {}, h("div", { class: "who" }, h("b", {}, message.authorName), `Assistant · For ${message.ownerName}`), h("div", { class: "bubble" }, message.text)));
+  if (message.authorKind === "assistant") return h("div", { class: "m bot-msg" }, bot("other"), h("div", {}, h("div", { class: "who" }, h("b", {}, message.authorName), `Assistant · For ${message.ownerName}`), markdownBubble("bubble", message.text)));
   return h("div", { class: "m" }, avatar(message.authorName), h("div", {}, h("div", { class: "who" }, h("b", {}, message.authorName)), h("div", { class: "bubble" }, message.text)));
 }
 

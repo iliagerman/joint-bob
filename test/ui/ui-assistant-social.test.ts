@@ -101,19 +101,90 @@ test("assistant shell: resources, public actions, activity and discovery without
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ turn: { status: "completed" } }) });
     });
     const send = page.locator("#chat-form button[type=submit]");
-    await page.locator("#chat-message").fill("Plan my week");
+    const chatBox = page.locator("#chat-message");
+    await chatBox.fill("Plan my week");
     await send.click();
     const working = page.getByTestId("assistant-working");
     await working.waitFor();
+    assert.equal(await chatBox.inputValue(), "", "the box empties as soon as the message is sent");
     assert.equal(await page.locator("#timeline .chat-bubble.user.pending", { hasText: "Plan my week" }).count(), 1, "the sent message shows at once");
     await page.waitForTimeout(6_000); // longer than a passing status line lasts
     assert.equal(await working.isVisible(), true, "the status stays while the answer is pending");
     assert.match(await working.textContent() || "", /^Working on it… \d+:\d\d$/);
     assert.equal(await send.isDisabled(), true);
+    await chatBox.fill("Draft typed while waiting");
+    await chatBox.press("Control+Enter");
+    assert.equal(await page.locator("#timeline .chat-bubble.user.pending").count(), 1, "the keyboard shortcut can't send a second turn while one is running");
+    assert.equal(await chatBox.inputValue(), "Draft typed while waiting");
     releaseTurn();
     await working.waitFor({ state: "detached" });
     assert.equal(await send.isDisabled(), false, "send is available again once the answer is in");
+    assert.equal(await chatBox.inputValue(), "Draft typed while waiting", "the answer doesn't wipe a draft typed meanwhile");
     await page.unroute("**/api/personal-assistants/*/turn");
+
+    // A failed send puts the message back, and retrying it is the same turn.
+    const sentRequestIds: string[] = [];
+    await page.route("**/api/personal-assistants/*/turn", async route => {
+      sentRequestIds.push(route.request().postDataJSON().requestId);
+      if (sentRequestIds.length === 1) await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Turn failed" }) });
+      else await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ turn: { status: "completed" } }) });
+    });
+    await chatBox.fill("Retry me");
+    await send.click();
+    await page.locator("#message", { hasText: "Turn failed" }).waitFor();
+    assert.equal(await chatBox.inputValue(), "Retry me", "a failed message returns to the box");
+    await send.click();
+    await working.waitFor({ state: "detached" });
+    assert.equal(sentRequestIds.length, 2);
+    assert.equal(sentRequestIds[0], sentRequestIds[1], "retrying can't create a second turn");
+    assert.equal(await chatBox.inputValue(), "", "a successful retry leaves the box empty");
+    await page.unroute("**/api/personal-assistants/*/turn");
+
+    // Answers are formatted; what the person typed stays exactly as typed.
+    await page.route("**/api/personal-assistants/*/transcript", route => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ timeline: [
+        { id: "question", role: "user", text: "Give me **my** report", createdAt: "2026-11-03T07:00:00.000Z" },
+        { id: "answer", role: "assistant", text: "## Morning report\n\n- **Urgent:** call Noa\n- See [the plan](https://example.com/plan)\n\n<img src=x onerror=alert(1)>", createdAt: "2026-11-03T07:00:01.000Z" },
+      ] }),
+    }));
+    await page.getByTestId("assistant-view-settings").click();
+    await page.getByTestId("assistant-view-chat").click();
+    const answer = page.locator("#timeline .chat-bubble.assistant");
+    await answer.locator("h2", { hasText: "Morning report" }).waitFor();
+    assert.equal(await answer.locator("li strong").textContent(), "Urgent:");
+    assert.equal(await answer.locator("a").getAttribute("href"), "https://example.com/plan");
+    assert.equal((await answer.textContent() || "").includes("**"), false, "no raw Markdown markers remain");
+    assert.equal(await answer.locator("img").count(), 0, "HTML in an answer is shown as text, never parsed");
+    assert.equal(await answer.evaluate(element => getComputedStyle(element).whiteSpace), "normal");
+    assert.equal(await answer.locator("ul").evaluate(element => getComputedStyle(element).listStyleType), "disc");
+    assert.equal(await page.locator("#timeline .chat-bubble.user").textContent(), "Give me **my** report");
+    await page.unroute("**/api/personal-assistants/*/transcript");
+
+    // Someone else's assistant answers a direct request the same way.
+    const threadPath = "**/api/social/threads/formatted-thread";
+    await page.route(threadPath, route => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        online: true,
+        catalog: [],
+        assistant: { name: "Calendar helper", ownerName: "Maya Shalev" },
+        messages: [
+          { id: "ask", author: "requester", text: "Is **Tuesday** free?", state: "recorded" },
+          { id: "reply", author: "assistant", text: "**Yes**, Tuesday is free." },
+        ],
+      }),
+    }));
+    const assistantUrl = page.url();
+    await page.goto(new URL("/assistant.html?thread=formatted-thread", assistantUrl).href);
+    const threadMessages = page.getByTestId("assistant-thread-messages");
+    assert.equal(await threadMessages.locator(".m.bot-msg .bubble strong").textContent(), "Yes");
+    assert.equal(await threadMessages.locator(".m.me .bubble").textContent(), "Is **Tuesday** free?");
+    await page.unroute(threadPath);
+    await page.goto(assistantUrl);
+    await page.locator("#chat-form").waitFor();
 
     // Activity: empty, private, and closing returns to the same chat.
     await page.getByTestId("assistant-activity-button").click();

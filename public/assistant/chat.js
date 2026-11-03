@@ -1,15 +1,17 @@
 import { request } from "./api.js";
 import { app, fail, notify } from "./context.js";
-import { h } from "./dom.js";
+import { h, markdownBubble } from "./dom.js";
 
 // The private chat: one timeline over the assistant's topics.
 
 let pendingTurn = null;
+let timelineTexts = [];
 
 export async function showTranscript() {
   const target = document.querySelector("#timeline");
   const { timeline } = await request(`/api/personal-assistants/${app.assistant.id}/transcript`);
-  target.replaceChildren(...timeline.map(item => h("div", { class: `chat-bubble ${item.role === "user" ? "user" : "assistant"}` }, item.text)));
+  timelineTexts = timeline.map(item => item.text);
+  target.replaceChildren(...timeline.map(item => item.role === "user" ? h("div", { class: "chat-bubble user" }, item.text) : markdownBubble("chat-bubble assistant", item.text)));
   const scroll = document.querySelector("#chat-scroll");
   scroll.scrollTop = scroll.scrollHeight;
 }
@@ -19,19 +21,25 @@ async function sendTurn(event) {
   const form = event.currentTarget;
   const field = document.querySelector("#chat-message");
   const button = form.querySelector("button[type=submit]");
+  if (button.disabled) return; // The keyboard shortcut submits even while a turn is running.
   const content = field.value.trim();
   if (!content) return;
   if (pendingTurn && pendingTurn.message !== content) { notify("Retry the pending message before editing it.", true); return; }
   pendingTurn ??= { requestId: crypto.randomUUID(), message: content };
   button.disabled = true;
-  const recentMessages = [...document.querySelectorAll("#timeline .chat-bubble")].slice(-6).map(bubble => bubble.textContent.slice(0, 4000));
+  field.value = "";
+  const recentMessages = timelineTexts.slice(-6).map(text => text.slice(0, 4000));
   const stopWorking = showWorking(content);
   try {
     await request(`/api/personal-assistants/${app.assistant.id}/turn`, { method: "POST", body: JSON.stringify({ requestId: pendingTurn.requestId, message: content, recentMessages }) });
     pendingTurn = null;
-    field.value = "";
     await showTranscript();
-  } catch (error) { await showTranscript().catch(() => {}); fail(error); }
+  } catch (error) {
+    // Unsent: put it back ahead of anything typed meanwhile, so Send retries it as the same turn.
+    if (pendingTurn) field.value = field.value.trim() ? `${content}\n\n${field.value}` : content;
+    await showTranscript().catch(() => {});
+    fail(error);
+  }
   finally { stopWorking(); button.disabled = false; }
 }
 

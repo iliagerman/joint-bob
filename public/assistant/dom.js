@@ -1,3 +1,5 @@
+import { renderMarkdown } from "../markdown.js";
+
 // DOM helpers. Every value is inserted as text; nothing from a server is parsed as HTML.
 
 export function h(tag, attributes = {}, ...children) {
@@ -12,6 +14,13 @@ export function h(tag, attributes = {}, ...children) {
     else element.setAttribute(key, String(value));
   }
   append(element, children);
+  return element;
+}
+
+/** An assistant's answer, formatted. The renderer builds nodes, so this parses no HTML either. */
+export function markdownBubble(className, text) {
+  const element = h("div", { class: `${className} md` });
+  renderMarkdown(element, text);
   return element;
 }
 
