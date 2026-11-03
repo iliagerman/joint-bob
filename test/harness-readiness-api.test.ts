@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -73,4 +73,22 @@ test("a signed-out harness is reported unavailable with the reason", { timeout: 
   assert.match(statuses.claude.unavailableReason ?? "", /Claude is not signed in/);
   assert.equal(statuses.kiro.ready, false);
   assert.match(statuses.kiro.unavailableReason ?? "", /Kiro is not signed in/);
+});
+
+test("a harness that cannot load is listed as not ready, and the others still answer", { timeout: 180_000 }, async () => {
+  const seeded = await seedDevEnvironment(path.join(root, "broken-package"), 1);
+  const node = seeded.nodes[0];
+  const resources = path.join(seeded.home, "JointBob/.agent-resources/pi");
+  await mkdir(resources, { recursive: true });
+  await writeFile(path.join(resources, "packages.json"), '{"packages":["npm:joint-bob-test-no-such-package"]}');
+  const broken = await startDevNode(seeded, node);
+  try {
+    const session = await signIn(seeded, node);
+    const response = await api<{ harnesses: HarnessStatus[] }>(node, session, "GET", "/harnesses");
+    assert.equal(response.status, 200, "one harness failing to load must not fail the list");
+    const pi = response.body.harnesses.find(({ id }) => id === "pi");
+    assert.equal(pi?.ready, false);
+    assert.match(pi?.unavailableReason ?? "", /joint-bob-test-no-such-package/);
+    assert.ok(response.body.harnesses.some(({ id }) => id === "claude"), "the other harnesses are still listed");
+  } finally { await stopDevNode(broken); }
 });

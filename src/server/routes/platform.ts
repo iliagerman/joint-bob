@@ -267,7 +267,10 @@ async function harnessProblems(id: HarnessId): Promise<string[]> {
 app.get("/api/harnesses", async (_request, response, next) => {
   try {
     response.json({ harnesses: await Promise.all(listHarnesses().map(async ({ id, label, paths, configuration, defaults, runtime }) => {
-      const problems = runtime ? await harnessProblems(id) : ["No runtime on this node"];
+      // One harness that cannot load (a Pi package npm cannot install) is listed as not ready. It must not take the others down.
+      const problems = runtime
+        ? await harnessProblems(id).catch((error: unknown) => [error instanceof Error ? error.message : String(error)])
+        : ["No runtime on this node"];
       return {
         id, label, newSessionPath: paths.newSession, defaults, runtimeConfigured: Boolean(runtime),
         ready: !problems.length, ...(problems.length ? { unavailableReason: problems.join("\n") } : {}),
