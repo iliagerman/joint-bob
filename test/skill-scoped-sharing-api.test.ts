@@ -124,7 +124,13 @@ test("workspace and conversation skill grants reach only nodes sharing the proje
     await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [] });
     await api(b, sb, "POST", "/resources/skills/refresh", {});
     assert.equal(await readFile(path.join(scoped(b), "SKILL.md"), "utf8"), manifest + "Local edits.\n", "revocation preserves locally modified files");
-    const denied = await api<{ nodes: Array<{ inventory: { skills: Array<{ name: string }> } }> }>(b, sb, "GET", `/resources/inventory?projectId=${shared.id}&conversationId=conversation-1`);
+    // The shared project's details reach node B on a later delivery, and a fast run gets here first.
+    const askNodeB = () => api<{ nodes: Array<{ inventory: { skills: Array<{ name: string }> } }> }>(b, sb, "GET", `/resources/inventory?projectId=${shared.id}&conversationId=conversation-1`);
+    let denied = await askNodeB();
+    for (const deadline = Date.now() + 30_000; denied.status === 404 && Date.now() < deadline;) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      denied = await askNodeB();
+    }
     assert.equal(denied.status, 200, JSON.stringify(denied.body));
     assert.equal(denied.body.nodes[0].inventory.skills.some((skill) => skill.name === "portable"), false, "preserved revoked files never remain available");
   } finally {
