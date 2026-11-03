@@ -545,8 +545,28 @@ function resolvedGithubAccounts(project: string, conversation?: SecretConversati
   }).reverse();
 }
 
-export function githubAccountsForProject(project: string, conversation?: SecretConversation): GithubAccount[] {
-  return resolvedGithubAccounts(project, conversation);
+function selectableGithubAccounts(project: string): GithubAccount[] {
+  const projectId = canonicalScopeId("project", project);
+  const attached = resolved(project).map(({ row }) => row).reverse();
+  // A browser user may explicitly use their saved accounts. Machine requests may only
+  // select attached credentials, never browse another node's unrelated secrets.
+  const actor = actingAccount();
+  if (actor && !scopeVisible("project", projectId)) throw new NotFoundError("Secret scope not found");
+  const available = actor ? (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts WHERE provider = 'github' ORDER BY label, id").all() as unknown as AccountRow[]).filter((row) => secretVisible(row) && accountAllowedForProject(row.id, projectId)) : [];
+  const visibleIds = new Set(available.map((row) => row.id));
+  const rows = [...new Map([...attached.filter((row) => !actor || visibleIds.has(row.id)), ...available].map((row) => [row.id, row])).values()];
+  return rows.filter((row) => row.provider === "github").map(rowGithubAccount).filter((account) => account.token || account.app);
+}
+
+export function githubAccountChoicesForProject(project: string): Array<{ id: string; label: string }> {
+  return selectableGithubAccounts(project).map(({ id, label }) => ({ id, label }));
+}
+
+export function githubAccountsForProject(project: string, conversation?: SecretConversation, accountId?: string): GithubAccount[] {
+  if (!accountId) return resolvedGithubAccounts(project, conversation);
+  const account = selectableGithubAccounts(project).find((candidate) => candidate.id === accountId);
+  if (!account) throw new NotFoundError("GitHub API secret is not available for this project on this machine");
+  return [account.app ? { ...account, token: installationToken(account) } : account];
 }
 
 /** Read straight from .git/config: this runs on every environment build, so it never spawns git. */

@@ -6,6 +6,9 @@ import { confirmAction, toast } from "./shell.js";
 const hosting = elements.gitReviewHosting;
 let tab = "";
 let url;
+let accountContext = "";
+let accountId = "";
+let accounts = [];
 let generation = 0;
 let pullState = "open";
 let pulls = [];
@@ -132,6 +135,8 @@ export async function loadGitHosting(nextTab, gitUrl, handlers = {}) {
   generation++;
   tab = nextTab;
   url = gitUrl;
+  const context = url("github");
+  if (accountContext !== context) { accountContext = context; accountId = ""; accounts = []; }
   detail = null;
   search = "";
   statusFilter = "all";
@@ -143,13 +148,17 @@ export async function loadGitHosting(nextTab, gitUrl, handlers = {}) {
   await loadList();
 }
 
+function githubUrl(params = {}) {
+  return url("github", { ...params, ...(accountId ? { accountId } : {}) });
+}
+
 async function loadList(append = false) {
   const version = ++generation;
   status(`Loading ${tab === "pulls" ? "pull requests" : "pipeline runs"}…`);
   if (!append) hosting.replaceChildren(spinner(`Loading ${tab === "pulls" ? "pull requests" : "pipeline runs"}…`));
   try {
     const params = tab === "pulls" ? { op: "pulls", state: pullState, page } : { op: "runs", page };
-    const response = await api(url("github", params));
+    const response = await api(githubUrl(params));
     if (!validView(tab, version)) return;
     const batch = tab === "pulls" ? response.pulls : response.runs.workflow_runs;
     if (tab === "pulls") pulls = append ? [...pulls, ...batch] : batch;
@@ -166,9 +175,37 @@ async function loadList(append = false) {
   }
 }
 
+function accountPicker(onChange) {
+  const label = node("label", "git-hosting-note", "GitHub secret ");
+  const select = node("select", "git-hosting-select");
+  select.dataset.testid = "git-hosting-account";
+  select.add(new Option("Automatic", ""));
+  for (const account of accounts) select.add(new Option(account.label, account.id));
+  select.value = accountId;
+  select.addEventListener("change", () => { accountId = select.value; onChange(); });
+  label.append(select);
+  return label;
+}
+
+async function loadAccountPicker(box) {
+  const version = generation;
+  const expectedTab = tab;
+  const loading = spinner("Loading GitHub secrets…");
+  box.append(loading);
+  try {
+    const response = await api(url("github", { op: "accounts" }));
+    if (!validView(expectedTab, version) || !box.isConnected) return;
+    accounts = response.accounts;
+    loading.replaceWith(accounts.length ? accountPicker(() => {}) : node("p", "git-hosting-note", "No GitHub API secrets available. Attach a GitHub token or GitHub App in project or workspace Secrets on this machine."));
+  } catch (error) {
+    if (validView(expectedTab, version) && box.isConnected) loading.replaceWith(node("p", "git-hosting-note", `Could not load GitHub secrets: ${error.message}`));
+  }
+}
+
 function errorState(message, retry) {
   const box = node("div", "git-hosting-error");
-  box.append(node("p", "", message), button("Try again", retry, "ghost compact", "git-hosting-retry"));
+  box.append(node("p", "", message), node("p", "git-hosting-note", "If this is an access error, choose a GitHub secret available to this project, then try again. GitHub can return 404 for a private repository you cannot access."), button("Try again", retry, "ghost compact", "git-hosting-retry"));
+  void loadAccountPicker(box);
   return box;
 }
 
@@ -182,6 +219,7 @@ function filters() {
   input.value = search;
   input.addEventListener("input", () => { search = input.value.toLowerCase(); filterRows(); });
   controls.append(input);
+  if (accounts.length) controls.append(accountPicker(() => { page = 1; void loadList(); }));
   if (tab === "pulls") for (const choice of ["open", "closed"]) {
     controls.append(button(choice === "open" ? "Open" : "Closed", () => {
       if (pullState === choice) return;
@@ -283,7 +321,7 @@ async function createPull(form) {
   const payload = { action: "create", head: String(values.get("head")).trim(), base: String(values.get("base")).trim(), title: String(values.get("title")).trim(), body: String(values.get("body") ?? ""), draft: values.has("draft") };
   if (!await confirmAction({ title: `Create ${payload.draft ? "draft " : ""}PR from ${payload.head} into ${payload.base}?`, confirmLabel: "Create PR" })) return;
   try {
-    const pull = await api(url("github"), { method: "POST", body: JSON.stringify(payload) });
+    const pull = await api(githubUrl(), { method: "POST", body: JSON.stringify(payload) });
     status(`Created PR #${pull.number} on GitHub`);
     page = 1;
     pullState = "open";
@@ -312,7 +350,7 @@ async function openDetail(index) {
   hosting.scrollTop = 0;
   status("");
   try {
-    const response = await api(url("github", { op: tab === "pulls" ? "pull" : "run", id: tab === "pulls" ? selected.number : selected.id }));
+    const response = await api(githubUrl({ op: tab === "pulls" ? "pull" : "run", id: tab === "pulls" ? selected.number : selected.id }));
     if (!validView(tab, version)) return;
     detail = response;
     jobId = null;
@@ -445,7 +483,7 @@ async function submitPullAction(pull, action, event, body) {
   const label = action === "merge" ? `${event === "squash" ? "Squash and merge" : event === "rebase" ? "Rebase and merge" : "Merge"} PR #${number} into ${pull.base.ref}?` : action === "close" ? `Close PR #${number}?` : action === "reopen" ? `Reopen PR #${number}?` : `${event === "REQUEST_CHANGES" ? "Request changes on" : event === "APPROVE" ? "Approve" : "Comment on"} PR #${number}?`;
   if (!await confirmAction({ title: label, confirmLabel: action === "merge" ? "Merge PR" : action === "close" ? "Close PR" : "Submit", destructive: action === "close" || action === "merge" })) return;
   try {
-    await api(url("github"), { method: "POST", body: JSON.stringify({ action, number, ...(action === "comment" || action === "review" ? { body } : {}), ...(action === "review" ? { event } : {}), ...(action === "merge" ? { sha: pull.head.sha, method: event } : {}) }) });
+    await api(githubUrl(), { method: "POST", body: JSON.stringify({ action, number, ...(action === "comment" || action === "review" ? { body } : {}), ...(action === "review" ? { event } : {}), ...(action === "merge" ? { sha: pull.head.sha, method: event } : {}) }) });
   } catch (error) {
     status(`GitHub action failed or may be uncertain: ${error.message}. Check the PR before retrying.`);
     toast("Check the PR on GitHub before retrying", 8000);
@@ -455,7 +493,7 @@ async function submitPullAction(pull, action, event, body) {
   status(`${action === "close" ? "Closed" : action === "reopen" ? "Reopened" : action === "merge" ? "Merged" : "Submitted"} on GitHub`);
   const version = ++generation;
   try {
-    const response = await api(url("github", { op: "pull", id: number }));
+    const response = await api(githubUrl({ op: "pull", id: number }));
     if (validView("pulls", version)) { detail = response; renderDetail(); }
   } catch (error) { toast(`Submitted on GitHub, but refresh failed: ${error.message}`, 8000); }
 }
@@ -635,7 +673,7 @@ async function loadLog(id) {
   logError = null;
   renderDetail();
   try {
-    const response = await api(url("github", { op: "log", id }));
+    const response = await api(githubUrl({ op: "log", id }));
     if (!current()) return;
     log = { jobId: id, ...response };
     detail.jobs = detail.jobs.map((job) => job.id === id ? response.job : job);

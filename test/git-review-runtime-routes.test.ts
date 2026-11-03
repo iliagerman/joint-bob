@@ -22,7 +22,17 @@ test("Git review reads reach a paired node through signed runtime routes", { tim
     await git(["add", "paired.txt"]);
     await git(["commit", "-m", "Paired fixture"]);
     await writeFile(path.join(cwd, "paired.txt"), "paired repository after\n");
-    for (const node of environment.nodes) servers.push(await startDevNode(environment, node, { GH_TOKEN: "", GITHUB_TOKEN: "" }));
+    await git(["remote", "add", "origin", "https://github.com/acme/private.git"]);
+    const preload = path.join(root, "github-fetch.mjs");
+    await writeFile(preload, `
+      const original = globalThis.fetch;
+      globalThis.fetch = async (input, init) => {
+        if (!String(input).startsWith("https://api.github.com/")) return original(input, init);
+        if (new Headers(init?.headers).get("authorization") !== "Bearer synthetic-peer-token") return Response.json({}, { status: 404 });
+        return Response.json(init?.method === "PATCH" ? { number: 42, state: "closed" } : { workflow_runs: [] });
+      };
+    `);
+    for (const node of environment.nodes) servers.push(await startDevNode(environment, node, { GH_TOKEN: "", GITHUB_TOKEN: "", NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${preload}` }));
     await pairTwinNodes(environment);
     const [local, peer] = environment.nodes;
     const session = await signIn(environment, local);
@@ -48,6 +58,24 @@ test("Git review reads reach a paired node through signed runtime routes", { tim
       const response = await api(local, session, "GET", `/projects/${projectId}/git/${route}?nodeId=${peer.nodeId}`);
       assert.equal(response.status, 200, `${route}: ${JSON.stringify(response.body)}`);
     }
+    const peerSession = await signIn(environment, peer);
+    const saved = await api<{ account: { id: string } }>(peer, peerSession, "POST", "/secrets/accounts", { label: "Peer GitHub", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "synthetic-peer-token" }] });
+    assert.equal(saved.status, 201);
+    const accountId = saved.body.account.id;
+    const wrong = await api<{ account: { id: string } }>(peer, peerSession, "POST", "/secrets/accounts", { label: "Wrong peer GitHub", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "synthetic-wrong-token" }, { name: "GITHUB_OWNERS", kind: "value", value: "acme" }] });
+    assert.equal(wrong.status, 201);
+    const github = `${base}/github?${query}`;
+    assert.deepEqual((await api(local, session, "GET", `${github}&op=accounts`)).body, { accounts: [] }, "a peer cannot list unrelated saved accounts");
+    assert.equal((await api(local, session, "GET", `${github}&op=runs&accountId=${accountId}`)).status, 404, "a peer cannot use an unattached account");
+    assert.equal((await api(peer, peerSession, "PUT", `/secrets/scopes/project/${projectId}`, { accountIds: [accountId, wrong.body.account.id] })).status, 200);
+    const choices = await api<{ accounts: Array<{ id: string; label: string }> }>(local, session, "GET", `${github}&op=accounts`);
+    assert.deepEqual(choices.body.accounts.sort((a, b) => a.label.localeCompare(b.label)), [{ id: accountId, label: "Peer GitHub" }, { id: wrong.body.account.id, label: "Wrong peer GitHub" }]);
+    assert.equal((await api(local, session, "GET", `${github}&op=runs`)).status, 404, "automatic credentials cannot read the private repository");
+    assert.equal((await api(local, session, "GET", `${github}&op=runs&accountId=${accountId}`)).status, 200, "selection reaches the owning node on reads");
+    assert.equal((await api(local, session, "POST", `${github}&accountId=${accountId}`, { action: "close", number: 42 })).status, 200, "selection reaches the owning node on writes");
+    assert.equal((await api(local, session, "GET", `${github}&op=runs&accountId=invalid`)).status, 400);
+    const unsignedGithub = await fetch(`${peer.url}/api/cluster/git/github?projectId=${projectId}&op=accounts`);
+    assert.equal(unsignedGithub.status, 401);
   } finally {
     for (const server of servers) await stopDevNode(server);
     await rm(root, { recursive: true, force: true });

@@ -34,7 +34,7 @@ import { CHANGE_STORY_MARKER, collectStorySources, conversationCommits, generate
 import { getProject } from "../../store.js";
 import { getHarness } from "../../harnesses.js";
 import type { HarnessId } from "../../types.js";
-import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
+import { genericSecretEnvironment, githubAccountChoicesForProject, githubAccountsForProject } from "../../secrets.js";
 import { githubAccountFor } from "../../github-credentials.js";
 import { createGitHubReview } from "../github-review.js";
 import { listTasks } from "../../tasks.js";
@@ -82,6 +82,7 @@ function queryString(request: Request, name: string): string {
 function queryOptional(request: Request, name: string): string | undefined {
   const value = request.query[name];
   if (name === "repository" && value !== undefined && (typeof value !== "string" || !value)) throw new GitReviewError(400, "Invalid repository path");
+  if (name === "accountId" && value !== undefined && (typeof value !== "string" || !value)) throw new GitReviewError(400, "Invalid GitHub secret account");
   return typeof value === "string" && value ? value : undefined;
 }
 
@@ -155,8 +156,9 @@ function handleGitError(response: Response, error: unknown, next: (error?: unkno
 
 // ---- GitHub pull requests and Actions ----
 
-const githubQuery = z.object({
-  op: z.enum(["issues", "issue", "pulls", "pull", "runs", "run", "log"]),
+const githubAccountQuery = z.object({ accountId: z.string().uuid().optional() });
+const githubQuery = githubAccountQuery.extend({
+  op: z.enum(["accounts", "issues", "issue", "pulls", "pull", "runs", "run", "log"]),
   state: z.enum(["open", "closed", "all"]).optional(),
   page: z.coerce.number().int().min(1).max(1000).optional(),
   id: z.coerce.number().int().positive().optional(),
@@ -171,9 +173,9 @@ const githubAction = z.discriminatedUnion("action", [
   z.object({ action: z.literal("merge"), number: z.number().int().positive(), sha: z.string().regex(/^[0-9a-f]{40}$/), method: z.enum(["merge", "squash", "rebase"]) }).strict(),
 ]);
 
-async function githubClient(projectId: string, cwd: string) {
-  const accounts = githubAccountsForProject(projectId);
-  const fallback = genericSecretEnvironment(projectId).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+async function githubClient(projectId: string, cwd: string, accountId?: string) {
+  const accounts = githubAccountsForProject(projectId, undefined, accountId);
+  const fallback = accountId ? undefined : genericSecretEnvironment(projectId).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
   return createGitHubReview(cwd, {
     tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
     sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),
@@ -183,8 +185,9 @@ async function githubClient(projectId: string, cwd: string) {
 async function githubRead(projectId: string, cwd: string, query: Record<string, unknown>) {
   const parsed = githubQuery.safeParse(query);
   if (!parsed.success) throw new GitReviewError(400, "Invalid GitHub request");
-  const { op, id, page = 1, state = "open" } = parsed.data;
-  const github = await githubClient(projectId, cwd);
+  const { op, id, accountId, page = 1, state = "open" } = parsed.data;
+  if (op === "accounts") return { accounts: githubAccountChoicesForProject(projectId) };
+  const github = await githubClient(projectId, cwd, accountId);
   if (op === "issues") return { repository: github.repository, ...await github.issues(state, page) };
   if (op === "pulls") {
     if (state === "all") throw new GitReviewError(400, "Invalid GitHub request");
@@ -198,10 +201,11 @@ async function githubRead(projectId: string, cwd: string, query: Record<string, 
   return github.log(id);
 }
 
-async function githubWrite(projectId: string, cwd: string, body: unknown) {
+async function githubWrite(projectId: string, cwd: string, body: unknown, query: Record<string, unknown>) {
   const parsed = githubAction.safeParse(body);
-  if (!parsed.success) throw new GitReviewError(400, "Invalid GitHub action");
-  const github = await githubClient(projectId, cwd);
+  const credentials = githubAccountQuery.safeParse(query);
+  if (!parsed.success || !credentials.success) throw new GitReviewError(400, "Invalid GitHub action");
+  const github = await githubClient(projectId, cwd, credentials.data.accountId);
   const action = parsed.data;
   if (action.action === "edit-issue") return github.editIssue(action.number, action.title, action.body, action.state);
   if (action.action === "create") return github.create(action.head, action.base, action.title, action.body, action.draft);
@@ -221,7 +225,7 @@ app.get("/api/cluster/git/github", async (request, response, next) => {
 
 app.get("/api/projects/:projectId/git/github", async (request, response, next) => {
   try {
-    const query = { op: queryOptional(request, "op"), id: queryOptional(request, "id"), state: queryOptional(request, "state"), page: queryOptional(request, "page") };
+    const query = { op: queryOptional(request, "op"), id: queryOptional(request, "id"), state: queryOptional(request, "state"), page: queryOptional(request, "page"), accountId: queryOptional(request, "accountId") };
     await withOwningNode(request, response, "/api/cluster/git/github", query, async () =>
       githubRead(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId"), queryOptional(request, "repository")), query));
   } catch (error) { handleGitError(response, error, next); }
@@ -230,14 +234,14 @@ app.get("/api/projects/:projectId/git/github", async (request, response, next) =
 app.post("/api/cluster/git/github", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    response.json(await githubWrite(queryString(request, "projectId"), await reviewCwd(queryString(request, "projectId"), queryOptional(request, "taskId"), queryOptional(request, "repository")), request.body));
+    response.json(await githubWrite(queryString(request, "projectId"), await reviewCwd(queryString(request, "projectId"), queryOptional(request, "taskId"), queryOptional(request, "repository")), request.body, request.query));
   } catch (error) { handleGitError(response, error, next); }
 });
 
 app.post("/api/projects/:projectId/git/github", async (request, response, next) => {
   try {
-    await withOwningNode(request, response, "/api/cluster/git/github", {}, async () =>
-      githubWrite(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId"), queryOptional(request, "repository")), request.body), request);
+    await withOwningNode(request, response, "/api/cluster/git/github", { accountId: queryOptional(request, "accountId") }, async () =>
+      githubWrite(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId"), queryOptional(request, "repository")), request.body, request.query), request);
   } catch (error) { handleGitError(response, error, next); }
 });
 
