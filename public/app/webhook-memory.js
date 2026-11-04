@@ -38,9 +38,11 @@ export function createWebhookMemory({ url, run, say, onEnabled }) {
 
   const read = async () => show(await api(url("/memory")));
   const write = async (text) => {
+    const shown = content.value;
     const memory = await api(url("/memory"), { method: "PUT", body: JSON.stringify({ content: text, expectedRevision: revision }) });
     revision = memory.revision;
-    content.value = text;
+    // Whatever was typed while this saved stays in the editor.
+    if (content.value === shown) content.value = text;
     updateSize();
   };
 
