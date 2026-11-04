@@ -13,7 +13,12 @@ Every deployment is a version. The newest section must always match the
 - Added a read-only option for Ask AI reviews, so an answer can read and search the project without editing or running anything.
 - Added a nightly check at 3 a.m. that removes project knowledge rules that are clearly stale or duplicated, and proposes any less certain ones for your approval.
 - Fixed rule approvals and the nightly check removing a rule that changed after it was suggested, duplicate rules removing each other, and rule text under multi-word headings being lost.
-- Added pool assignments to the Assignments tab: a pool now covers every provider its profiles use, from everywhere down to one conversation, and follows its profiles when they change.
+
+## 2.211.0 — 2026-11-04
+
+- Pools are assigned in a new Pool assignments section on the Assignments tab, with no provider to choose first: a pool covers every provider its profiles use, and it can apply to everything, a workspace, a cluster, a project or a conversation.
+- A pool assignment follows its pool when the pool’s profiles change, and removing it returns each conversation to the next matching choice.
+- The provider tabs on Assignments now list only profiles and this machine’s own sign-in.
 
 ## 2.210.2 — 2026-11-04
 
