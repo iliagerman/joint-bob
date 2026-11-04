@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed scheduled task model pickers to load from the selected execution host, including auto reply, and block saving when that host's models cannot be loaded.
+
 ## 2.212.2 — 2026-11-04
 
 - Fixed the sidebar jumping out of view and the row menu moving after it opens in Safari, when a list refreshes while you scroll or select a project.

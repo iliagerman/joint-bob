@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { DEFAULT_AUTO_RESPOND_INSTRUCTIONS, DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, validateAutoRespondProfile } from "../../conversation-auto-respond.js";
-import { getHarnessRuntime } from "../../harnesses.js";
+import { getHarnessRuntime, listHarnesses, listHarnessModels } from "../../harnesses.js";
 import type { HarnessId } from "../../types.js";
 import { actingAccount } from "../../account-context.js";
 import { assertAutomationCreator } from "../automation-profile.js";
@@ -23,6 +23,7 @@ import { peerMayRunHere } from "../cluster-helpers.js";
 import { getPersonalAssistant } from "../../personal-assistants.js";
 
 const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("models"), projectId: z.string().min(1) }).strict(),
   z.object({ action: z.literal("profiles"), projectId: z.string().min(1), accountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("list"), projectId: z.string().min(1) }).strict(),
   z.object({ action: z.literal("ready"), projectId: z.string().min(1), sessionId: z.string().min(1), engine: registeredHarnessIdSchema }).strict(),
@@ -63,6 +64,12 @@ async function manageCron(command: Command): Promise<unknown> {
   const store = cronStore();
   const local = await getClusterNode();
   if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation") : [] };
+  if (command.action === "models") {
+    if (!await getProject(command.projectId)) throw new NotFoundError("Project not found");
+    const groups = await Promise.all(listHarnesses().filter(({ models }) => models).map(async ({ id }) =>
+      (await listHarnessModels(id)).map(model => ({ ...model, harnessId: id }))));
+    return { models: groups.flat() };
+  }
   if (command.action === "list") {
     const project = await getProject(command.projectId);
     return { tasks: project ? store.list(project.id) : [] };

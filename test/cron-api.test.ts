@@ -129,6 +129,11 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     const projectId = a.projects[0].id;
     const input = { projectId, name: "Scheduled report", prompt: "Give a report", engine: "claude", sessionId: null, ownerNodeId: b.nodeId, enabled: true, markForReview: false, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
     const authBInitial = await signIn(environment, b);
+    const hostModels = await api(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "models", projectId } });
+    const directModels = await api(b, authBInitial, "GET", "/models");
+    assert.equal(hostModels.status, 200, JSON.stringify(hostModels.body));
+    const withoutTimestamps = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => key === "capturedAt" ? undefined : item));
+    assert.deepEqual(withoutTimestamps(hostModels.body), withoutTimestamps(directModels.body), "scheduled model catalog must come from the execution host");
     const listSessions = async (node: typeof a, session: typeof auth) => (await api<{ sessions: Array<{ id: string; harnessId: string; cronTaskId?: string; silentReviewUntil?: string; reviewState?: string }> }>(node, session, "GET", `/projects/${projectId}/sessions`)).body.sessions;
     const unscheduled = (await listSessions(b, authBInitial)).filter(session => session.harnessId === "pi").slice(0, 2);
     assert.equal(unscheduled.length, 2);

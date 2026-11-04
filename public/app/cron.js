@@ -19,6 +19,7 @@ let context;
 let editing = null;
 let availableHarnesses = [];
 let availableModels = [];
+let modelRequest = 0;
 let autoReplyDefaults;
 const inputOf = ({ id, nextRun, lastRun, ...input }) => input;
 const command = (nodeId, value) => api("/api/cron", { method: "POST", body: JSON.stringify({ nodeId, command: value }) });
@@ -27,7 +28,7 @@ const profilePicker = createAutomationProfilePicker(field("model").closest("labe
 const tagPicker = createAutomationTagPicker(document.querySelector("#cronAutomationTags"), "cron-tags");
 const autoReplyProfilePicker = createAutomationProfilePicker(field("autoReplyHarness").closest("label"), "cron-auto-reply-profile", () => command(field("ownerNodeId").value, { action: "profiles", projectId: context.projectId }));
 field("ownerNodeId").addEventListener("change", () => {
-  void Promise.all([profilePicker.refresh(), autoReplyProfilePicker.refresh()]).catch(error => { errorText.textContent = error.message; });
+  void Promise.all([refreshHostModels(), profilePicker.refresh(), autoReplyProfilePicker.refresh()]).catch(error => { errorText.textContent = error.message; });
 });
 
 export async function openScheduledTasks(projectId, session = null, assistant = null) {
@@ -48,8 +49,8 @@ export async function openScheduledTasks(projectId, session = null, assistant = 
   newTaskButton.disabled = true;
   dialog.showModal();
   try {
-    const [body, harnessBody, modelBody, defaults] = await Promise.all([
-      api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`), api("/api/harnesses"), api("/api/models"), api("/api/auto-respond/defaults"),
+    const [body, harnessBody, defaults] = await Promise.all([
+      api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`), api("/api/harnesses"), api("/api/auto-respond/defaults"),
     ]);
     field("ownerNodeId").replaceChildren(...body.nodes.map(node => {
       const option = new Option(`${node.name}${node.online ? "" : " (offline)"}`, node.id);
@@ -66,7 +67,7 @@ export async function openScheduledTasks(projectId, session = null, assistant = 
     autoReplyDefaults = defaults;
     availableHarnesses = harnessBody.harnesses;
     field("engine").replaceChildren(...availableHarnesses.map(harnessOption));
-    availableModels = modelBody.models;
+    availableModels = [];
     renderExecutionFields();
     document.querySelector("#cronTimezones").replaceChildren(...["UTC", ...Intl.supportedValuesOf("timeZone")].map(zone => new Option(zone)));
     await refreshTasks();
@@ -195,6 +196,33 @@ function showLoading() {
   loading.append(spinner, document.createTextNode("Loading scheduled tasks\u2026"));
   list.replaceChildren(loading);
 }
+async function refreshHostModels(savedAutoReply) {
+  const request = ++modelRequest;
+  const modelKey = field("model").value;
+  const reasoning = field("reasoning").value;
+  const autoReplyModel = selectedModel(field("autoReplyModel"));
+  const thinkingLevel = field("autoReplyThinking").value;
+  const submit = formActions.querySelector('[type="submit"]');
+  submit.disabled = true;
+  field("model").disabled = true;
+  field("autoReplyModel").disabled = true;
+  availableModels = [];
+  field("model").replaceChildren(new Option("Loading host models…", ""));
+  field("autoReplyModel").replaceChildren();
+  errorText.textContent = "";
+  try {
+    const result = await command(field("ownerNodeId").value, { action: "models", projectId: context.projectId });
+    if (request !== modelRequest) return;
+    availableModels = result.models;
+    renderExecutionFields(modelKey, reasoning);
+    fillAutoReplyModels(savedAutoReply ?? { ...autoReplyModel, thinkingLevel });
+    field("model").disabled = false;
+    field("autoReplyModel").disabled = false;
+    submit.disabled = false;
+  } catch (error) {
+    if (request === modelRequest) errorText.textContent = error.message;
+  }
+}
 function modelsForHarness(engine) {
   return availableModels.filter((model) => model.harnessId === engine);
 }
@@ -311,6 +339,7 @@ function editTask(task) {
   }
   field("engine").disabled = false;
   editAutoReply(task?.autoRespond);
+  void refreshHostModels(task?.autoRespond);
   updateCronContext();
   showScheduleFields(); field("name").focus();
 }
