@@ -27,6 +27,8 @@ function database(node: SeededNode): DatabaseSync {
 }
 function withDatabase<T>(node: SeededNode, read: (db: DatabaseSync) => T): T {
   const db = database(node);
+  // The running node writes to this file too; wait for it as its own connections do.
+  db.exec("PRAGMA busy_timeout=5000");
   try { return read(db); } finally { db.close(); }
 }
 async function eventually<T>(check: () => T | undefined, limitMs: number): Promise<T> {

@@ -377,7 +377,8 @@ test("stopping while a resumed download re-hashes its temp ends between chunks, 
   t.after(() => { fsPromises.open = open; syncBuiltinESMExports(); });
   // Real time passes here (50 MiB is written and read), so this waits on the clock of the wall, firing due timers.
   const waitFor = async (condition: () => boolean) => {
-    for (let round = 0; round < 3000 && !condition(); round++) {
+    // 50 MiB takes far longer on a busy runner.
+    for (let round = 0; round < 9000 && !condition(); round++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
       s.clock.fireNext(s.clock.now() + 60_000);
     }
