@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { keepListScroll } from "../public/app/list-scroll.js";
 import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
@@ -11,12 +12,31 @@ function functionBody(source: string, header: string): string {
   return source.slice(start, end);
 }
 
+/** A list that loses its position on every rebuild, as Safari's does: 1800 becomes 1034. */
+function rebuiltList(top: number) {
+  return { scrollTop: top, rebuild() { this.scrollTop = Math.min(this.scrollTop, 1034); } };
+}
+
+test("a list rebuilt twice before the restore returns to where the reader left it", async () => {
+  const list = rebuiltList(1800);
+  // Selecting a project redraws the projects, then the conversations redraw them again.
+  keepListScroll(list);
+  list.rebuild();
+  keepListScroll(list);
+  list.rebuild();
+  await Promise.resolve();
+  assert.equal(list.scrollTop, 1800);
+
+  // After the restore, the next refresh keeps the position the reader scrolled to since.
+  list.scrollTop = 1500;
+  keepListScroll(list);
+  list.rebuild();
+  await Promise.resolve();
+  assert.equal(list.scrollTop, 1500);
+});
+
 test("the sidebar lists keep their scroll position across a background rebuild", async () => {
   const app = await appSource();
-  const keep = functionBody(app, "function keepListScroll(container) {");
-
-  assert.match(keep, /const top = container\.scrollTop;/);
-  assert.match(keep, /queueMicrotask\(\(\) => \{\s*container\.scrollTop = top;/);
 
   // The scroll has to be restored before the menu is re-placed, or the menu is
   // measured against rows that are about to move.

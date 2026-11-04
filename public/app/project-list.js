@@ -12,6 +12,7 @@ import { openProjectIssues } from "./project-issues.js";
 import { openBudgetDialog, projectBudgetTarget } from "./budget-dialog.js";
 import { openDashboardMode } from "./dashboards.js";
 import { menuIcon } from "./icons.js";
+import { keepListScroll } from "./list-scroll.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { mobileProjectFilterActions } from "./focus-project-controls.js";
 import { openSecretScope } from "./secrets.js";
@@ -23,20 +24,6 @@ import { shared, state } from "./state.js";
 import { renderBoardView } from "./tasks.js";
 import { openProjectPathMapping } from "./workspaces.js";
 import { usageBadge } from "./usage-format.js";
-
-/**
- * Emptying a scroll box resets it to the top, and a running agent rebuilds these
- * lists about once a second, so the list you were reading kept jumping back up.
- * The position is restored after the rebuild rather than at each early return,
- * and before the row menu is re-placed against rows that have not moved yet.
- */
-export function keepListScroll(container) {
-  const top = container.scrollTop;
-  if (!top) return;
-  queueMicrotask(() => {
-    container.scrollTop = top;
-  });
-}
 
 export function renderProjects() {
   // The badges, the menu count and the inbox read the same per-project counts as these rows,

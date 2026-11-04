@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.212.2 — 2026-11-04
+
+- Fixed the sidebar jumping out of view and the row menu moving after it opens in Safari, when a list refreshes while you scroll or select a project.
+
 ## 2.212.1 — 2026-11-05
 
 - Fixed the Default and Exception pickers on Assignments so they offer pools as well as profiles again; a pool chosen there applies to every provider its profiles use.
