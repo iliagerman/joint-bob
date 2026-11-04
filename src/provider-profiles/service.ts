@@ -13,7 +13,7 @@ import { withProfileAuthority } from "./broker.js";
 import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
 import { accessibleProviderProfile, listProviderProfiles, machineSignInChosen, providerProfile, resolveProviderProfile, type ProfileProvider, type ProfileScope, type ProviderProfile } from "./store.js";
 
-export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolSelection, updateSubscriptionPool } from "./pools.js";
+export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolChoice, updateSubscriptionPool } from "./pools.js";
 
 export type ProfileCredential = NonNullable<ReturnType<typeof readStoredCredential>>;
 const runtimes = new Map<string, Promise<ModelRuntime>>();

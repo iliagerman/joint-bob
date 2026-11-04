@@ -10,10 +10,11 @@ import {
   listSubscriptionSelections,
   matchingSelection,
   onlyPrivateProfile,
+  poolChoiceSchema,
   profileProviderSchema,
-  profileSelectionSchema,
   providerProfile,
-  setProviderPoolSelection,
+  setPoolChoice,
+  syncPoolChoices,
   type ProfileProvider,
   type ProfileScope,
   type ProfileSelection,
@@ -168,7 +169,10 @@ export function updateSubscriptionPool(owner: string, id: string, input: unknown
   const db = database();
   const at = stamp(db, origin(db));
   const updated = poolFromInput(owner, id, input, previous.createdAt, at.updatedAt);
-  transaction(db, () => writePool(db, updated, false, at));
+  transaction(db, () => {
+    writePool(db, updated, false, at);
+    syncPoolChoices(owner, id, poolProviders(owner, updated));
+  });
   return getSubscriptionPool(owner, id);
 }
 export function deleteSubscriptionPool(owner: string, id: string): void {
@@ -176,11 +180,15 @@ export function deleteSubscriptionPool(owner: string, id: string): void {
   if (db.prepare("SELECT 1 FROM provider_profile_selections WHERE pool_id=? LIMIT 1").get(id)) throw new Error("Remove this pool's selections before deleting it");
   transaction(db, () => writePool(db, pool, true, stamp(db, origin(db))));
 }
-export function setSubscriptionPoolSelection(owner: string, input: unknown): void {
-  const value = profileSelectionSchema.parse(input);
-  if (!value.poolId || value.profileId !== null) throw new Error("Choose one subscription pool");
-  getSubscriptionPool(owner, value.poolId);
-  setProviderPoolSelection(owner, value);
+/** Assigns a pool to a scope, or clears the scope's pool when `poolId` is null. No provider is chosen: the pool's profiles decide. */
+export function setSubscriptionPoolChoice(owner: string, input: unknown): void {
+  const choice = poolChoiceSchema.parse(input);
+  const providers = choice.poolId ? poolProviders(owner, getSubscriptionPool(owner, choice.poolId)) : [];
+  setPoolChoice(owner, choice, providers);
+}
+/** The providers a pool covers: the providers of its own profiles. */
+function poolProviders(owner: string, pool: SubscriptionPool): ProfileProvider[] {
+  return [...new Set(poolProfiles(owner, pool.members.map(({ profileId }) => profileId)).map(({ provider }) => provider))];
 }
 export function resolveSubscriptionChoice(owner: string, provider: ProfileProvider, scope: ProfileScope, usage: ProfileUsage = "interactive"): SubscriptionChoice | undefined {
   const match = matchingSelection(listSubscriptionSelections(owner).filter((entry) => entry.provider === profileProviderSchema.parse(provider)), scope);

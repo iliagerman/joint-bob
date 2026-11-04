@@ -22,7 +22,7 @@ type PoolApi = {
   deleteSubscriptionPool?: (owner: string, id: string) => void;
   getSubscriptionPool?: (owner: string, id: string) => Pool;
   listSubscriptionPools?: (owner: string) => Pool[];
-  setSubscriptionPoolSelection?: (owner: string, input: unknown) => void;
+  setSubscriptionPoolChoice?: (owner: string, input: unknown) => void;
   resolveSubscriptionChoice?: (owner: string, provider: string, scope: { projectId: string; workspaceId: string; conversationId?: string }) => unknown;
   poolCandidates?: (pool: Pool, preferredProvider: string) => Array<{ id: string; provider: string }>;
 };
@@ -103,30 +103,30 @@ test("pool candidates try the preferred provider first and preserve order within
 
 test("pool selection follows scope precedence and blocks another user's pool ID", () => {
   const create = required(poolApi.createSubscriptionPool);
-  const setPoolChoice = required(poolApi.setSubscriptionPoolSelection);
+  const setPoolChoice = required(poolApi.setSubscriptionPoolChoice);
   const resolve = required(poolApi.resolveSubscriptionChoice);
   const claude = createProviderProfile("pool-scope", { label: "Claude", provider: "claude" });
   const codex = createProviderProfile("pool-scope", { label: "Codex", provider: "openai-codex" });
   const pool = create("pool-scope", { name: "Scope", profileIds: [claude.id, codex.id] });
 
-  setPoolChoice("pool-scope", selection({ poolId: pool.id }));
+  setPoolChoice("pool-scope", { scope: "default", scopeId: "", poolId: pool.id });
   assert.deepEqual(resolve("pool-scope", "claude", scope), { kind: "pool", pool, source: "default" });
   setProviderProfileSelection("pool-scope", { provider: "claude", scope: "project", scopeId: scope.projectId, profileId: claude.id });
   assert.deepEqual(resolve("pool-scope", "claude", scope), { kind: "profile", profile: claude, source: "project" });
-  setPoolChoice("pool-scope", { provider: "claude", scope: "conversation", scopeId: JSON.stringify([scope.projectId, scope.conversationId]), profileId: null, poolId: pool.id });
+  setPoolChoice("pool-scope", { scope: "conversation", scopeId: JSON.stringify([scope.projectId, scope.conversationId]), poolId: pool.id });
   assert.deepEqual(resolve("pool-scope", "claude", scope), { kind: "pool", pool, source: "conversation" });
   assert.equal(resolve("another-user", "claude", scope), undefined);
-  assert.throws(() => setPoolChoice("another-user", selection({ poolId: pool.id })), /not found|owner|pool/i);
+  assert.throws(() => setPoolChoice("another-user", { scope: "default", scopeId: "", poolId: pool.id }), /not found|owner|pool/i);
 });
 
 test("a pool cannot be deleted while selected, but deleting after clearing its choice succeeds", () => {
   const create = required(poolApi.createSubscriptionPool);
   const remove = required(poolApi.deleteSubscriptionPool);
   const get = required(poolApi.getSubscriptionPool);
-  const setPoolChoice = required(poolApi.setSubscriptionPoolSelection);
+  const setPoolChoice = required(poolApi.setSubscriptionPoolChoice);
   const claude = createProviderProfile("pool-delete", { label: "Claude", provider: "claude" });
   const pool = create("pool-delete", { name: "Selected", profileIds: [claude.id] });
-  setPoolChoice("pool-delete", selection({ poolId: pool.id }));
+  setPoolChoice("pool-delete", { scope: "default", scopeId: "", poolId: pool.id });
   assert.throws(() => remove("pool-delete", pool.id), /selection/i);
   setProviderProfileSelection("pool-delete", selection({ profileId: null }));
   remove("pool-delete", pool.id);
@@ -134,13 +134,44 @@ test("a pool cannot be deleted while selected, but deleting after clearing its c
   assert.equal(settingsDatabase().prepare("SELECT 1 FROM subscription_pools WHERE id=? AND deleted=0").get(pool.id), undefined);
 });
 
+test("a pool assignment covers every provider its profiles use, and clearing it clears them all", () => {
+  const create = required(poolApi.createSubscriptionPool);
+  const setPoolChoice = required(poolApi.setSubscriptionPoolChoice);
+  const resolve = required(poolApi.resolveSubscriptionChoice);
+  const claude = createProviderProfile("pool-fan", { label: "Claude", provider: "claude" });
+  const codex = createProviderProfile("pool-fan", { label: "Codex", provider: "openai-codex" });
+  const pool = create("pool-fan", { name: "Both", profileIds: [claude.id, codex.id] });
+
+  setPoolChoice("pool-fan", { scope: "workspace", scopeId: scope.workspaceId, poolId: pool.id });
+  assert.deepEqual(resolve("pool-fan", "claude", scope), { kind: "pool", pool, source: "workspace" });
+  assert.deepEqual(resolve("pool-fan", "openai-codex", scope), { kind: "pool", pool, source: "workspace" });
+  setPoolChoice("pool-fan", { scope: "workspace", scopeId: scope.workspaceId, poolId: null });
+  assert.notEqual((resolve("pool-fan", "claude", scope) as { kind?: string } | undefined)?.kind, "pool");
+  assert.notEqual((resolve("pool-fan", "openai-codex", scope) as { kind?: string } | undefined)?.kind, "pool");
+});
+
+test("editing a pool's profiles moves its assignments with them", () => {
+  const create = required(poolApi.createSubscriptionPool);
+  const update = required(poolApi.updateSubscriptionPool);
+  const setPoolChoice = required(poolApi.setSubscriptionPoolChoice);
+  const resolve = required(poolApi.resolveSubscriptionChoice);
+  const claude = createProviderProfile("pool-edit", { label: "Claude", provider: "claude" });
+  const codex = createProviderProfile("pool-edit", { label: "Codex", provider: "openai-codex" });
+  const pool = create("pool-edit", { name: "Edited", profileIds: [claude.id] });
+  setPoolChoice("pool-edit", { scope: "default", scopeId: "", poolId: pool.id });
+
+  const edited = update("pool-edit", pool.id, { name: "Edited", profileIds: [codex.id] });
+  assert.deepEqual(resolve("pool-edit", "openai-codex", scope), { kind: "pool", pool: edited, source: "default" });
+  assert.notEqual((resolve("pool-edit", "claude", scope) as { kind?: string } | undefined)?.kind, "pool");
+});
+
 test("pool metadata and selections replicate only through twin-scoped event types without credentials", () => {
   const owner = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const createProfile = createProviderProfile(owner, { label: "Sync", provider: "claude" });
   const create = required(poolApi.createSubscriptionPool);
-  const setPoolChoice = required(poolApi.setSubscriptionPoolSelection);
+  const setPoolChoice = required(poolApi.setSubscriptionPoolChoice);
   const pool = create(owner, { name: "Shared only with twins", profileIds: [createProfile.id] });
-  setPoolChoice(owner, { provider: "claude", scope: "default", scopeId: "", profileId: null, poolId: pool.id });
+  setPoolChoice(owner, { scope: "default", scopeId: "", poolId: pool.id });
 
   const selectionKey = JSON.stringify([owner, "claude", "default", ""]);
   const rows = settingsDatabase().prepare("SELECT entity_type AS entityType,entity_key AS entityKey,payload FROM replication_outbox WHERE entity_key=? OR entity_key=?").all(pool.id, selectionKey) as Array<{ entityType: string; entityKey: string; payload: string }>;

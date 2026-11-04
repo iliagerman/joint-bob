@@ -11,8 +11,8 @@ import { accountInCluster } from "../../cluster-accounts.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { clusterManager, signedPost } from "../cluster-v2.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
-import { createProviderProfile, deleteProviderProfile, listProviderProfiles, listProviderProfileSelections, providerProfile, providerProfileById, profileSelectionSchema, setProviderProfileSelection, listSubscriptionSelections, listAccessibleProviderProfiles, setProviderProfileShared, twinProviderProfile } from "../../provider-profiles/store.js";
-import { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, setSubscriptionPoolSelection, updateSubscriptionPool, type SubscriptionPool } from "../../provider-profiles/pools.js";
+import { createProviderProfile, deleteProviderProfile, listProviderProfiles, listProviderProfileSelections, providerProfile, providerProfileById, poolChoiceSchema, profileSelectionSchema, setProviderProfileSelection, listSubscriptionSelections, listAccessibleProviderProfiles, setProviderProfileShared, twinProviderProfile } from "../../provider-profiles/store.js";
+import { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, setSubscriptionPoolChoice, updateSubscriptionPool, type SubscriptionPool } from "../../provider-profiles/pools.js";
 import { poolProfileProviderSchema, applyClusterSubscriptionPoolEvent, assignedClusterPoolsForOwner, clusterPoolProfileAuthorized, getClusterSubscriptionPool, parseClusterSubscriptionPoolAssignment, setClusterSubscriptionPool, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
 import { localProfileCredential, logoutProfile, profileAvailability, profileLoginState, startProfileLogin } from "../../provider-profiles/service.js";
 import { borrowTwinCredential, TWIN_PROFILE_TOKEN_PATH } from "../../provider-profiles/twin-login.js";
@@ -188,7 +188,7 @@ app.delete("/api/provider-profiles/:id", route(async (request, response) => {
   response.json({ ok: true });
 }));
 
-async function scopeAllowed(accountId: string, selection: z.infer<typeof profileSelectionSchema>): Promise<boolean> {
+async function scopeAllowed(accountId: string, selection: Pick<z.infer<typeof profileSelectionSchema>, "scope" | "scopeId">): Promise<boolean> {
   if (selection.scope === "default") return true;
   if (selection.scope === "cluster") return (await choosableClusters(accountId)).some(({ id }) => id === selection.scopeId);
   if (selection.scope === "workspace") return (await listWorkspaces()).some((item) => item.id === selection.scopeId);
@@ -231,9 +231,15 @@ app.get("/api/provider-profiles/clusters", route(async (_request, response) => {
 }));
 app.put("/api/provider-profiles/selection", route(async (request, response) => {
   const selection = profileSelectionSchema.parse(request.body);
+  if (selection.poolId) { sendError(response, 400, "Assign a pool with PUT /api/provider-profiles/pool-selection: it needs no provider"); return; }
   if (!await scopeAllowed(owner(response), selection)) { sendError(response, 404, "Scope not found or not accessible to this account"); return; }
-  if (selection.poolId) setSubscriptionPoolSelection(owner(response), selection);
-  else setProviderProfileSelection(owner(response), selection);
+  setProviderProfileSelection(owner(response), selection);
+  response.json({ selections: listSubscriptionSelections(owner(response)) });
+}));
+app.put("/api/provider-profiles/pool-selection", route(async (request, response) => {
+  const choice = poolChoiceSchema.parse(request.body);
+  if (!await scopeAllowed(owner(response), choice)) { sendError(response, 404, "Scope not found or not accessible to this account"); return; }
+  setSubscriptionPoolChoice(owner(response), choice);
   response.json({ selections: listSubscriptionSelections(owner(response)) });
 }));
 
