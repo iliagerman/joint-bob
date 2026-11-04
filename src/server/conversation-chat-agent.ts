@@ -1,18 +1,11 @@
 import { getHarnessRuntime } from "../harnesses.js";
 import { internalSessionId } from "../internal-sessions.js";
 import { conversationScopeId, setScopeSecretAccounts } from "../secrets.js";
+import { readOnlyChatTools } from "../read-only-tools.js";
 import { chatModelSchema, type ChatAgent, type ChatModel } from "../conversation-chat.js";
 import type { HarnessModelSettings } from "../harnesses/runtime.js";
 
-/** Only built-in readers. Unknown extensions, shell, web and delegated agents are never read-only tools. */
-export function readOnlyChatTools(harnessId: string): string[] {
-  switch (harnessId) {
-    case "pi": return ["read", "grep", "find", "ls"];
-    case "claude": return ["Read", "Grep", "Glob"];
-    case "kiro": return ["read"];
-    default: return [];
-  }
-}
+export { readOnlyChatTools };
 
 interface ChatAgentInput {
   projectId: string;

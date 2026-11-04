@@ -2,6 +2,7 @@ import { internalSessionId } from "../internal-sessions.js";
 import { getHarness, getHarnessRuntime, listHarnessSessions } from "../harnesses.js";
 import { listConversationSegments } from "../conversation-records.js";
 import { conversationScopeId, getScopeSecretAccounts } from "../secrets.js";
+import { readOnlyChatTools } from "../read-only-tools.js";
 import { getProject } from "../store.js";
 import type { HarnessEvent, HarnessModelSettings, HarnessSession } from "../harnesses/runtime.js";
 import type { GitReviewSelection } from "../git-review-threads.js";
@@ -26,6 +27,8 @@ export interface RunGitReviewInput {
   cwd: string;
   /** Ask AI can check live sources; generated reviews remain text-only. */
   useTools?: boolean;
+  /** Reads files and searches the project but cannot edit or run anything; exclusive with `useTools`. */
+  readOnlyTools?: boolean;
   conversationId?: string;
   harnessId: HarnessId;
   provider: string;
@@ -117,6 +120,7 @@ function collectAnswer(events: HarnessEvent[]): string {
  * the project's live conversations.
  */
 export async function runGitReview(input: RunGitReviewInput): Promise<RunGitReviewResult> {
+  if (input.useTools && input.readOnlyTools) throw new Error("useTools and readOnlyTools are exclusive");
   const adapter = getHarness(input.harnessId);
   if (!adapter.runtime) throw new GitReviewRunError(400, `${adapter.label} cannot run reviews`);
   const runtime = await getHarnessRuntime(input.harnessId);
@@ -149,7 +153,8 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
     await session.configure(settings);
     await session.preflight();
     // Tool-enabled Ask AI follows read-only instructions, not an OS-level sandbox.
-    if (!input.useTools) await restrictToReadOnly(session);
+    if (input.readOnlyTools) await session.setTools(readOnlyChatTools(input.harnessId));
+    else if (!input.useTools) await restrictToReadOnly(session);
 
     const done = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {

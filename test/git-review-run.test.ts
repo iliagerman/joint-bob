@@ -11,12 +11,14 @@ const compiled = ts.transpileModule(readFileSync(new URL("../src/server/git-revi
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-async function review(t: TestContext) {
+async function review(t: TestContext, extra: Partial<Review.RunGitReviewInput> = {}) {
+  const toolSets: string[][] = [];
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const listeners = new Set<(event: HarnessEvent) => void>();
   const emit = (event: HarnessEvent) => { for (const listener of [...listeners]) listener(event); };
   const started = Promise.withResolvers<void>();
   const response = Promise.withResolvers<void>();
+  response.promise.catch(() => undefined);
   const cancellations: Array<string | undefined> = [];
   let busy = false;
   let disposed = false;
@@ -24,7 +26,7 @@ async function review(t: TestContext) {
     settings: () => ({ provider: "claude", modelId: "fixture", reasoning: "default" }),
     status: () => ({ model: { provider: "claude", id: "fixture" }, thinkingLevel: "default" }),
     subscribe(listener: (event: HarnessEvent) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    configure: async () => {}, preflight: async () => {}, setTools: async () => {},
+    configure: async () => {}, preflight: async () => {}, setTools: async (tools: string[]) => { toolSets.push(tools); },
     async prompt() {
       busy = true;
       emit({ type: "agent_start" });
@@ -47,6 +49,7 @@ async function review(t: TestContext) {
       getHarnessRuntime: async () => ({ open: async () => session, validateSettings: async () => {} }),
     },
     "../conversation-records.js": {}, "../secrets.js": {}, "../store.js": {},
+    "../read-only-tools.js": { readOnlyChatTools: (harnessId: string) => [`read-only-${harnessId}`] },
   };
   // Node's mock Timeout.refresh() is a no-op, so reschedule through its clock.
   const schedule = (callback: () => void, delay: number) => {
@@ -66,12 +69,12 @@ async function review(t: TestContext) {
   const partials: string[] = [];
   const result = exports.runGitReview({
     projectId: "fixture", cwd: "/fixture", harnessId: "claude", provider: "claude", modelId: "fixture", thinkingLevel: "default",
-    selection: { scope: "worktree" }, diff: "+run();", question: "Explain the change", onText: (text) => partials.push(text),
+    selection: { scope: "worktree" }, diff: "+run();", question: "Explain the change", onText: (text) => partials.push(text), ...extra,
   });
   result.catch(() => undefined);
   t.after(async () => { response.reject(new Error("Fixture cleanup")); await result.catch(() => undefined); });
-  await started.promise;
-  return { emit, result, partials, cancellations, disposed: () => disposed, finish: response.resolve, fail: response.reject };
+  await Promise.race([started.promise, result]);
+  return { emit, result, partials, cancellations, toolSets, disposed: () => disposed, finish: response.resolve, fail: response.reject };
 }
 
 for (const event of [
@@ -155,4 +158,16 @@ test("a turn ending without an answer still fails", async (t) => {
   const run = await review(t);
   run.finish();
   await assert.rejects(run.result, { status: 502, message: "Review produced no explanation" });
+});
+
+test("a review is text-only by default", async (t) => {
+  assert.deepEqual((await review(t)).toolSets, [[]]);
+});
+
+test("readOnlyTools gives a review the read-only tools instead", async (t) => {
+  assert.deepEqual((await review(t, { readOnlyTools: true })).toolSets, [["read-only-claude"]]);
+});
+
+test("useTools and readOnlyTools cannot be combined", async (t) => {
+  await assert.rejects(review(t, { useTools: true, readOnlyTools: true }), /exclusive/);
 });
