@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a per-project knowledge base for the rules agents learn, kept with the project so it travels with its committed code.
+
 ## 2.210.2 — 2026-11-04
 
 - Fixed saving a webhook or assistant's memory sometimes stalling for over 30 seconds, along with other requests on that machine while it waited.
