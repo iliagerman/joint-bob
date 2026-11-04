@@ -18,6 +18,8 @@ const SCOPES = [
   { id: "project", label: "Project", icon: "folder" },
   { id: "conversation", label: "Conversation", icon: "chat" },
 ];
+/** A pool needs no provider, so a pool assignment can also cover everything at once. */
+const POOL_SCOPES = [{ id: "default", label: "Default", icon: "folder" }, ...SCOPES];
 const PAGE_SIZE = { profiles: 4, pools: 4, exceptions: 6 };
 const HISTORY_WARNING = "The next turn may send conversation history under a different provider account. Running turns keep their current account.";
 
@@ -37,7 +39,7 @@ let view = "profiles";
 let profileProvider = "", assignmentProvider = "";
 let poolMode = "list", testedPoolId = "";
 let poolEditor = emptyPoolEditor();
-/** The exception being added on the Assignments tab: its scope, while the form is open. */
+/** The exception or pool assignment being added on the Assignments tab: its scope, and `pool` for a pool, while the form is open. */
 let exceptionDraft = null;
 let loginPolls = 0;
 const conversationTitles = new Map();
@@ -153,7 +155,7 @@ const builders = { profiles: profilesSection, pools: poolsSection, assignments: 
 const VIEWS = [
   { id: "profiles", label: "Profiles", count: () => profiles.length },
   { id: "pools", label: "Pools", count: () => pools.length },
-  { id: "assignments", label: "Assignments", count: () => selections.length },
+  { id: "assignments", label: "Assignments", count: () => poolAssignments().length + selections.filter((item) => !item.poolId).length },
 ];
 function render() {
   const header = el("header", { className: "engines-card-header" });
@@ -346,7 +348,7 @@ async function savePool() {
 function sortedMembers(pool) { return [...pool.members].sort((left, right) => left.position - right.position); }
 /** Where a pool is chosen, in words, so a card says whether it does anything yet. */
 function poolUses(pool) {
-  const uses = selections.filter((selection) => selection.poolId === pool.id).map((selection) => `${scopeName(selection)} (${providerOf(selection.provider).name})`);
+  const uses = [...new Set(selections.filter((selection) => selection.poolId === pool.id).map((selection) => scopeName(selection)))];
   for (const rule of relayRules) if (rule.ownedHere && rule.poolId === pool.id) uses.push(`Relay rule for ${rule.groupName}`);
   return uses;
 }
@@ -388,7 +390,7 @@ function poolsSection() {
   poolMode = "list";
   const create = actionButton("New pool", "subscription-pool-new", () => { poolEditor = emptyPoolEditor(); poolMode = "edit"; rerender("pools"); }, { icon: "plus", className: "primary profile-action" });
   const head = el("div", { className: "profile-section-toolbar" });
-  head.append(sectionHeader("Pools", "A pool is an ordered list of your private profiles. When the one in use runs out of quota or its sign-in fails, the next one takes over. To use a pool only in one cluster's projects, add a Cluster exception under Assignments."), create);
+  head.append(sectionHeader("Pools", "A pool is an ordered list of your private profiles. When the one in use runs out of quota or its sign-in fails, the next one takes over. To use a pool only in one cluster's projects, assign it to that cluster under Assignments."), create);
   const list = el("div", { testid: "subscription-pool-list", className: "subscription-pool-grid" });
   list.append(...pageOf("pools", pools).map(poolCard));
   if (!pools.length) list.append(el("p", { className: "profile-empty", text: "No pools yet. Add profiles on the Profiles tab, then group them here so a turn can move to the next one when a quota runs out." }));
@@ -552,14 +554,14 @@ async function refreshLogin(profile, container, settled) {
 }
 
 /**
- * One provider at a time: the account every conversation uses, then the exceptions that
- * replace it for a workspace, project, or conversation. The most specific exception wins.
+ * Pools first, since a pool needs no provider. Then one provider at a time: the account every
+ * conversation uses, then the exceptions that replace it for a workspace, project, or conversation.
  */
 function assignmentsSection() {
   const section = el("section", { testid: "provider-assignments", className: "profile-section" });
   const tabs = providerTabs(assignmentProvider, (id) => { assignmentProvider = id; exceptionDraft = null; pages.exceptions = 0; rerender("assignments"); }, "provider-assignment-provider",
-    (id) => selections.filter((item) => item.provider === id).length);
-  section.append(tabs, ...relayRuleNote(assignmentProvider), defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
+    (id) => selections.filter((item) => item.provider === id && !item.poolId).length);
+  section.append(poolAssignmentsBlock(), tabs, ...relayRuleNote(assignmentProvider), defaultChoice(assignmentProvider), exceptionsBlock(assignmentProvider));
   return section;
 }
 /** A relay rule wins in its group's projects over every choice here; set on the relay, never on this page. */
@@ -580,7 +582,6 @@ function choiceOptions(provider) {
   return [
     ...(provider === "claude" || provider === "openai-codex" ? [{ value: "machine", label: "This machine's own sign-in", detail: "No profile: the sign-in on this machine" }] : []),
     ...privateProfiles(provider).map((profile) => ({ value: `profile:${profile.id}`, label: profile.label, detail: `${providerOf(provider).name} profile · ${profileStatusLabel(profile.id)}` })),
-    ...(provider === "kiro" ? [] : pools.map((pool) => ({ value: `pool:${pool.id}`, label: pool.name, detail: `Pool · ${pool.members.length} profile${pool.members.length === 1 ? "" : "s"}` }))),
   ];
 }
 function choiceLabel(value) {
@@ -599,6 +600,10 @@ function defaultChoice(provider) {
   const name = providerOf(provider).name;
   const block = el("div", { testid: "provider-assignment-default", className: "assignment-block" });
   const current = saved(provider, "default", "");
+  if (current?.startsWith("pool:")) {
+    block.append(sectionHeader(`Every ${name} conversation uses`, "The pool assigned to everything, set under Pool assignments above."), el("p", { testid: "provider-assignment-default-pool", className: "profile-status-detail", text: choiceLabel(current) }));
+    return block;
+  }
   const automatic = automaticDefault(provider);
   const none = automatic ? { value: "", label: automatic.label, detail: "Nothing chosen" } : { value: "", label: "None", detail: "No profile chosen" };
   const options = [none, ...choiceOptions(provider)];
@@ -616,10 +621,10 @@ async function changeChoice(payload, title) {
   if (!await confirmAction({ title, message: HISTORY_WARNING, confirmLabel: "Save" })) { rerender("assignments"); return; }
   await putSelection(payload);
 }
-const SCOPE_RANK = { workspace: 0, cluster: 1, project: 2, conversation: 3 };
+const SCOPE_RANK = { default: -1, workspace: 0, cluster: 1, project: 2, conversation: 3 };
 function exceptionsBlock(provider) {
   const name = providerOf(provider).name;
-  const exceptions = selections.filter((item) => item.provider === provider && item.scope !== "default")
+  const exceptions = selections.filter((item) => item.provider === provider && item.scope !== "default" && !item.poolId)
     .sort((left, right) => SCOPE_RANK[left.scope] - SCOPE_RANK[right.scope] || scopeName(left).localeCompare(scopeName(right)));
   const block = el("div", { testid: "provider-assignment-exceptions", className: "assignment-block" });
   const pagination = pager("exceptions", exceptions.length, "provider-exceptions", "assignments");
@@ -627,8 +632,8 @@ function exceptionsBlock(provider) {
   const list = el("ul", { testid: "provider-exception-list", className: "assignment-exception-list" });
   list.append(...visible.map(exceptionRow));
   if (!exceptions.length) list.append(el("li", { className: "profile-empty", text: `No exceptions. Every ${name} conversation uses the profile above.` }));
-  const add = exceptionDraft ? exceptionForm(provider) : actionButton("Add exception", "provider-exception-new", () => { exceptionDraft = { scope: "workspace" }; rerender("assignments"); }, { icon: "plus" });
-  block.append(sectionHeader("Exceptions", "Use a different profile or pool in one workspace, in the projects shared through one cluster, in one project, or in one conversation. These are your choices: they apply on this machine and your twins, never to other members. When several match, the most specific wins: a conversation over its project, a project over its cluster, a cluster over its workspace."), list, ...pagination, add);
+  const add = exceptionDraft && !exceptionDraft.pool ? exceptionForm(provider) : actionButton("Add exception", "provider-exception-new", () => { exceptionDraft = { scope: "workspace" }; rerender("assignments"); }, { icon: "plus" });
+  block.append(sectionHeader("Exceptions", "Use a different profile in one workspace, in the projects shared through one cluster, in one project, or in one conversation. Pools are assigned above, with no provider to choose. These are your choices: they apply on this machine and your twins, never to other members. When several match, the most specific wins: a conversation over its project, a project over its cluster, a cluster over its workspace."), list, ...pagination, add);
   void loadConversationTitles(visible).catch((error) => toast(error.message));
   return block;
 }
@@ -650,14 +655,16 @@ function exceptionRow(entry) {
 }
 /** "In [scope] [target] use [profile or pool]", one sentence; only changing the scope rebuilds it. */
 function exceptionForm(provider) {
-  const form = el("div", { testid: "provider-exception-form", className: "assignment-exception-form" });
-  const scope = select("provider-exception-scope", SCOPES.map((item) => [item.id, item.label]), exceptionDraft.scope);
-  scope.addEventListener("change", () => { exceptionDraft = { scope: scope.value }; rerender("assignments"); });
-  const workspace = select("provider-exception-workspace", workspaces.map((item) => [item.id, item.label]));
-  const cluster = select("provider-exception-cluster", scopeClusters.map((item) => [item.id, item.name]));
-  const project = select("provider-exception-project", projects.map((item) => [item.id, item.name]));
-  const conversation = select("provider-exception-conversation", []);
-  const targets = exceptionDraft.scope === "workspace" ? [labeled("Workspace", workspace)]
+  const pool = exceptionDraft.pool === true, prefix = pool ? "pool-assignment" : "provider-exception";
+  const form = el("div", { testid: `${prefix}-form`, className: "assignment-exception-form" });
+  const scope = select(`${prefix}-scope`, (pool ? POOL_SCOPES : SCOPES).map((item) => [item.id, item.label]), exceptionDraft.scope);
+  scope.addEventListener("change", () => { exceptionDraft = { scope: scope.value, pool }; rerender("assignments"); });
+  const workspace = select(`${prefix}-workspace`, workspaces.map((item) => [item.id, item.label]));
+  const cluster = select(`${prefix}-cluster`, scopeClusters.map((item) => [item.id, item.name]));
+  const project = select(`${prefix}-project`, projects.map((item) => [item.id, item.name]));
+  const conversation = select(`${prefix}-conversation`, []);
+  const targets = exceptionDraft.scope === "default" ? []
+    : exceptionDraft.scope === "workspace" ? [labeled("Workspace", workspace)]
     : exceptionDraft.scope === "cluster" ? [labeled("Cluster", cluster)]
       : [labeled("Project", project), ...(exceptionDraft.scope === "conversation" ? [labeled("Conversation", conversation)] : [])];
   const fillConversations = async () => {
@@ -668,18 +675,21 @@ function exceptionForm(provider) {
     project.addEventListener("change", () => void fillConversations().catch((error) => toast(error.message)));
     void fillConversations().catch((error) => toast(error.message));
   }
-  const account = createSearchableSelect({ id: "providerExceptionChoice", testid: "provider-exception-choice-select", label: "Profile or pool", prompt: "Choose a profile or pool", placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
-  account.setOptions(choiceOptions(provider));
-  const scopeId = () => ({ workspace: workspace.value, cluster: cluster.value, project: project.value })[exceptionDraft.scope] ?? JSON.stringify([project.value, conversation.value]);
-  const save = actionButton("Add exception", "provider-exception-add", async () => {
-    if (!scopeId() || (exceptionDraft.scope === "conversation" && !conversation.value)) throw new Error(`Choose a ${exceptionDraft.scope} first`);
-    if (!account.value) throw new Error(`Choose a ${providerOf(provider).name} profile or a pool first`);
-    if (!await confirmAction({ title: "Add exception?", message: HISTORY_WARNING, confirmLabel: "Add exception" })) return;
-    const payload = selectionPayload(provider, exceptionDraft.scope, scopeId(), account.value);
+  const account = pool
+    ? createSearchableSelect({ id: "poolAssignmentChoice", testid: "pool-assignment-choice-select", label: "Pool", prompt: "Choose a pool", placeholder: "Search pools", emptyText: "No pools found" })
+    : createSearchableSelect({ id: "providerExceptionChoice", testid: "provider-exception-choice-select", label: "Profile", prompt: "Choose a profile", placeholder: "Search profiles", emptyText: "No profiles found" });
+  account.setOptions(pool ? poolOptions() : choiceOptions(provider));
+  const scopeId = () => ({ default: "", workspace: workspace.value, cluster: cluster.value, project: project.value })[exceptionDraft.scope] ?? JSON.stringify([project.value, conversation.value]);
+  const save = actionButton(pool ? "Assign pool" : "Add exception", `${prefix}-add`, async () => {
+    if ((exceptionDraft.scope !== "default" && !scopeId()) || (exceptionDraft.scope === "conversation" && !conversation.value)) throw new Error(`Choose a ${exceptionDraft.scope} first`);
+    if (!account.value) throw new Error(pool ? "Choose a pool first" : `Choose a ${providerOf(provider).name} profile first`);
+    if (!await confirmAction({ title: pool ? "Assign pool?" : "Add exception?", message: HISTORY_WARNING, confirmLabel: pool ? "Assign pool" : "Add exception" })) return;
+    const { scope: chosen } = exceptionDraft, target = scopeId();
     exceptionDraft = null;
-    await putSelection(payload);
+    if (pool) await putSelection({ scope: chosen, scopeId: target, poolId: account.value }, POOL_PATH);
+    else await putSelection(selectionPayload(provider, chosen, target, account.value));
   }, { icon: "check", className: "primary profile-action" });
-  const cancel = actionButton("Cancel", "provider-exception-cancel", () => { exceptionDraft = null; rerender("assignments"); });
+  const cancel = actionButton("Cancel", `${prefix}-cancel`, () => { exceptionDraft = null; rerender("assignments"); });
   form.append(labeled("In", scope), ...targets, labeled("use", account.root), save, cancel);
   return form;
 }
@@ -701,10 +711,47 @@ async function loadConversationTitles(entries) {
   }));
   rerender("assignments");
 }
-async function putSelection(value) {
-  const body = await api("/api/provider-profiles/selection", { method: "PUT", body: JSON.stringify(value) });
+const POOL_PATH = "/api/provider-profiles/pool-selection";
+async function putSelection(value, path = "/api/provider-profiles/selection") {
+  const body = await api(path, { method: "PUT", body: JSON.stringify(value) });
   selections = body.selections;
   // Pool cards say where each pool is used, and a pool in use cannot be deleted; the tab counts change too.
   rerender("assignments"); rerender("pools"); showView();
   toast("Choice saved. Your twins receive it automatically.");
+}
+/** Pool assignments: one row per pool at one scope, however many providers that pool covers. */
+function poolAssignmentsBlock() {
+  const block = el("div", { testid: "pool-assignments", className: "assignment-block" });
+  const entries = poolAssignments();
+  const list = el("ul", { testid: "pool-assignment-list", className: "assignment-exception-list" });
+  list.append(...entries.map(poolAssignmentRow));
+  if (!entries.length) list.append(el("li", { className: "profile-empty", text: "No pool assigned. Each provider uses its own choices below." }));
+  const add = exceptionDraft?.pool ? exceptionForm(null) : actionButton("Add pool assignment", "pool-assignment-new", () => { exceptionDraft = { scope: "default", pool: true }; rerender("assignments"); }, { icon: "plus" });
+  block.append(sectionHeader("Pool assignments", "A pool already holds the profiles to use, so no provider is chosen here: every provider those profiles cover follows the pool. Assign it to everything, a workspace, the projects shared through one cluster, one project, or one conversation. The most specific one wins, as with exceptions. These are your choices: they apply on this machine and your twins."), list, add);
+  void loadConversationTitles(entries).catch((error) => toast(error.message));
+  return block;
+}
+/** One entry per pool assignment: a pool at one scope, however many providers it covers. */
+function poolAssignments() {
+  const entries = new Map();
+  for (const { scope, scopeId, poolId } of selections) if (poolId) entries.set(JSON.stringify([scope, scopeId, poolId]), { scope, scopeId, poolId });
+  return [...entries.values()].sort((left, right) => SCOPE_RANK[left.scope] - SCOPE_RANK[right.scope] || scopeName(left).localeCompare(scopeName(right)));
+}
+function poolAssignmentRow(entry) {
+  const scope = POOL_SCOPES.find((item) => item.id === entry.scope);
+  const row = el("li", { testid: "pool-assignment-row", className: "assignment-exception-row" }); row.dataset.scope = entry.scope; row.dataset.scopeId = entry.scopeId;
+  const where = el("span", { className: "assignment-exception-where" }); where.append(menuIcon(scope.icon), scopeName(entry));
+  const pool = poolNamed(entry.poolId);
+  const who = el("span", { className: `assignment-exception-choice${pool ? "" : " invalid"}`, testid: "pool-assignment-choice" });
+  who.append(pool ? pool.name : "Unavailable pool");
+  if (entry.scope === "cluster" && relayRules.some((rule) => rule.clusterId === entry.scopeId)) who.append(" — the relay's pool wins here");
+  const remove = actionButton("Remove", "pool-assignment-remove", async () => {
+    if (!await confirmAction({ title: "Remove pool assignment?", message: `${scopeName(entry)} goes back to the next matching choice. ${HISTORY_WARNING}`, confirmLabel: "Remove" })) return;
+    await putSelection({ scope: entry.scope, scopeId: entry.scopeId, poolId: null }, POOL_PATH);
+  }, { icon: "close" });
+  row.append(el("span", { className: "assignment-scope-chip", text: scope.label }), where, el("span", { className: "assignment-uses", text: "uses" }), who, remove);
+  return row;
+}
+function poolOptions() {
+  return pools.map((pool) => ({ value: pool.id, label: pool.name, detail: `Pool · ${pool.members.length} profile${pool.members.length === 1 ? "" : "s"}` }));
 }

@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.211.0 — 2026-11-04
+
+- Pools are assigned in a new Pool assignments section on the Assignments tab, with no provider to choose first: a pool covers every provider its profiles use, and it can apply to everything, a workspace, a cluster, a project or a conversation.
+- A pool assignment follows its pool when the pool’s profiles change, and removing it returns each conversation to the next matching choice.
+- The provider tabs on Assignments now list only profiles and this machine’s own sign-in.
+
 ## 2.210.2 — 2026-11-04
 
 - Fixed saving a webhook or assistant's memory sometimes stalling for over 30 seconds, along with other requests on that machine while it waited.

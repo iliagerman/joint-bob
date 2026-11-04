@@ -29,6 +29,11 @@ export const profileSelectionSchema = z.object({ provider: profileProviderSchema
   if (value.machine && !["claude", "openai-codex"].includes(value.provider)) ctx.addIssue({ code: "custom", message: "Only Claude and ChatGPT can use this machine's own sign-in" });
   if (value.provider === "kiro" && value.poolId) ctx.addIssue({ code: "custom", message: "Kiro profiles are standalone and cannot use subscription pools" });
 });
+/** A pool choice names a scope and a pool, with no provider: the pool's own profiles decide which providers it covers. */
+export const poolChoiceSchema = z.object({ scope: scopeSchema, scopeId: z.string().max(700), poolId: z.string().uuid().nullable() }).strict().superRefine((value, ctx) => {
+  if ((value.scope === "default") !== (value.scopeId === "")) ctx.addIssue({ code: "custom", message: "Only the default scope has an empty scopeId" });
+});
+export type PoolChoice = z.infer<typeof poolChoiceSchema>;
 export type ProfileSelection = z.infer<typeof profileSelectionSchema>;
 export interface ProviderProfile { id: string; owner: string; label: string; provider: ProfileProvider; createdAt: string; shared: boolean; kiro?: z.infer<typeof kiroProfileConfigSchema> }
 export type ProfileUsage = "interactive" | "automation";
@@ -207,13 +212,31 @@ export function setProviderProfileSelection(owner: string, input: unknown): void
   if (value.profileId !== null && accessibleProviderProfile(owner, value.profileId, "interactive").provider !== value.provider) throw new Error("Profile provider does not match selection provider");
   transaction(db, () => writeSelection(db, owner, value, stamp(db, origin(db))));
 }
-export function setProviderPoolSelection(owner: string, input: unknown): void {
-  const value = profileSelectionSchema.parse(input);
-  if (!value.poolId || value.profileId !== null) throw new Error("Choose one subscription pool");
+/**
+ * Writes a pool choice at one scope: one row per provider the pool covers, all pointing at the pool.
+ * Rows of other providers that held this scope's pool are cleared. An empty `providers` clears the pool.
+ */
+export function setPoolChoice(owner: string, choice: PoolChoice, providers: readonly ProfileProvider[]): void {
   const db = database();
-  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscription_pools'").get();
-  if (!table || !db.prepare("SELECT 1 FROM subscription_pools WHERE owner=? AND id=? AND deleted=0").get(owner, value.poolId)) throw new Error("Subscription pool not found on this node");
-  transaction(db, () => writePoolSelection(db, owner, value, stamp(db, origin(db))));
+  transaction(db, () => {
+    const at = stamp(db, origin(db));
+    const held = db.prepare("SELECT provider FROM provider_profile_selections WHERE owner=? AND scope=? AND scope_id=? AND pool_id<>''").all(owner, choice.scope, choice.scopeId) as Array<{ provider: ProfileProvider }>;
+    for (const { provider } of held) if (!providers.includes(provider)) writeSelection(db, owner, { provider, scope: choice.scope, scopeId: choice.scopeId, profileId: null }, at);
+    for (const provider of providers) writePoolSelection(db, owner, { provider, ...choice, profileId: null }, at);
+  });
+}
+/** After a pool's profiles change, every scope using the pool follows them. Runs inside the caller's transaction. */
+export function syncPoolChoices(owner: string, poolId: string, providers: readonly ProfileProvider[]): void {
+  const db = database(), at = stamp(db, origin(db));
+  const places = db.prepare("SELECT DISTINCT scope, scope_id AS scopeId FROM provider_profile_selections WHERE owner=? AND pool_id=?").all(owner, poolId) as Array<{ scope: ProfileSelection["scope"]; scopeId: string }>;
+  for (const place of places) {
+    const held = db.prepare("SELECT provider FROM provider_profile_selections WHERE owner=? AND scope=? AND scope_id=? AND pool_id=?").all(owner, place.scope, place.scopeId, poolId) as Array<{ provider: ProfileProvider }>;
+    for (const { provider } of held) if (!providers.includes(provider)) writeSelection(db, owner, { provider, ...place, profileId: null }, at);
+    for (const provider of providers) if (!holdsChoice(db, owner, provider, place)) writePoolSelection(db, owner, { provider, ...place, poolId, profileId: null }, at);
+  }
+}
+function holdsChoice(db: DatabaseSync, owner: string, provider: ProfileProvider, place: { scope: ProfileSelection["scope"]; scopeId: string }): boolean {
+  return db.prepare("SELECT 1 FROM provider_profile_selections WHERE owner=? AND provider=? AND scope=? AND scope_id=? AND (profile_id<>'' OR pool_id<>'' OR machine=1)").get(owner, provider, place.scope, place.scopeId) !== undefined;
 }
 type SavedSelection = ProfileSelection & { poolId: string | null };
 /**

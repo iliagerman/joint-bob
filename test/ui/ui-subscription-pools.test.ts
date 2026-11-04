@@ -73,13 +73,9 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   page.on("response", async (response) => { if (response.url().includes("/api/provider-profiles/pools")) poolResponses.push(`${response.request().method()} ${response.status()} ${await response.text()}`); });
   await page.getByTestId("subscription-pool-save").click();
   const pool = page.getByTestId("subscription-pool-card").filter({ hasText: "Team pool" });
-  const toast = page.locator(".toast").last();
-  const outcome = await Promise.race([
-    pool.waitFor({ timeout: 5000 }).then(() => "pool").catch(() => "timeout"),
-    toast.waitFor({ state: "visible", timeout: 5000 }).then(() => "toast").catch(() => "timeout"),
-  ]);
-  if (outcome === "toast") throw new Error(`Pool save error: ${await toast.innerText()}`);
-  if (outcome !== "pool") throw new Error(`Pool creation failed: ui=${await page.getByTestId("subscription-pools").innerText()} requests=${poolResponses.join(",")} pageErrors=${pageErrors.join(" | ")}`);
+  // The success toast can appear before the card renders, so wait for the card and read the toast only on failure.
+  const created = await pool.waitFor({ timeout: 10_000 }).then(() => true, () => false);
+  if (!created) throw new Error(`Pool creation failed: toast=${await page.locator(".toast").last().innerText().catch(() => "none")} ui=${await page.getByTestId("subscription-pools").innerText()} requests=${poolResponses.join(",")} pageErrors=${pageErrors.join(" | ")}`);
   assert.match(await pool.innerText(), /Claude work[\s\S]*ChatGPT work/);
   assert.match(await pool.innerText(), /claude-fallback-test-model/);
   assert.match(await pool.innerText(), /openai-codex-fallback-test-model/);
@@ -106,9 +102,11 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   // Nothing is chosen yet, and Claude work is the only Claude profile, so it is used automatically.
   assert.equal((await defaultChoice.innerText()).trim(), "Automatic: Claude work");
   assert.match(await page.getByTestId("provider-assignment-default").innerText(), /your only Claude profile, Claude work, is used/);
-  await choose(page, "provider-assignment-default-select", "Team pool edited", "Team pool edited");
+  await page.getByTestId("pool-assignment-new").click();
+  await choose(page, "pool-assignment-choice-select", "Team pool edited", "Team pool edited");
+  await page.getByTestId("pool-assignment-add").click();
   await page.getByTestId("confirm-accept-button").click();
-  await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Team pool edited");
+  await page.getByTestId("pool-assignment-row").filter({ hasText: "Team pool edited" }).filter({ hasText: "My default" }).waitFor();
 
   const cookie = (await page.context().cookies(node.url)).map(({ name, value }) => `${name}=${value}`).join("; ");
   const createdCluster = await page.evaluate(async () => {
@@ -122,7 +120,7 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   await page.getByTestId("settings-tab-account").click();
   await page.getByTestId("settings-tab-connections").click();
   await page.getByTestId("provider-profiles-tab-pools").click();
-  assert.match(await editedPool.innerText(), /Used for My default \(Claude\)/);
+  assert.match(await editedPool.innerText(), /Used for My default/);
   assert.equal(await editedPool.getByTestId("subscription-pool-delete").isDisabled(), true, "a pool in use cannot be deleted");
   assert.equal(await page.locator('[data-testid="cluster-pool-row"]').count(), 0, "no cluster-wide assignment: a cluster choice is personal");
 
@@ -130,32 +128,32 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   const clusterRequests: string[] = [];
   page.on("request", (request) => { if (/\/api\/clusters?\/[^/]+\/subscription-pool|\/api\/cluster\/v2\//.test(new URL(request.url()).pathname)) clusterRequests.push(request.url()); });
   await page.getByTestId("provider-profiles-tab-assignments").click();
-  await page.getByTestId("provider-exception-new").click();
-  await page.getByTestId("provider-exception-scope").selectOption("cluster");
-  await page.getByTestId("provider-exception-cluster").selectOption(cluster.id);
-  await choose(page, "provider-exception-choice-select", "Team pool edited", "Team pool edited");
-  const clusterChoice = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/selection" && response.request().method() === "PUT");
-  await page.getByTestId("provider-exception-add").click();
+  await page.getByTestId("pool-assignment-new").click();
+  await page.getByTestId("pool-assignment-scope").selectOption("cluster");
+  await page.getByTestId("pool-assignment-cluster").selectOption(cluster.id);
+  await choose(page, "pool-assignment-choice-select", "Team pool edited", "Team pool edited");
+  const clusterChoice = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/pool-selection" && response.request().method() === "PUT");
+  await page.getByTestId("pool-assignment-add").click();
   await page.getByTestId("confirm-accept-button").click();
   const clusterSaved = await clusterChoice;
   assert.equal(clusterSaved.status(), 200, await clusterSaved.text());
-  assert.deepEqual(clusterSaved.request().postDataJSON(), { provider: "claude", scope: "cluster", scopeId: cluster.id, profileId: null, poolId: poolId });
-  const clusterException = page.getByTestId("provider-exception-row").filter({ hasText: "Pool test cluster" });
+  assert.deepEqual(clusterSaved.request().postDataJSON(), { scope: "cluster", scopeId: cluster.id, poolId: poolId });
+  const { selections: afterSave } = await clusterSaved.json();
+  const covered = afterSave.filter((item: { scope: string; poolId?: string | null }) => item.scope === "cluster" && item.poolId === poolId).map((item: { provider: string }) => item.provider).sort();
+  assert.deepEqual(covered, ["claude", "openai-codex"], "the pool covers every provider its profiles use");
+  const clusterException = page.getByTestId("pool-assignment-row").filter({ hasText: "Pool test cluster" });
   assert.match(await clusterException.innerText(), /cluster[\s\S]*Pool test cluster[\s\S]*uses[\s\S]*Team pool edited/i);
   assert.deepEqual(clusterRequests, [], "no cluster or member request is made");
   await page.getByTestId("provider-profiles-tab-pools").click();
-  assert.match(await editedPool.innerText(), /Pool test cluster \(Claude\)/);
+  assert.match(await editedPool.innerText(), /Pool test cluster/);
   await page.getByTestId("provider-profiles-tab-assignments").click();
-  await clusterException.getByTestId("provider-exception-remove").click();
+  await clusterException.getByTestId("pool-assignment-remove").click();
   await page.getByTestId("confirm-accept-button").click();
   await clusterException.waitFor({ state: "detached" });
 
   await page.getByTestId("provider-profiles-tab-assignments").click();
-  const personalChoiceResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/selection" && response.request().method() === "PUT");
-  await choose(page, "provider-assignment-default-select", "Automatic", "Automatic: Claude work");
+  await page.getByTestId("pool-assignment-row").filter({ hasText: "My default" }).getByTestId("pool-assignment-remove").click();
   await page.getByTestId("confirm-accept-button").click();
-  const personalChoice = await personalChoiceResponse;
-  assert.equal(personalChoice.status(), 200, await personalChoice.text());
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Automatic: Claude work");
   assert.equal(await page.getByTestId("provider-assignment-cluster-note").count(), 0, "no cluster-wide pool, so no note");
   const savedSelections = await (await page.request.get(`${node.url}/api/provider-profiles`)).json();
