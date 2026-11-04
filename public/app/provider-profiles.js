@@ -582,6 +582,7 @@ function choiceOptions(provider) {
   return [
     ...(provider === "claude" || provider === "openai-codex" ? [{ value: "machine", label: "This machine's own sign-in", detail: "No profile: the sign-in on this machine" }] : []),
     ...privateProfiles(provider).map((profile) => ({ value: `profile:${profile.id}`, label: profile.label, detail: `${providerOf(provider).name} profile · ${profileStatusLabel(profile.id)}` })),
+    ...(provider === "kiro" ? [] : poolOptions().map((option) => ({ ...option, value: `pool:${option.value}` }))),
   ];
 }
 function choiceLabel(value) {
@@ -593,17 +594,18 @@ function choiceLabel(value) {
 const usableChoice = (provider, value) => choiceOptions(provider).some((option) => option.value === value);
 function selectionPayload(provider, scope, scopeId, value) {
   if (value === "machine") return { provider, scope, scopeId, profileId: null, machine: true };
-  if (value?.startsWith("pool:")) return { provider, scope, scopeId, profileId: null, poolId: value.slice(5) };
   return { provider, scope, scopeId, profileId: value?.startsWith("profile:") ? value.slice(8) : null };
+}
+/** A pool is saved without a provider, for every provider its profiles use; replacing or clearing a scope's pool does the same. */
+async function saveChoice(provider, scope, scopeId, value) {
+  if (value?.startsWith("pool:")) return putSelection({ scope, scopeId, poolId: value.slice(5) }, POOL_PATH);
+  if (!value && saved(provider, scope, scopeId)?.startsWith("pool:")) return putSelection({ scope, scopeId, poolId: null }, POOL_PATH);
+  return putSelection(selectionPayload(provider, scope, scopeId, value));
 }
 function defaultChoice(provider) {
   const name = providerOf(provider).name;
   const block = el("div", { testid: "provider-assignment-default", className: "assignment-block" });
   const current = saved(provider, "default", "");
-  if (current?.startsWith("pool:")) {
-    block.append(sectionHeader(`Every ${name} conversation uses`, "The pool assigned to everything, set under Pool assignments above."), el("p", { testid: "provider-assignment-default-pool", className: "profile-status-detail", text: choiceLabel(current) }));
-    return block;
-  }
   const automatic = automaticDefault(provider);
   const none = automatic ? { value: "", label: automatic.label, detail: "Nothing chosen" } : { value: "", label: "None", detail: "No profile chosen" };
   const options = [none, ...choiceOptions(provider)];
@@ -611,15 +613,15 @@ function defaultChoice(provider) {
   if (!usable) options.push({ value: current, label: `${choiceLabel(current)} — unavailable, choose another` });
   const picker = createSearchableSelect({ id: `providerDefault${provider}`, testid: "provider-assignment-default-select", label: `Default for ${name} conversations`, prompt: none.label, placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
   picker.setOptions(options); picker.setValue(current ?? ""); picker.trigger.classList.toggle("invalid", !usable);
-  picker.onChange((value) => void changeChoice(selectionPayload(provider, "default", "", value || null), `Use ${value ? choiceLabel(value) : automatic ? none.label.toLowerCase() : "no profile"} for ${name} conversations?`)
+  picker.onChange((value) => void changeChoice(() => saveChoice(provider, "default", "", value || null), `Use ${value ? choiceLabel(value) : automatic ? none.label.toLowerCase() : "no profile"} for ${name} conversations?`)
     .catch((error) => { toast(error.message); rerender("assignments"); }));
   const hint = automatic?.hint ?? "With none chosen, only the node administrator falls back to this node's own sign-in.";
   block.append(sectionHeader(`Every ${name} conversation uses`, `Unless an exception below matches. ${hint}`), picker.root);
   return block;
 }
-async function changeChoice(payload, title) {
+async function changeChoice(save, title) {
   if (!await confirmAction({ title, message: HISTORY_WARNING, confirmLabel: "Save" })) { rerender("assignments"); return; }
-  await putSelection(payload);
+  await save();
 }
 const SCOPE_RANK = { default: -1, workspace: 0, cluster: 1, project: 2, conversation: 3 };
 function exceptionsBlock(provider) {
@@ -633,7 +635,7 @@ function exceptionsBlock(provider) {
   list.append(...visible.map(exceptionRow));
   if (!exceptions.length) list.append(el("li", { className: "profile-empty", text: `No exceptions. Every ${name} conversation uses the profile above.` }));
   const add = exceptionDraft && !exceptionDraft.pool ? exceptionForm(provider) : actionButton("Add exception", "provider-exception-new", () => { exceptionDraft = { scope: "workspace" }; rerender("assignments"); }, { icon: "plus" });
-  block.append(sectionHeader("Exceptions", "Use a different profile in one workspace, in the projects shared through one cluster, in one project, or in one conversation. Pools are assigned above, with no provider to choose. These are your choices: they apply on this machine and your twins, never to other members. When several match, the most specific wins: a conversation over its project, a project over its cluster, a cluster over its workspace."), list, ...pagination, add);
+  block.append(sectionHeader("Exceptions", "Use a different profile or pool in one workspace, in the projects shared through one cluster, in one project, or in one conversation. A pool applies to every provider its profiles use. These are your choices: they apply on this machine and your twins, never to other members. When several match, the most specific wins: a conversation over its project, a project over its cluster, a cluster over its workspace."), list, ...pagination, add);
   void loadConversationTitles(visible).catch((error) => toast(error.message));
   return block;
 }
@@ -677,17 +679,17 @@ function exceptionForm(provider) {
   }
   const account = pool
     ? createSearchableSelect({ id: "poolAssignmentChoice", testid: "pool-assignment-choice-select", label: "Pool", prompt: "Choose a pool", placeholder: "Search pools", emptyText: "No pools found" })
-    : createSearchableSelect({ id: "providerExceptionChoice", testid: "provider-exception-choice-select", label: "Profile", prompt: "Choose a profile", placeholder: "Search profiles", emptyText: "No profiles found" });
+    : createSearchableSelect({ id: "providerExceptionChoice", testid: "provider-exception-choice-select", label: "Profile or pool", prompt: "Choose a profile or pool", placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
   account.setOptions(pool ? poolOptions() : choiceOptions(provider));
   const scopeId = () => ({ default: "", workspace: workspace.value, cluster: cluster.value, project: project.value })[exceptionDraft.scope] ?? JSON.stringify([project.value, conversation.value]);
   const save = actionButton(pool ? "Assign pool" : "Add exception", `${prefix}-add`, async () => {
     if ((exceptionDraft.scope !== "default" && !scopeId()) || (exceptionDraft.scope === "conversation" && !conversation.value)) throw new Error(`Choose a ${exceptionDraft.scope} first`);
-    if (!account.value) throw new Error(pool ? "Choose a pool first" : `Choose a ${providerOf(provider).name} profile first`);
+    if (!account.value) throw new Error(pool ? "Choose a pool first" : `Choose a ${providerOf(provider).name} profile or a pool first`);
     if (!await confirmAction({ title: pool ? "Assign pool?" : "Add exception?", message: HISTORY_WARNING, confirmLabel: pool ? "Assign pool" : "Add exception" })) return;
     const { scope: chosen } = exceptionDraft, target = scopeId();
     exceptionDraft = null;
     if (pool) await putSelection({ scope: chosen, scopeId: target, poolId: account.value }, POOL_PATH);
-    else await putSelection(selectionPayload(provider, chosen, target, account.value));
+    else await saveChoice(provider, chosen, target, account.value);
   }, { icon: "check", className: "primary profile-action" });
   const cancel = actionButton("Cancel", `${prefix}-cancel`, () => { exceptionDraft = null; rerender("assignments"); });
   form.append(labeled("In", scope), ...targets, labeled("use", account.root), save, cancel);

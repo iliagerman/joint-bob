@@ -155,6 +155,17 @@ test("subscription pools are built in their own tab, editable, testable, and clu
   await page.getByTestId("pool-assignment-row").filter({ hasText: "My default" }).getByTestId("pool-assignment-remove").click();
   await page.getByTestId("confirm-accept-button").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Automatic: Claude work");
+
+  // The provider's own picker offers pools beside profiles; a pool picked there is saved without a provider.
+  const poolChoice = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/provider-profiles/pool-selection" && response.request().method() === "PUT");
+  await choose(page, "provider-assignment-default-select", "Team pool edited", "Team pool edited");
+  await page.getByTestId("confirm-accept-button").click();
+  assert.equal((await poolChoice).status(), 200);
+  await page.getByTestId("pool-assignment-row").filter({ hasText: "My default" }).waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-testid="provider-assignment-default-select"]')?.textContent?.trim() === "Team pool edited");
+  await choose(page, "provider-assignment-default-select", "Automatic", "Automatic: Claude work");
+  await page.getByTestId("confirm-accept-button").click();
+  await page.getByTestId("pool-assignment-row").filter({ hasText: "My default" }).waitFor({ state: "detached" });
   assert.equal(await page.getByTestId("provider-assignment-cluster-note").count(), 0, "no cluster-wide pool, so no note");
   const savedSelections = await (await page.request.get(`${node.url}/api/provider-profiles`)).json();
   assert.equal(savedSelections.selections.some((selection: { poolId?: string }) => selection.poolId === poolId), false);

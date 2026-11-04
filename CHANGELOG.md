@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.212.1 — 2026-11-05
+
+- Fixed the Default and Exception pickers on Assignments so they offer pools as well as profiles again; a pool chosen there applies to every provider its profiles use.
+
 ## 2.212.0 — 2026-11-04
 
 - Added a per-project knowledge base for the rules agents learn, kept with the project so it travels with its committed code.
