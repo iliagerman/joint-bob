@@ -88,25 +88,31 @@ test("holding the chord and tapping the cycle key steps to the previous conversa
 });
 
 test("rows show review, running, and auto-respond indicators", async () => {
-  await page.evaluate(async () => {
-    const { state } = await import("/app/state.js");
-    const first = state.recentSessions[0];
-    const second = state.recentSessions[1];
-    const firstSession = state.sessions.find((session) => session.id === first.sessionId);
-    const secondSession = state.sessions.find((session) => session.id === second.sessionId);
-    if (!firstSession || !secondSession) throw new Error("Expected both recent sessions in active project");
-    firstSession.turnRunning = true;
-    firstSession.autoRespond = { status: "running", responses: 2, maxResponses: 10 };
-    if (state.activeConversationId === (firstSession.conversationId || firstSession.id)) state.autoRespond = firstSession.autoRespond;
-    secondSession.reviewState = "needs_review";
-  });
-  await holdChord();
-  await page.keyboard.press(cycleKey);
-  assert.match(await rows().nth(0).innerText(), /Running/i);
-  assert.match(await rows().nth(0).innerText(), /Auto 2\/10/);
-  assert.match(await rows().nth(1).innerText(), /Needs review/i);
-  await page.keyboard.press("Escape");
-  await letGoOfChord();
+  // A list refresh replaces the session objects this marks, so mark and read again if one lands in between.
+  let first = "", second = "";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await page.evaluate(async () => {
+      const { state } = await import("/app/state.js");
+      const first = state.recentSessions[0];
+      const second = state.recentSessions[1];
+      const firstSession = state.sessions.find((session) => session.id === first.sessionId);
+      const secondSession = state.sessions.find((session) => session.id === second.sessionId);
+      if (!firstSession || !secondSession) throw new Error("Expected both recent sessions in active project");
+      firstSession.turnRunning = true;
+      firstSession.autoRespond = { status: "running", responses: 2, maxResponses: 10 };
+      if (state.activeConversationId === (firstSession.conversationId || firstSession.id)) state.autoRespond = firstSession.autoRespond;
+      secondSession.reviewState = "needs_review";
+    });
+    await holdChord();
+    await page.keyboard.press(cycleKey);
+    [first, second] = [await rows().nth(0).innerText(), await rows().nth(1).innerText()];
+    await page.keyboard.press("Escape");
+    await letGoOfChord();
+    if (/Running/i.test(first) && /Auto 2\/10/.test(first) && /Needs review/i.test(second)) break;
+  }
+  assert.match(first, /Running/i);
+  assert.match(first, /Auto 2\/10/);
+  assert.match(second, /Needs review/i);
 });
 
 test("a recent conversation in another project gets its status when listed", async () => {

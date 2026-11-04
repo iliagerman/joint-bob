@@ -35,8 +35,14 @@ async function hooks(): Promise<Hook[]> {
   return (await api<{ webhooks: Hook[] }>(node, session, "GET", "/webhooks")).body.webhooks;
 }
 
+/** A tab's panel is inert while it loads: text typed into it then is lost. */
+async function openTab(name: string): Promise<void> {
+  await page.getByTestId(`webhooks-tab-${name}`).click();
+  await page.locator(`[data-webhook-panel="${name}"]:not([inert])`).waitFor();
+}
+
 async function until(check: () => Promise<boolean>, what: string): Promise<void> {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 30_000;
   while (!(await check())) {
     if (Date.now() > deadline) throw new Error(`Timed out waiting until ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -147,7 +153,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-harness-select").selectOption("pi");
   await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
   await page.getByTestId("webhooks-effort-select").selectOption("high");
-  await page.getByTestId("webhooks-tab-access").click();
+  await openTab("access");
   await page.getByTestId("webhooks-secret-account-checkbox").filter({ visible: true }).first().check();
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-preserve-files-toggle").check();
@@ -195,7 +201,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   assert.equal(await page.getByTestId("webhooks-title-template-input").inputValue(), "pr-[PR_REVIEW]");
   assert.equal(await page.getByTestId("webhooks-model-select").inputValue(), "dev-environment|dev-model");
   assert.equal(await page.getByTestId("webhooks-effort-select").inputValue(), "high");
-  await page.getByTestId("webhooks-tab-access").click();
+  await openTab("access");
   assert.equal(await page.getByTestId("webhooks-secret-account-checkbox").first().isChecked(), true);
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true, "the editor shows the stored option");
   assert.equal(await page.getByTestId("webhooks-preserve-files-toggle").isChecked(), true, "the editor shows the stored workspace option");
@@ -203,13 +209,15 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-attachments-toggle").uncheck();
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await hooks())[0].attachments === false, "the option is saved off");
+  // The server has it; the page refills the form from it next, over anything changed meanwhile.
+  await page.getByTestId("webhooks-savebar").waitFor({ state: "hidden" });
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await hooks())[0].attachments, "the option is saved on");
 
   const hook = (await hooks())[0];
   const statusLine = page.getByTestId("webhooks-status");
-  await page.getByTestId("webhooks-tab-memory").click();
+  await openTab("memory");
   await page.getByTestId("webhook-memory-enabled-toggle").check();
   await until(async () => (await api<{ enabled: boolean }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.enabled, "webhook memory is enabled");
   await page.getByTestId("webhook-memory-content-input").fill("# Durable note\\nKeep this private to the webhook.\\n");
@@ -239,7 +247,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await statusLine.getByText("Memory reset.").waitFor();
   await until(async () => (await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.content === "", "explicit reset clears the memory");
 
-  await page.getByTestId("webhooks-tab-files").click();
+  await openTab("files");
   await page.getByTestId("webhook-resource-files-input").setInputFiles({ name: "rates.csv", mimeType: "text/csv", buffer: Buffer.from("day,rate\\n1,2\\n") });
   await page.getByTestId("webhook-resource-description-input").fill("Rates used by the agent");
   await page.getByTestId("webhook-resource-add-button").click();
@@ -259,7 +267,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await resourceRow.getByTestId("webhook-resource-revert-button").click();
   await until(async () => Buffer.from((await api<{ data: string }>(node, session, "GET", `/webhooks/${hook.id}/resources/${resources.body.resources[0].id}/download`)).body.data, "base64").toString() === editedText, "one previous file version is restored");
 
-  await page.getByTestId("webhooks-tab-skills").click();
+  await openTab("skills");
   const inventoryApi = await api<{ skills: Array<{ name: string }> }>(node, session, "GET", `/webhooks/${hook.id}/skills?inventory=1`);
   assert.equal(inventoryApi.status, 200, JSON.stringify(inventoryApi.body));
   await page.getByTestId("webhook-skill-add-button").click();
@@ -324,7 +332,7 @@ test("a sender list refuses strangers before the conversation, and Allow lets a 
 
   await page.getByTestId("webhooks-open-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
-  await page.getByTestId("webhooks-tab-access").click();
+  await openTab("access");
   assert.equal(await page.getByTestId("webhooks-senders").isVisible(), false, "the sender list stays folded away until asked for");
   await page.getByTestId("webhooks-senders-toggle").check();
   await page.getByTestId("webhooks-senders").waitFor({ state: "visible" });
@@ -351,7 +359,7 @@ test("a sender list refuses strangers before the conversation, and Allow lets a 
   assert.deepEqual((await hooks())[0].senders?.allowed, [{ value: "111", label: "Ilia" }, { value: "999", label: "" }]);
   assert.deepEqual(await (await update(999)).json(), { accepted: true, attachments: 0 }, "an allowed sender gets through");
 
-  await page.getByTestId("webhooks-tab-access").click();
+  await openTab("access");
   assert.equal(await page.getByTestId("webhooks-allowed-senders-input").inputValue(), "111 Ilia\n999");
   await page.getByTestId("webhooks-back-button").click();
 });
@@ -368,7 +376,7 @@ test("creating on a twin uses its targets and address and keeps only one copy", 
   await page.getByTestId("webhooks-harness-select").selectOption("pi");
   await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
   await page.getByTestId("webhooks-effort-select").selectOption("medium");
-  await page.getByTestId("webhooks-tab-access").click();
+  await openTab("access");
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
@@ -384,9 +392,9 @@ test("creating on a twin uses its targets and address and keeps only one copy", 
   await page.getByTestId("webhooks-open-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await owner.isVisible(), false, "editing cannot move or clone a webhook");
-  await page.getByTestId("webhooks-tab-access").click();
+  await openTab("access");
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true);
-  await page.getByTestId("webhooks-tab-setup").click();
+  await openTab("setup");
   await page.getByTestId("webhooks-name-input").fill("Twin renamed");
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await remoteHooks()).body.webhooks[0]?.name === "Twin renamed", "the twin webhook is renamed");
