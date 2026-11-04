@@ -11,6 +11,7 @@ Every deployment is a version. The newest section must always match the
 - Replaced the activity panel's Generate skill suggestions with rule suggestions you can add to the project's knowledge or dismiss, and removed the setting for skill suggestion instructions.
 - Agents now see a project's knowledge index in every conversation and are taught how to record, change and remove its rules, so a correction you give once can carry into later work.
 - Added a read-only option for Ask AI reviews, so an answer can read and search the project without editing or running anything.
+- Added a nightly check at 3 a.m. that removes project knowledge rules that are clearly stale or duplicated, and proposes any less certain ones for your approval.
 
 ## 2.210.2 — 2026-11-04
 
