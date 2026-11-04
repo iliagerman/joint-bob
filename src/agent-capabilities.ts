@@ -9,6 +9,7 @@ import { worktreeAgentEnvironment, worktreeAgentInstructions } from "./worktree-
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 import { getSettings } from "./settings.js";
 import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
+import { projectKnowledgeAgentInstructions } from "./project-knowledge-agent.js";
 import { multiUserEnabled } from "./account-runtime.js";
 import { revokeWebhookTitleAgentTokens, webhookTitleAgentEnvironment, webhookTitleInstructions } from "./webhook-title.js";
 import { webhookMemoryAgentEnvironmentForConversation, webhookMemoryAgentInstructions } from "./webhook-agent.js";
@@ -164,6 +165,11 @@ Attachments can change during a turn. New shell commands use current attached en
     id: "git-policy",
     instructions: { path: "/virtual/JOINT_BOB_GIT.md", content: agentGitPolicyInstructions },
     environment: () => agentGitPolicyEnvironment(),
+  },
+  {
+    id: "project-knowledge",
+    instructions: { path: "/virtual/JOINT_BOB_KNOWLEDGE.md", content: projectKnowledgeAgentInstructions },
+    environment: () => ({}),
   },
   {
     id: "mcp",

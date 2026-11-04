@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import os from "node:os";
 import path from "node:path";
 import type { AgentResourcePaths } from "./agent-resources.js";
+import { knowledgeInstructionFile } from "./project-knowledge-agent.js";
 import { memoryInstructionFile } from "./agent-memory.js";
 import { projectInstructionSources, type ProjectInstructionSource } from "./project-folder-resources.js";
 import { getSettings } from "./settings.js";
@@ -85,6 +86,8 @@ export function agentInstructionFiles(paths: AgentResourcePaths, harness: "pi" |
   }
   // Claude reads the same folder through its own auto-memory, pointed there by the app.
   if (options.memory && harness !== "claude" && getSettings().strictResourceIsolation) files.push(memoryInstructionFile(options.memory));
+  const knowledge = options.cwd ? knowledgeInstructionFile(options.cwd) : null;
+  if (knowledge) files.push(knowledge);
   // A file left empty (an AGENTS.md created and not yet written) adds nothing but its heading.
   return files.filter((file) => file.content.trim());
 }

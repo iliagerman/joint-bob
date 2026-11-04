@@ -124,3 +124,25 @@ test("Kiro profiles carry the project's instructions themselves and stop Kiro's 
   await assert.rejects(disableInheritedKiroResources(kiro), /must be a JSON object/);
   await rm(path.join(kiro, "settings", "cli.json"));
 });
+
+test("the project's knowledge index reaches every harness, and a project without one adds nothing", async () => {
+  const withKnowledge = path.join(root, "workspace", "with-knowledge");
+  const without = path.join(root, "workspace", "without-knowledge");
+  await write(path.join(withKnowledge, ".agents/knowledge/INDEX.md"), "# Project knowledge\n\n- [database-access](database-access.md) — How agents reach databases (1 rule)\n");
+  await mkdir(without, { recursive: true });
+  const paths = agentResourcePaths();
+  for (const harness of ["claude", "pi", "kiro"] as const) {
+    const files = agentInstructionFiles(paths, harness, { cwd: withKnowledge });
+    const knowledge = files.find((file) => file.label === "Project knowledge");
+    assert.ok(knowledge, `${harness} gets the knowledge index`);
+    assert.match(knowledge.content, /\[database-access\]\(database-access\.md\)/);
+    assert.equal(agentInstructionFiles(paths, harness, { cwd: without }).some((file) => file.label === "Project knowledge"), false);
+  }
+});
+
+test("every agent is told how to maintain the knowledge base", async () => {
+  const { agentCapabilityInstructionFiles } = await import("../src/agent-capabilities.js");
+  const section = agentCapabilityInstructionFiles().find((file) => file.content.startsWith("# Project knowledge base"));
+  assert.ok(section);
+  assert.match(section.content, /Ask the user before removing or rewriting a rule/);
+});
