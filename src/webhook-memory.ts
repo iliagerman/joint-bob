@@ -57,16 +57,15 @@ export async function writeWebhookMemory(db: DatabaseSync, webhookId: string, ex
   const directory = await ensureWebhookResourceDirectory(webhookId, options);
   const file = memoryPath(directory);
   const temporary = `${file}.${randomUUID()}.tmp`;
+  // The lock serializes writers. No SQLite transaction here: one held across this file work makes
+  // every other write on the node wait with the event loop blocked, so requests stall for seconds on end.
   return withMemoryLock(webhookId, async () => {
-    db.exec("BEGIN IMMEDIATE");
     try {
       const current = await readMemoryBytes(file);
       if (revision(current) !== expectedRevision) throw new WebhookResourceError("Webhook memory changed since you read it. Reload and reconcile before saving.", 409);
       await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
       await rename(temporary, file);
-      db.exec("COMMIT");
     } catch (error) {
-      db.exec("ROLLBACK");
       await rm(temporary, { force: true });
       throw error;
     }

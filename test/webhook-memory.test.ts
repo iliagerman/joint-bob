@@ -28,6 +28,25 @@ test("webhook memory persists, hashes actual bytes and survives disable and re-e
   }
 });
 
+test("saving webhook memory holds no database transaction across its file work", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "webhook-memory-transaction-"));
+  const db = new DatabaseSync(path.join(root, "node.db"));
+  try {
+    const { webhook } = createWebhook(db, input);
+    const empty = await readWebhookMemory(webhook.id, { root });
+    let settled = false;
+    const saving = writeWebhookMemory(db, webhook.id, empty.revision, "# Lesson\n", { root }).finally(() => { settled = true; });
+    while (!settled) {
+      assert.equal(db.isTransaction, false, "an open transaction here stalls every other write on the node");
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal((await saving).content, "# Lesson\n");
+  } finally {
+    db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("concurrent webhook memory writes reject the stale revision without losing the winning edit", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "webhook-memory-conflict-"));
   const db = new DatabaseSync(path.join(root, "node.db"));
