@@ -101,3 +101,30 @@ test("notes and proposals round-trip, proposals newest first", () => {
 test("normalizedRuleText ignores case, spacing and trailing punctuation", () => {
   assert.equal(normalizedRuleText("  Use the  Tunnel. "), normalizedRuleText("use the tunnel"));
 });
+
+test("rule text under a hand-written heading is kept through a rewrite", () => {
+  const root = projectRoot();
+  try {
+    mkdirSync(knowledgeDirectory(root), { recursive: true });
+    writeFileSync(path.join(knowledgeDirectory(root), "db.md"), "# db\n\nDB stuff.\n\n## Tunnel rule\n\nUse the SSH tunnel on 5433.\n\n## r-abc\n\nOther rule.\n");
+    addRule(root, { subject: "db", text: "A third rule.", evidence: "" });
+    const texts = readSubject(root, "db")!.rules.map((rule) => rule.text);
+    assert.ok(texts.some((text) => text.includes("Use the SSH tunnel on 5433.")), JSON.stringify(texts));
+    assert.ok(texts.includes("Other rule.") && texts.includes("A third rule."));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("malformed note and proposal files are skipped, and missing optional fields are filled in", () => {
+  const root = projectRoot();
+  try {
+    const dir = knowledgeDirectory(root);
+    mkdirSync(path.join(dir, "proposals"), { recursive: true });
+    mkdirSync(path.join(dir, "notes"), { recursive: true });
+    writeFileSync(path.join(dir, "proposals", "nocreated.json"), JSON.stringify({ id: "nocreated", action: "add", subject: "a", text: "t" }));
+    writeFileSync(path.join(dir, "proposals", "noevidence.json"), JSON.stringify({ id: "noevidence", action: "add", subject: "a", text: "t", created: "2026-11-01T00:00:00.000Z", source: "c" }));
+    writeFileSync(path.join(dir, "notes", "bare.json"), JSON.stringify({ conversationId: "bare", updatedAt: "2026-11-01T00:00:00.000Z" }));
+    writeFileSync(path.join(dir, "notes", "nodate.json"), JSON.stringify({ conversationId: "nodate" }));
+    assert.deepEqual(listProposals(root).map((proposal) => [proposal.id, proposal.evidence]), [["noevidence", ""]]);
+    assert.deepEqual(readNotes(root).map((note) => [note.conversationId, note.problems, note.dismissed]), [["bare", [], []]]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

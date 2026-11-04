@@ -78,8 +78,9 @@ function parseSubject(slug: string, content: string): KnowledgeSubject {
       rules.push({ id: current.id, text: text.join("\n").trim(), evidence, added });
     };
     for (const line of lines.slice(firstRule)) {
-      const heading = /^## (\S+)\s*$/.exec(line);
-      if (heading) { finish(); current = { id: heading[1], body: [] }; } else current?.body.push(line);
+      // A hand-written heading with several words keeps its first word as the id and the rest as the start of the rule.
+      const heading = /^## (\S+)(?:[ \t]+(.+?))?\s*$/.exec(line);
+      if (heading) { finish(); current = { id: heading[1], body: heading[2] ? [heading[2]] : [] }; } else current?.body.push(line);
     }
     finish();
   }
@@ -167,23 +168,32 @@ export function writeNote(root: string, note: ConversationNote): void {
 
 export function readNotes(root: string): ConversationNote[] {
   const directory = path.join(knowledgeDirectory(root), "notes");
-  return jsonFiles(directory).map((name) => readJson<ConversationNote>(path.join(directory, name))).filter((note): note is ConversationNote => Boolean(note?.conversationId));
+  return jsonFiles(directory)
+    .map((name) => readJson<Partial<ConversationNote>>(path.join(directory, name)))
+    .filter((note) => typeof note?.conversationId === "string" && typeof note.updatedAt === "string")
+    .map((note) => ({ conversationId: note!.conversationId!, updatedAt: note!.updatedAt!, problems: Array.isArray(note!.problems) ? note!.problems : [], dismissed: Array.isArray(note!.dismissed) ? note!.dismissed : [] }));
 }
 
 export function writeProposal(root: string, proposal: KnowledgeProposal): void {
   writeTextAtomically(proposalPath(root, proposal.id), `${JSON.stringify(proposal, null, 2)}\n`);
 }
 
+/** A proposal file as the app reads it; one missing the fields the app needs is treated as absent. */
+function validProposal(value: Partial<KnowledgeProposal> | null): KnowledgeProposal | null {
+  if (!value || [value.id, value.action, value.subject, value.text, value.created].some((field) => typeof field !== "string")) return null;
+  return { ...(value as KnowledgeProposal), evidence: typeof value.evidence === "string" ? value.evidence : "", source: typeof value.source === "string" ? value.source : "" };
+}
+
 export function readProposal(root: string, id: string): KnowledgeProposal | null {
   const file = proposalPath(root, id);
-  return existsSync(file) ? readJson<KnowledgeProposal>(file) : null;
+  return existsSync(file) ? validProposal(readJson<Partial<KnowledgeProposal>>(file)) : null;
 }
 
 export function listProposals(root: string): KnowledgeProposal[] {
   const directory = path.join(knowledgeDirectory(root), "proposals");
   return jsonFiles(directory)
-    .map((name) => readJson<KnowledgeProposal>(path.join(directory, name)))
-    .filter((proposal): proposal is KnowledgeProposal => Boolean(proposal?.id))
+    .map((name) => validProposal(readJson<Partial<KnowledgeProposal>>(path.join(directory, name))))
+    .filter((proposal): proposal is KnowledgeProposal => proposal !== null)
     .sort((left, right) => right.created.localeCompare(left.created));
 }
 

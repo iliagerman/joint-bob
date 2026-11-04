@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  KnowledgeError, addRule, deleteProposal, listProposals, normalizedRuleText, readNotes, readProposal, readSubjects, removeRule, writeNote,
+  KnowledgeError, addRule, deleteProposal, listProposals, normalizedRuleText, readNotes, readProposal, readSubject, readSubjects, removeRule, writeNote,
 } from "../../project-knowledge.js";
 import { getProject, projectVisible } from "../../store.js";
 import type { ProjectRecord } from "../../types.js";
@@ -46,8 +46,14 @@ app.post("/api/projects/:projectId/knowledge/proposals/:id/accept", async (reque
     if (!proposal) throw new KnowledgeError(404, "Proposal not found");
     if (proposal.action === "add") {
       addRule(project.path, { subject: edits.subject ?? proposal.subject, text: edits.text ?? proposal.text, evidence: proposal.evidence });
-    } else if (!proposal.ruleId || !removeRule(project.path, proposal.subject, proposal.ruleId)) {
-      throw new KnowledgeError(409, "The rule this proposal names no longer exists");
+    } else {
+      const current = proposal.ruleId ? readSubject(project.path, proposal.subject)?.rules.find((rule) => rule.id === proposal.ruleId) : undefined;
+      if (!current) throw new KnowledgeError(409, "The rule this proposal names no longer exists");
+      if (normalizedRuleText(current.text) !== normalizedRuleText(proposal.text)) throw new KnowledgeError(409, "The rule changed since this was suggested");
+      if (proposal.action === "merge" && !(proposal.mergeWith && readSubjects(project.path).some((subject) => subject.rules.some((rule) => rule.id === proposal.mergeWith)))) {
+        throw new KnowledgeError(409, "The rule this one merges into no longer exists");
+      }
+      removeRule(project.path, proposal.subject, proposal.ruleId!);
     }
     deleteProposal(project.path, proposal.id);
     response.json(knowledgeView(project.path));

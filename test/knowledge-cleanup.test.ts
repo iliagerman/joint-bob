@@ -105,3 +105,28 @@ test("the next run is the coming local 03:00", () => {
   assert.equal(millisecondsUntilNextRun(new Date(2026, 10, 4, 3, 0, 0)), 24 * 3_600_000);
   assert.equal(millisecondsUntilNextRun(new Date(2026, 10, 4, 15, 0, 0)), 12 * 3_600_000);
 });
+
+test("two rules that merge into each other are not both removed", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "knowledge-cleanup-"));
+  try {
+    const first = addRule(root, { subject: "db", text: "Use the tunnel on 5433.", evidence: "" });
+    const second = addRule(root, { subject: "db", text: "Connect through the SSH tunnel, port 5433.", evidence: "" });
+    const result = await cleanProjectKnowledge({ id: "p3", path: root } as ProjectRecord, deps(() => [], { apply: true, confidence: 0.99 }, {
+      review: async () => [
+        { ruleId: first.id, verdict: "merge", mergeWith: second.id, reason: "same rule" },
+        { ruleId: second.id, verdict: "merge", mergeWith: first.id, reason: "same rule" },
+      ],
+    }));
+    assert.deepEqual(result, { applied: 1, flagged: 1, skipped: false });
+    assert.deepEqual(readSubject(root, "db")?.rules.map((rule) => rule.id), [second.id]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a merge into a rule that does not exist is flagged, never applied", async () => {
+  const { root, project, rule } = setup();
+  try {
+    const result = await cleanProjectKnowledge(project, deps((ruleId) => [{ ruleId, verdict: "merge", mergeWith: "r-gone", reason: "covered elsewhere" }], { apply: true, confidence: 0.99 }));
+    assert.deepEqual(result, { applied: 0, flagged: 1, skipped: false });
+    assert.equal(readSubject(root, "deploys")?.rules[0].id, rule.id);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

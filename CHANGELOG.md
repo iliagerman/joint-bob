@@ -12,6 +12,7 @@ Every deployment is a version. The newest section must always match the
 - Agents now see a project's knowledge index in every conversation and are taught how to record, change and remove its rules, so a correction you give once can carry into later work.
 - Added a read-only option for Ask AI reviews, so an answer can read and search the project without editing or running anything.
 - Added a nightly check at 3 a.m. that removes project knowledge rules that are clearly stale or duplicated, and proposes any less certain ones for your approval.
+- Fixed rule approvals and the nightly check removing a rule that changed after it was suggested, duplicate rules removing each other, and rule text under multi-word headings being lost.
 
 ## 2.210.2 — 2026-11-04
 
