@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.210.2 — 2026-11-04
+
+- Fixed saving a webhook or assistant's memory sometimes stalling for over 30 seconds, along with other requests on that machine while it waited.
+- Fixed text typed into webhook memory being lost if it was typed while a save was finishing.
+
 ## 2.210.1 — 2026-11-03
 
 - Fixed a conversation reconnecting moments after it opened when its transcript needed upgrading, which could refuse or lose a message sent in that window.
