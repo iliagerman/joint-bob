@@ -1,9 +1,9 @@
 import { renderMarkdown } from "../markdown.js";
-import { openActivitySkillDraft } from "./activity-skill-draft.js";
 import { api } from "./api.js";
 import { formatDateTime, formatDuration } from "./chat-time.js";
 import { elements } from "./elements.js";
 import { isNodeAdmin } from "./node-admin.js";
+import { toast } from "./shell.js";
 import { state } from "./state.js";
 
 // The activity sidebar holds a conversation's intermediate work — tool calls and
@@ -189,10 +189,6 @@ export function activityGroupSkills(group) {
   return group ? [...skillCounts(group.section).keys()] : [];
 }
 
-function bareSkill(name) {
-  return String(name).split(":").at(-1).trim().toLowerCase();
-}
-
 function stat(value, label, failed = false) {
   const box = document.createElement("div");
   box.className = "activity-stat";
@@ -282,7 +278,6 @@ function renderStats() {
   elements.activityStatsStatus.textContent = state.activeConversationId ? `${steps} step${steps === 1 ? "" : "s"} · ${skills.size} skill${skills.size === 1 ? "" : "s"}` : "";
   if (!state.activeConversationId) {
     elements.activityStatsBody.replaceChildren(placeholder("Statistics appear once a conversation is open."));
-    renderSuggestions();
     return;
   }
   const figures = document.createElement("div");
@@ -292,7 +287,6 @@ function renderStats() {
   parts.push(tools.size ? usageList("Tools", "tools", tools.values()) : placeholder("No tools used yet."));
   parts.push(skills.size ? usageList("Skills", "skills", [...skills].map(([name, count]) => ({ name, count, failed: 0 }))) : placeholder("No skills used yet."));
   elements.activityStatsBody.replaceChildren(...parts);
-  renderSuggestions();
 }
 
 /** Recounts the statistics once per frame, however many steps changed in it. */
@@ -301,46 +295,84 @@ export function activityStatsChanged() {
   statsFrame = requestAnimationFrame(renderStats);
 }
 
-/** The writer's suggestions, without any skill the conversation has loaded since. */
-function renderSuggestions() {
-  const used = new Set([...skillCounts().keys()].map(bareSkill));
-  const suggestions = (summary.digest?.suggestions ?? []).filter((item) => item.kind === "new" && !used.has(bareSkill(item.skill)));
-  elements.activitySuggestionsStatus.textContent = suggestions.length ? String(suggestions.length) : "";
-  if (!suggestions.length) {
-    const known = Array.isArray(summary.digest?.suggestions);
-    elements.activitySuggestionsBody.replaceChildren(placeholder(!state.activeConversationId ? "Suggestions appear once a conversation is open."
-      : known ? "No skill suggestions for this conversation." : "Suggestions come with the next summary."));
+/** The project's pending rule proposals; they live in the project's knowledge folder, so every machine sharing it sees them. */
+const rules = { proposals: [], requestId: 0 };
+
+async function loadRules() {
+  const requestId = ++rules.requestId;
+  if (!state.activeProjectId || !state.activeConversationId) {
+    rules.proposals = [];
+    renderRules();
     return;
   }
-  elements.activitySuggestionsBody.replaceChildren(...suggestions.map((item) => {
-    const card = document.createElement("div");
-    card.className = "activity-suggestion";
-    card.dataset.testid = "activity-suggestion";
-    const head = document.createElement("div");
-    head.className = "activity-suggestion-head";
-    const kind = document.createElement("span");
-    kind.className = `activity-suggestion-kind ${item.kind}`;
-    kind.textContent = "New";
-    kind.title = "An insight to capture as a skill for future use and knowledge sharing";
-    const name = document.createElement("span");
-    name.className = "activity-suggestion-name";
-    name.textContent = item.skill;
-    name.title = item.skill;
-    head.append(kind, name);
-    const reason = document.createElement("p");
-    reason.className = "activity-suggestion-reason";
-    reason.textContent = item.reason;
-    const generate = document.createElement("button");
-    generate.type = "button";
-    generate.className = "ghost";
-    generate.dataset.testid = "activity-skill-generate";
-    generate.textContent = "Generate skill";
-    generate.addEventListener("click", () => void openActivitySkillDraft({
-      projectId: state.activeProjectId, conversationId: state.activeConversationId, suggestion: item,
-    }));
-    card.append(head, reason, generate);
-    return card;
-  }));
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/knowledge`);
+    if (requestId === rules.requestId) rules.proposals = body.proposals;
+  } catch (error) {
+    console.warn("Rule suggestions unavailable", error.message);
+    if (requestId === rules.requestId) rules.proposals = [];
+  }
+  if (requestId === rules.requestId) renderRules();
+}
+
+async function answerRule(proposal, verb, edits = {}) {
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/knowledge/proposals/${encodeURIComponent(proposal.id)}/${verb}`, { method: "POST", body: JSON.stringify(edits) });
+    rules.proposals = body.proposals;
+  } catch (error) {
+    toast(error.message || "Could not update the rule suggestion");
+  }
+  renderRules();
+}
+
+const RULE_BADGES = { add: "Add", remove: "Remove", merge: "Merge" };
+
+function ruleCard(proposal) {
+  const card = document.createElement("div");
+  card.className = "activity-rule";
+  card.dataset.testid = "activity-rule";
+  const head = document.createElement("div");
+  head.className = "activity-rule-head";
+  const badge = document.createElement("span");
+  badge.className = `activity-rule-kind ${proposal.action}`;
+  badge.textContent = RULE_BADGES[proposal.action] ?? proposal.action;
+  const subject = document.createElement("span");
+  subject.className = "activity-rule-subject";
+  subject.textContent = proposal.subject;
+  subject.title = proposal.subject;
+  head.append(badge, subject);
+  const text = proposal.action === "add" ? document.createElement("textarea") : document.createElement("p");
+  text.className = "activity-rule-text";
+  text.dataset.testid = "activity-rule-text";
+  if (proposal.action === "add") { text.value = proposal.text; text.rows = 3; text.maxLength = 600; } else text.textContent = proposal.text;
+  const evidence = document.createElement("p");
+  evidence.className = "activity-rule-evidence";
+  evidence.textContent = proposal.evidence;
+  const accept = document.createElement("button");
+  accept.type = "button";
+  accept.dataset.testid = "activity-rule-accept";
+  accept.textContent = proposal.action === "add" ? "Add to knowledge" : "Apply";
+  accept.addEventListener("click", () => void answerRule(proposal, "accept", proposal.action === "add" ? { text: text.value.trim() || proposal.text } : {}));
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "ghost";
+  dismiss.dataset.testid = "activity-rule-dismiss";
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", () => void answerRule(proposal, "dismiss"));
+  const actions = document.createElement("div");
+  actions.className = "activity-rule-actions";
+  actions.append(accept, dismiss);
+  card.append(head, text, ...(proposal.evidence ? [evidence] : []), actions);
+  return card;
+}
+
+function renderRules() {
+  elements.activityRulesStatus.textContent = rules.proposals.length ? String(rules.proposals.length) : "";
+  if (!rules.proposals.length) {
+    elements.activityRulesBody.replaceChildren(placeholder(state.activeConversationId ? "No rule suggestions for this project." : "Rule suggestions appear once a conversation is open."));
+    return;
+  }
+  elements.activityRulesBody.replaceChildren(...rules.proposals.map(ruleCard));
 }
 
 /** The open group, if the main thread has not moved past its marker. */
@@ -482,7 +514,6 @@ function renderSummary(statusOverride = "") {
   const status = statusOverride || (writing ? (digest ? "Updating…" : "Writing…") : digest ? digestStatus(digest) : "");
   if (digest) showSummary({ markdown: digest.summary }, status);
   else showSummary({ plain: state.activeConversationId ? (writing ? "Writing the summary…" : waitingText(policy)) : "The summary appears after the first answer." }, status);
-  renderSuggestions();
   const writer = policy ? `Writer: ${policy.writer}` : "";
   elements.activitySummaryModelButton.textContent = writer;
   elements.activitySummaryModelButton.hidden = !writer;
@@ -602,6 +633,7 @@ export function activityReady(payload) {
   summary.writing = false;
   renderSummary();
   void renderInstructions();
+  void loadRules();
   if (activityPanelOpen() && summary.policy?.updates === "panel") requestSummary();
 }
 
@@ -609,6 +641,7 @@ export function activityReady(payload) {
 export function activityDigestEvent(event) {
   summary.writing = event.state === "writing";
   if (event.state === "done" || event.digest) summary.digest = event.digest ?? summary.digest;
+  if (event.state === "done") void loadRules();
   if (event.state === "error") {
     console.warn("Activity summary not written", event.error);
     renderSummary(summary.digest ? `${digestStatus(summary.digest)} · not updated` : "");
@@ -632,11 +665,17 @@ export function activityConversationChanged() {
   summary.digest = null;
   summary.writing = false;
   renderSummary();
+  rules.proposals = [];
+  rules.requestId += 1;
+  renderRules();
   instructionsRequest += 1;
   elements.activityInstructionsBody.replaceChildren();
 }
 
-elements.activityToggleButton.addEventListener("click", () => setActivityPanelOpen(!activityPanelOpen()));
+elements.activityToggleButton.addEventListener("click", () => {
+  setActivityPanelOpen(!activityPanelOpen());
+  if (activityPanelOpen()) void loadRules();
+});
 elements.activityStepsToggle.addEventListener("click", () => setActivityStepsOpen(!stepsOpen));
 elements.activityPanelCloseButton.addEventListener("click", () => {
   setActivityPanelOpen(false);

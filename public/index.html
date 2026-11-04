@@ -355,7 +355,7 @@
               </div>
               <button class="ghost icon-button activity-panel-close" id="activityPanelCloseButton" type="button" aria-label="Collapse activity" title="Collapse activity" data-testid="activity-panel-close"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg></button>
             </header>
-            <!-- One scrolling column: the overview (summary, statistics, skill suggestions), then the
+            <!-- One scrolling column: the overview (summary, statistics, rule suggestions), then the
                  steps, which open on demand and scroll inside their own list. -->
             <section id="conversationChat" class="conversation-chat" role="tabpanel" aria-labelledby="activityChatTab" data-testid="conversation-chat" hidden>
               <details class="conversation-chat-settings" data-testid="conversation-chat-settings">
@@ -400,9 +400,9 @@
                 <summary data-testid="activity-stats-toggle" title="Show or collapse the statistics"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Statistics</span><span class="activity-section-status" id="activityStatsStatus" data-testid="activity-stats-status"></span></summary>
                 <div class="activity-section-body activity-stats-body" id="activityStatsBody" data-testid="activity-stats-body"></div>
               </details>
-              <details class="activity-section activity-suggestions" id="activitySuggestions" open data-testid="activity-suggestions">
-                <summary data-testid="activity-suggestions-toggle" title="Show or collapse the skill suggestions"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Skill suggestions</span><span class="activity-section-status" id="activitySuggestionsStatus" data-testid="activity-suggestions-status"></span></summary>
-                <div class="activity-section-body activity-suggestions-body" id="activitySuggestionsBody" data-testid="activity-suggestions-body"></div>
+              <details class="activity-section activity-rules" id="activityRules" open data-testid="activity-rules">
+                <summary data-testid="activity-rules-toggle" title="Show or collapse the rule suggestions"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Rule suggestions</span><span class="activity-section-status" id="activityRulesStatus" data-testid="activity-rules-status"></span></summary>
+                <div class="activity-section-body activity-rules-body" id="activityRulesBody" data-testid="activity-rules-body"></div>
               </details>
             </div>
             <button class="activity-steps-heading" id="activityStepsToggle" type="button" aria-expanded="false" aria-controls="activityList" title="Show or collapse the steps" data-testid="activity-steps-toggle"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Steps</span><span class="activity-steps-count" id="activityStepsCount" data-testid="activity-steps-count"></span></button>
@@ -1181,9 +1181,6 @@
             <label>Summary instructions<textarea id="settingsSummaryInstructions" rows="9" maxlength="6000" spellcheck="false" data-testid="settings-summary-instructions"></textarea></label>
             <div class="settings-summary-instructions-actions"><span class="settings-hint" id="settingsSummaryInstructionsStatus" data-testid="settings-summary-instructions-status"></span><button type="button" class="ghost compact" id="settingsSummaryInstructionsReset" data-testid="settings-summary-instructions-reset">Reset to default</button></div>
             <p class="settings-hint">What a summary is for and how it reads. Joint Bob adds the new messages, current summary, and output format. Saved when you leave the box. These instructions are this machine's own; a relay's policy does not change them.</p>
-            <label>Skill suggestion instructions<textarea id="settingsSkillInstructions" rows="9" maxlength="6000" spellcheck="false" data-testid="settings-skill-instructions"></textarea></label>
-            <div class="settings-summary-instructions-actions"><span class="settings-hint" id="settingsSkillInstructionsStatus" data-testid="settings-skill-instructions-status"></span><button type="button" class="ghost compact" id="settingsSkillInstructionsReset" data-testid="settings-skill-instructions-reset">Reset to default</button></div>
-            <p class="settings-hint">Find insights learned in conversations worth turning into skills for future use and knowledge sharing, not existing skills to load. Saved when you leave the box. Applies to conversations on this machine; only its admin can edit. Suggestions do not create or share a skill automatically.</p>
           </fieldset>
         </section>
 

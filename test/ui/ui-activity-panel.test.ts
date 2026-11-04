@@ -108,12 +108,12 @@ before(async () => {
   calls = path.join(root, "digest-calls.jsonl");
   const generator = path.join(root, "digest-generator.mjs");
   // A writer that ignores the format rules (a heading, a long code block) proves the panel still never scrolls sideways.
-  // It also suggests a new skill, and one the conversation already loaded, which is dropped.
+  // It also proposes a rule from a repeated problem.
   await writeFile(generator, `import { appendFile } from "node:fs/promises";
 export default async (input) => {
   await appendFile(${JSON.stringify(calls)}, JSON.stringify(input) + "\\n");
   const asked = /User: (.*)/.exec(input.material)?.[1] ?? "the work";
-  return "**Goal** — " + asked + "\\n\\n## Done so far\\n- Rotated staging.pem\\n\\n\\\`\\\`\\\`json\\n{\\"apartment\\":\\"" + "x".repeat(400) + "\\"}\\n\\\`\\\`\\\`\\n@@skills\\nnew cert-renewal — the renewal steps are repeated by hand\\nnew cert-tools — already loaded";
+  return "**Goal** — " + asked + "\\n\\n## Done so far\\n- Rotated staging.pem\\n\\n\\\`\\\`\\\`json\\n{\\"apartment\\":\\"" + "x".repeat(400) + "\\"}\\n\\\`\\\`\\\`\\n@@knowledge\\nproblem certs — renewal was done by hand again\\nrule certs — Renew staging certificates with the renew script, not by hand — two conversations repeated the steps";
 };
 `);
   server = await startDevNode(environment, node, { JOINT_BOB_DIGEST_GENERATOR: generator });
@@ -226,18 +226,18 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.equal(await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded"), "true");
   assert.equal(await panel.locator(".tool-output").count(), 3);
   assert.equal(await panel.locator(".activity-group-prompt").textContent(), "Rotate the staging certificates", "a group is headed by its turn's prompt");
-  // The steps start collapsed under their count; the summary, statistics and suggestions start open.
+  // The steps start collapsed under their count; the summary, statistics and rule suggestions start open.
   assert.equal(await page.getByTestId("activity-list").isVisible(), false, "steps are collapsed by default");
   assert.equal(await page.getByTestId("activity-steps-toggle").getAttribute("aria-expanded"), "false");
   assert.equal(await page.getByTestId("activity-steps-count").innerText(), "3");
-  for (const section of ["activity-summary", "activity-stats", "activity-suggestions"]) assert.equal(await page.getByTestId(section).evaluate((details: HTMLDetailsElement) => details.open), true, `${section} is open`);
+  for (const section of ["activity-summary", "activity-stats", "activity-rules"]) assert.equal(await page.getByTestId(section).evaluate((details: HTMLDetailsElement) => details.open), true, `${section} is open`);
   // Statistics count the steps, their tools and the skills loaded.
   const stats = page.getByTestId("activity-stats-body");
   assert.equal(await page.getByTestId("activity-stats-status").innerText(), "3 steps · 1 skill");
   assert.deepEqual(await stats.locator(".activity-stat").evaluateAll((boxes) => boxes.map((box) => box.textContent)), ["1turn", "3steps", "0failed", "10sagent time"]);
   assert.deepEqual(await page.getByTestId("activity-stats-tools").getByTestId("activity-usage-row").evaluateAll((rows) => rows.map((row) => row.querySelector(".activity-usage-name")?.textContent + " " + row.querySelector(".activity-usage-count")?.textContent)), ["Bash 1", "Read 1", "Skill 1"]);
   assert.deepEqual(await page.getByTestId("activity-stats-skills").getByTestId("activity-usage-row").evaluateAll((rows) => rows.map((row) => row.querySelector(".activity-usage-name")?.textContent)), ["cert-tools"]);
-  assert.equal(await page.getByTestId("activity-suggestions-body").innerText(), "Suggestions come with the next summary.");
+  assert.equal(await page.getByTestId("activity-rules-body").innerText(), "No rule suggestions for this project.");
   // The steps open under their header and collapse again.
   await page.getByTestId("activity-steps-toggle").click();
   await page.getByTestId("activity-list").waitFor();
@@ -262,58 +262,30 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.match(await page.getByTestId("activity-summary-text").innerText(), /Rotate the staging certificates/);
   assert.match(await page.getByTestId("activity-summary-status").innerText(), /1 turn/);
   // Headings and long code wrap inside the panel: nothing scrolls sideways.
-  // The writer's suggestion shows in its own section; the skill already loaded is not suggested.
-  const suggestion = page.getByTestId("activity-suggestion");
-  await suggestion.first().waitFor();
-  assert.equal(await suggestion.count(), 1);
-  assert.match(await suggestion.innerText(), /new\s*cert-renewal\s*the renewal steps are repeated by hand/i);
-  assert.equal(await page.getByTestId("activity-suggestions-status").innerText(), "1");
-  // Generation first previews its source; only an explicitly reviewed save writes a skill.
-  const skillPath = path.join(projectNamed(node, PROJECT_NAME).path, ".agents/skills/cert-renewal-reviewed/SKILL.md");
-  const absent = async () => assert.rejects(readFile(skillPath), { code: "ENOENT" });
-  await suggestion.getByTestId("activity-skill-generate").click();
-  const draft = page.getByTestId("activity-skill-draft");
-  await draft.getByTestId("skill-draft-context").getByText("Rotate the staging certificates", { exact: false }).waitFor();
-  assert.match(await draft.innerText(), /Nothing is saved/);
-  await absent();
-  await draft.getByTestId("skill-draft-cancel").click();
-  await suggestion.getByTestId("activity-skill-generate").click();
-  await draft.getByTestId("skill-draft-start").click();
-  await draft.getByTestId("skill-draft-status").getByText("Generating", { exact: false }).waitFor();
-  await draft.getByTestId("skill-draft-save").waitFor({ timeout: 30_000 });
-  assert.equal(await draft.getByTestId("skill-draft-description").inputValue(), "Use when rotating staging certificates.");
-  await absent();
-  // Regeneration also stays in the editor and does not install anything.
-  await draft.getByTestId("skill-draft-regenerate").click();
-  await draft.getByTestId("skill-draft-save").waitFor({ timeout: 30_000 });
-  await absent();
-  await draft.getByTestId("skill-draft-name").fill("cert-renewal-reviewed");
-  await draft.getByTestId("skill-draft-description").fill("Use for reviewed certificate rotation.");
-  await draft.getByTestId("skill-draft-instructions").fill("User edited: verify staging expiration, renew, and check the resulting certificate.");
-  await draft.getByTestId("skill-draft-save").click();
-  await draft.getByTestId("skill-draft-status").getByText("Saved", { exact: false }).waitFor();
-  const savedSkill = await readFile(skillPath, "utf8");
-  assert.match(savedSkill, /Use for reviewed certificate rotation/);
-  assert.match(savedSkill, /User edited: verify staging/);
-  assert.match(savedSkill, /name: cert-renewal-reviewed/);
-  await assert.rejects(readFile(path.join(projectNamed(node, PROJECT_NAME).path, ".agents/skills/cert-renewal/SKILL.md")), { code: "ENOENT" });
-  const admin = await signIn(environment, node);
-  const saveEndpoint = `/projects/${projectNamed(node, PROJECT_NAME).id}/conversations/${CONVERSATION_ID}/skill-draft/save`;
-  const approvedSkill = { approved: true, scope: "project", name: "cert-renewal-reviewed", description: "Replacement", instructions: "These instructions must never replace the reviewed skill." };
-  assert.equal((await api(node, admin, "POST", saveEndpoint, approvedSkill)).status, 409, "save cannot overwrite an existing skill");
-  assert.equal((await api(node, admin, "POST", saveEndpoint, { ...approvedSkill, approved: false })).status, 400, "save requires approval");
-  assert.equal((await api(node, admin, "POST", saveEndpoint, { ...approvedSkill, name: "../escape" })).status, 400, "save rejects path traversal");
-  assert.equal(await readFile(skillPath, "utf8"), savedSkill);
-  await draft.getByTestId("skill-draft-cancel").click();
-  // Statistics and suggestions collapse to their headers like the summary.
+  // The writer's rule proposal shows in its own section, with the evidence behind it.
+  const rule = page.getByTestId("activity-rule");
+  await rule.first().waitFor();
+  assert.equal(await rule.count(), 1);
+  assert.equal(await rule.getByTestId("activity-rule-text").inputValue(), "Renew staging certificates with the renew script, not by hand");
+  assert.match(await rule.innerText(), /certs[\s\S]*two conversations repeated the steps/i);
+  assert.equal(await page.getByTestId("activity-rules-status").innerText(), "1");
+  // Nothing is written until someone accepts; accepting writes the edited rule into the project folder.
+  const knowledgeFile = path.join(projectNamed(node, PROJECT_NAME).path, ".agents/knowledge/certs.md");
+  await assert.rejects(readFile(knowledgeFile), { code: "ENOENT" });
+  await rule.getByTestId("activity-rule-text").fill("Renew staging certificates with scripts/renew.sh, never by hand.");
+  await rule.getByTestId("activity-rule-accept").click();
+  await page.getByTestId("activity-rules-body").getByText("No rule suggestions for this project.").waitFor();
+  assert.match(await readFile(knowledgeFile, "utf8"), /Renew staging certificates with scripts\/renew\.sh, never by hand\./);
+  assert.match(await readFile(path.join(projectNamed(node, PROJECT_NAME).path, ".agents/knowledge/INDEX.md"), "utf8"), /\[certs\]\(certs\.md\)/);
+  // Statistics and rule suggestions collapse to their headers like the summary.
   await page.getByTestId("activity-stats-toggle").click();
   assert.equal(await stats.isVisible(), false);
   await page.getByTestId("activity-stats-toggle").click();
   await stats.waitFor();
-  await page.getByTestId("activity-suggestions-toggle").click();
-  assert.equal(await suggestion.isVisible(), false);
-  await page.getByTestId("activity-suggestions-toggle").click();
-  await suggestion.waitFor();
+  await page.getByTestId("activity-rules-toggle").click();
+  assert.equal(await page.getByTestId("activity-rules-body").isVisible(), false);
+  await page.getByTestId("activity-rules-toggle").click();
+  await page.getByTestId("activity-rules-body").waitFor();
   // The panel scrolls as one column: no section sits in a scroll box of its own, so scrolling down
   // to the statistics shows all of them, none cut by a box's edge or hidden under a header.
   const body = page.getByTestId("activity-body");
@@ -392,21 +364,7 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   const instructionsBox = page.getByTestId("settings-summary-instructions");
   const instructionsStatus = page.getByTestId("settings-summary-instructions-status");
   assert.match(await instructionsBox.inputValue(), /^You keep a running summary of a conversation/);
-  const skillBox = page.getByTestId("settings-skill-instructions");
-  assert.match(await skillBox.inputValue(), /reusable insights/);
-  assert.equal(await page.getByTestId("settings-skill-instructions-reset").isDisabled(), true);
-  const skillSaved = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/skill-instructions") && response.request().method() === "PUT");
-  await skillBox.fill("Capture validated debugging lessons for teammates.");
-  await skillBox.press("Tab");
-  assert.equal((await skillSaved).status(), 200);
-  await page.waitForFunction(() => document.querySelector("[data-testid='settings-skill-instructions-status']")?.textContent === "Saved · this machine's own instructions");
-  const skillSettings = await page.evaluate(() => fetch("/api/conversation-summary/settings").then((response) => response.json()));
-  assert.equal(skillSettings.skillInstructions.custom, "Capture validated debugging lessons for teammates.");
-  const skillReset = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/skill-instructions") && response.request().method() === "PUT");
-  await page.getByTestId("settings-skill-instructions-reset").click();
-  assert.equal((await skillReset).status(), 200);
-  await page.waitForFunction(() => document.querySelector("[data-testid='settings-skill-instructions-status']")?.textContent === "Saved · built-in instructions");
-  assert.match(await skillBox.inputValue(), /reusable insights/);
+  assert.equal(await page.getByTestId("settings-skill-instructions").count(), 0, "skill suggestion instructions are gone");
   assert.equal(await instructionsStatus.innerText(), "built-in instructions");
   assert.equal(await page.getByTestId("settings-summary-instructions-reset").isDisabled(), true);
   const instructionsSaved = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/instructions") && response.request().method() === "PUT");

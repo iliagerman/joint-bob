@@ -293,18 +293,18 @@ const features = [
   // Major features that are explained in words, without a film.
   {
     id: "activity", title: "Activity panel and side chat", film: false, time: "", runsOn: "",
-    lead: "A panel beside the chat shows what the agent is doing: a running summary, statistics, skill suggestions, the instruction files it reads and every step. A read-only side chat lets you ask about the conversation without disturbing it.",
+    lead: "A panel beside the chat shows what the agent is doing: a running summary, statistics, rule suggestions, the instruction files it reads and every step. A read-only side chat lets you ask about the conversation without disturbing it.",
     how: [
       "Click Activity in the chat toolbar, or press Ctrl+Option+Shift+S.",
-      "Read the Summary, Instructions, Statistics and Skill suggestions. Expand Steps for each tool call.",
-      "Click Generate skill on a suggestion to draft a reusable skill from the conversation, review it, then save it.",
+      "Read the Summary, Instructions, Statistics and Rule suggestions. Expand Steps for each tool call.",
+      "Click Add to knowledge on a rule suggestion to keep it in the project's knowledge folder, where every agent reads it, or Dismiss to drop it.",
       "Open the Chat tab, or type /bob-btw, to ask a question while the agent works.",
     ],
     facts: [
       "The working line at the end of the chat names the step running now. Click it to open the steps.",
       "The summary updates after each message, while the panel is open, or only when asked. This is set in Settings → Conversations.",
       "The side chat is read-only by default. Switch that off and it can edit files and run commands.",
-      "Suggestions add new skills only and never overwrite one.",
+      "Rules come from problems that repeat across the project's conversations. They go into the project folder, so they travel with your next commit.",
       "The panel's width is draggable and remembered.",
     ],
     where: "Chat toolbar → Activity",

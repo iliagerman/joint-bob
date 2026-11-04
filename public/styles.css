@@ -1949,19 +1949,15 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .activity-usage-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
 .activity-usage.skills .activity-usage-bar > span { background: var(--amber); }
 .activity-usage-more { color: var(--muted); font-size: 11px; }
-.activity-suggestion { display: grid; gap: 3px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: var(--field); }
-.activity-suggestion-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.activity-suggestion-kind { flex: none; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; }
-.activity-suggestion-kind.new { background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber); }
-.activity-suggestion-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.activity-suggestion-reason { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.activity-suggestion > button { justify-self: start; }
-.activity-skill-draft .dialog-card { width: min(760px, calc(100vw - 24px)); }
-.activity-skill-draft section, .activity-skill-draft label { display: grid; gap: 8px; min-width: 0; }
-.activity-skill-draft [hidden] { display: none; }
-.activity-skill-draft pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
-.activity-skill-draft textarea { width: 100%; resize: vertical; }
-.activity-skill-draft .dialog-actions { flex-wrap: wrap; }
+.activity-rule { display: grid; gap: 4px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: var(--field); }
+.activity-rule-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.activity-rule-kind { flex: none; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.activity-rule-kind.remove, .activity-rule-kind.merge { background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber); }
+.activity-rule-subject { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-rule-text { width: 100%; margin: 0; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; resize: vertical; }
+textarea.activity-rule-text { min-height: 54px; }
+.activity-rule-evidence { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.activity-rule-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .activity-instructions-row { display: grid; gap: 3px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: var(--field); }
 .activity-instructions-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 /* A few opening lines to recognise the file; the whole file opens in the editor, never in the panel. */

@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Added a per-project knowledge base for the rules agents learn, kept with the project so it travels with its committed code.
 - Replaced skill suggestions in conversation summaries with rule proposals: repeated problems are noted, and rules wait for a person to approve them, and creating skills from a conversation was removed.
 - Added approving or dismissing a project's rule proposals; approved rules are saved to the project, and dismissed ones are not proposed again.
+- Replaced the activity panel's Generate skill suggestions with rule suggestions you can add to the project's knowledge or dismiss, and removed the setting for skill suggestion instructions.
 
 ## 2.210.2 — 2026-11-04
 
