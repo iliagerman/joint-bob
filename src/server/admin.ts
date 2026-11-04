@@ -42,7 +42,7 @@ export const ADMIN_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
   // The browser executor's configuration for this machine.
   { method: "PUT", path: /^\/browser\/config$/ },
   // How this node, and a relay it serves, keeps conversation summaries.
-  { method: "PUT", path: /^\/conversation-summary\/(settings|relay-policy|instructions|skill-instructions)$/ },
+  { method: "PUT", path: /^\/conversation-summary\/(settings|relay-policy|instructions)$/ },
   // The AGENTS.md every project's agents read on this node and the owner's other machines.
   { method: "PUT", path: /^\/instructions\/global\/content$/ },
   // Local story voice: npm installs the Kokoro runtime into this node's data directory.

@@ -1,7 +1,7 @@
 import { getDifficultyClassifier } from "../classifiers/registry.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { type ConversationDigest, type DigestModel, type DigestSkills, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, keptSuggestions, parseDigestReply, saveDigest, storedDigest, turnCount, usedSkills } from "../conversation-digest.js";
-import { effectiveSummaryPolicy, type EffectiveSummaryPolicy, nodeSummaryInstructions, nodeSkillSuggestionInstructions, summaryWriterLabel } from "../conversation-summary-policy.js";
+import { type ConversationDigest, type DigestKnowledge, type DigestModel, type ProposedRule, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, parseDigestReply, saveDigest, storedDigest, turnCount } from "../conversation-digest.js";
+import { effectiveSummaryPolicy, type EffectiveSummaryPolicy, nodeSummaryInstructions, summaryWriterLabel } from "../conversation-summary-policy.js";
 import { type ConversationModel, routedSummaryModel, type SummaryRun } from "../conversation-summary-routing.js";
 import { getHarness } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
@@ -9,10 +9,11 @@ import { resourceOwner } from "../ownership.js";
 import { relaySummaryPolicies } from "../relay/resource-policy.js";
 import { activeRoutingConfig, routingConfigDatabase } from "../routing-configs.js";
 import { type RoutingMapping } from "../routing-policy.js";
-import { resourceInventory } from "../resource-inventory.js";
+import { type ConversationNote, type KnowledgeProblem, listProposals, normalizedRuleText, readNotes, readSubjects, writeNote, writeProposal } from "../project-knowledge.js";
 import { genericSecretEnvironment } from "../secrets.js";
 import { getSettings } from "../settings.js";
 import { getProject } from "../store.js";
+import { randomUUID } from "node:crypto";
 import type { ChatMessage, HarnessId, ProjectRecord } from "../types.js";
 import { loadConversationMessages } from "./conversation-turns.js";
 import { runGitReview } from "./git-review-run.js";
@@ -110,18 +111,39 @@ export async function digestState(project: ProjectRecord, conversationId: string
   return { digest, stale: digestIsStale(digest ?? undefined, said), turns: turnCount(said) };
 }
 
-/** The skills the conversation's agent can load in this project, which the writer may suggest. */
-async function skillCatalog(project: ProjectRecord, conversationId: string, harnessId: string): Promise<DigestSkills["catalog"]> {
+const NOTE_PROBLEM_LIMIT = 20;
+
+/** What the writer is told about the project's knowledge; unreadable files never stop a summary. */
+function digestKnowledge(project: ProjectRecord, conversationId: string): DigestKnowledge {
   try {
-    const { skills } = await resourceInventory({ projectPath: project.path, projectId: project.id, conversationId });
-    const seen = new Set<string>();
-    return skills
-      .filter((skill) => skill.harnesses.includes(harnessId as HarnessId) && skill.activation?.[harnessId as HarnessId]?.enabled !== false)
-      .filter((skill) => !seen.has(skill.name) && Boolean(seen.add(skill.name)))
-      .map((skill) => ({ name: skill.name, description: skill.description }));
+    const notes = readNotes(project.path);
+    return {
+      subjects: readSubjects(project.path).map((subject) => ({ slug: subject.slug, description: subject.description, rules: subject.rules.map((rule) => rule.text) })),
+      otherNotes: notes.filter((note) => note.conversationId !== conversationId).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map((note) => ({ conversationId: note.conversationId, problems: note.problems })),
+      pending: listProposals(project.path).map((proposal) => proposal.text),
+      ownProblems: notes.find((note) => note.conversationId === conversationId)?.problems ?? [],
+    };
   } catch (error) {
-    console.warn("Summary skill catalog unavailable", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
-    return [];
+    console.warn("Project knowledge unavailable for the summary", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+    return { subjects: [], otherNotes: [], pending: [], ownProblems: [] };
+  }
+}
+
+/** Records the writer's problems and files its rules as proposals, unless a rule or proposal already says the same or a person dismissed it. */
+function recordKnowledge(project: ProjectRecord, conversationId: string, knowledge: DigestKnowledge, reply: { problems?: KnowledgeProblem[]; rules?: ProposedRule[] }): void {
+  if (!reply.problems && !reply.rules) return;
+  try {
+    const previous = readNotes(project.path).find((note) => note.conversationId === conversationId);
+    const note: ConversationNote = { conversationId, updatedAt: new Date().toISOString(), problems: (reply.problems ?? previous?.problems ?? []).slice(-NOTE_PROBLEM_LIMIT), dismissed: previous?.dismissed ?? [] };
+    if (reply.problems) writeNote(project.path, note);
+    const known = new Set([...knowledge.pending, ...knowledge.subjects.flatMap((subject) => subject.rules), ...note.dismissed].map(normalizedRuleText));
+    for (const rule of reply.rules ?? []) {
+      if (known.has(normalizedRuleText(rule.text))) continue;
+      known.add(normalizedRuleText(rule.text));
+      writeProposal(project.path, { id: randomUUID(), action: "add", subject: rule.subject, text: rule.text, evidence: rule.evidence, created: new Date().toISOString(), source: conversationId });
+    }
+  } catch (error) {
+    console.warn("Recording project knowledge failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
   }
 }
 
@@ -135,9 +157,8 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
   }
   const material = digestMaterial(said, coveredMessages(previous, said));
   onWriting();
-  const used = usedSkills(messages);
-  const skills: DigestSkills = { catalog: await skillCatalog(project, conversationId, live?.harnessId ?? lastAttribution(messages)?.harnessId ?? lastHarness), used, suggestions: keptSuggestions(previous?.suggestions, used) };
-  const instructions = digestPrompt(previous?.summary, skills, nodeSummaryInstructions(), nodeSkillSuggestionInstructions());
+  const knowledge = digestKnowledge(project, conversationId);
+  const instructions = digestPrompt(previous?.summary, knowledge, nodeSummaryInstructions());
   const run = await summaryRun(await summaryPolicyNow(), project, live, messages, lastHarness, material);
   const model: DigestModel = { harnessId: run.harnessId, provider: run.provider, modelId: run.modelId, source: run.source };
   const override = process.env.JOINT_BOB_DIGEST_GENERATOR;
@@ -154,10 +175,11 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
     model.provider = result.provider;
     model.modelId = result.modelId;
   }
-  const reply = parseDigestReply(answer, skills);
+  const reply = parseDigestReply(answer);
   if (!reply.summary) throw new DigestError(502, "The agent returned an empty summary; try again");
-  const digest: ConversationDigest = { summary: reply.summary, messages: said.length, turns: turnCount(said), updatedAt: new Date().toISOString(), model, suggestions: reply.suggestions ?? skills.suggestions };
+  const digest: ConversationDigest = { summary: reply.summary, messages: said.length, turns: turnCount(said), updatedAt: new Date().toISOString(), model };
   saveDigest(project.id, conversationId, digest);
+  recordKnowledge(project, conversationId, knowledge, reply);
   return digest;
 }
 

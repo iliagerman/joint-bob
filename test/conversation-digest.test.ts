@@ -3,7 +3,8 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { DEFAULT_SUMMARY_INSTRUCTIONS, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, keptSuggestions, parseDigestAnswer, parseDigestReply, turnCount, usedSkills, type ConversationDigest, type DigestMessage } from "../src/conversation-digest.js";
+import { DEFAULT_SUMMARY_INSTRUCTIONS, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, parseDigestAnswer, parseDigestReply, turnCount, type ConversationDigest, type DigestKnowledge, type DigestMessage } from "../src/conversation-digest.js";
+import { listProposals, normalizedRuleText, readNotes } from "../src/project-knowledge.js";
 import { routedSummaryModel } from "../src/conversation-summary-routing.js";
 import { claudeProjectDir } from "../src/session-paths.js";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
@@ -55,61 +56,48 @@ test("the prompt folds new messages into the current summary and keeps the panel
   assert.match(digestPrompt("**Goal** — ship it"), /Fold the new messages into the summary[\s\S]*Current summary:\n\*\*Goal\*\* — ship it$/);
   assert.match(digestPrompt(undefined), /No headings, code blocks, tables, raw JSON or long file paths/);
   // A machine's own instructions replace what a summary is for and how it reads, never how it is kept.
-  const custom = digestPrompt("**Goal** — ship it", { catalog: [], used: [] }, "Summarize in three bullets for a manager.");
+  const custom = digestPrompt("**Goal** — ship it", { subjects: [], otherNotes: [], pending: [], ownProblems: [] }, "Summarize in three bullets for a manager.");
   assert.ok(custom.startsWith("Summarize in three bullets for a manager.\n"), custom);
   assert.doesNotMatch(custom, /No headings, code blocks/);
-  assert.match(custom, /Use only the material below[\s\S]*Fold the new messages[\s\S]*@@skills[\s\S]*Current summary:\n\*\*Goal\*\* — ship it$/);
+  assert.match(custom, /Use only the material below[\s\S]*Fold the new messages[\s\S]*@@knowledge[\s\S]*Current summary:\n\*\*Goal\*\* — ship it$/);
   assert.ok(digestPrompt(undefined, undefined, "   ").startsWith(DEFAULT_SUMMARY_INSTRUCTIONS), "blank instructions are the built-in ones");
   assert.equal(parseDigestAnswer("```markdown\n**Goal** — x\n```"), "**Goal** — x");
   assert.equal(parseDigestAnswer("  plain  "), "plain");
 });
 
-test("the writer extracts reusable knowledge, rejects use recommendations, and avoids duplicate skills", () => {
-  const skills = {
-    catalog: [{ name: "brainstorming", description: "Explore intent before building" }, { name: "pdf", description: "Work with PDF files" }],
-    used: ["joint-bob-resources:pdf"],
-    suggestions: [{ kind: "new" as const, skill: "cert-rotation", reason: "the rotation repeats" }],
+test("the writer records problems and proposes rules from repeats, and rejects unsafe subjects", () => {
+  const knowledge: DigestKnowledge = {
+    subjects: [{ slug: "database-access", description: "How agents reach databases", rules: ["Use the tunnel on 5433."] }],
+    otherNotes: [{ conversationId: "conv-b", problems: [{ subject: "deploys", text: "Deploy hung on the staging lock" }] }],
+    pending: ["Run migrations before seeding."],
+    ownProblems: [{ subject: "deploys", text: "Deploy hung twice" }],
   };
-  const prompt = digestPrompt("**Goal** — x", skills);
-  assert.match(prompt, /write a line with only @@skills/);
-  assert.match(prompt, /reusable insights/i);
-  assert.match(prompt, /future use and knowledge sharing/i);
-  assert.match(prompt, /Do not recommend existing skills/);
-  assert.match(prompt, /Your last suggestions; keep, change or drop them:\nnew cert-rotation — the rotation repeats/);
-  assert.match(prompt, /Installed skills:\n- brainstorming: Explore intent before building\n- pdf: Work with PDF files/);
+  const prompt = digestPrompt("**Goal** — x", knowledge);
+  assert.match(prompt, /write a line with only @@knowledge/);
+  assert.match(prompt, /- database-access: How agents reach databases\n {2}- Use the tunnel on 5433\./);
+  assert.match(prompt, /\[conv-b\] deploys: Deploy hung on the staging lock/);
+  assert.match(prompt, /Rules already waiting for a person:\n- Run migrations before seeding\./);
   assert.match(prompt, /Current summary:\n\*\*Goal\*\* — x$/, "the current summary still comes last");
-  assert.doesNotMatch(digestPrompt(undefined), /@@skills/, "without skill context the prompt asks for no suggestions");
+  assert.doesNotMatch(digestPrompt(undefined), /@@knowledge/, "without knowledge context the prompt asks for nothing");
 
   const reply = parseDigestReply([
-    "```markdown", "**Goal** — y", "```", "@@skills",
-    "- use Brainstorming — plan the rotation first",
-    "use pdf — already loaded",
-    "use made-up — not installed",
-    "new brainstorming — an installed name is not new",
-    "new cert-rotation: the same five steps every week",
-    "2. new rotate-ca — rotate the CA the same way",
-    "new fourth — over the limit",
-  ].join("\n"), skills);
-  assert.equal(reply.summary, "**Goal** — y", "the summary's code fence is removed when suggestions follow it");
-  assert.deepEqual(reply.suggestions, [
-    { kind: "new", skill: "cert-rotation", reason: "the same five steps every week" },
-    { kind: "new", skill: "rotate-ca", reason: "rotate the CA the same way" },
-    { kind: "new", skill: "fourth", reason: "over the limit" },
+    "```markdown", "**Goal** — y", "```", "@@knowledge",
+    "problem database-access — timed out connecting directly",
+    "problem ../etc — unsafe subject",
+    "rule database-access — Use the tunnel on 5433 — conv a and b timed out",
+    "- rule Bad Slug — not a slug — x",
+    "rule deploys — Release the staging lock first — two conversations hung",
+    "rule deploys — third — e", "rule deploys — fourth — e",
+  ].join("\n"));
+  assert.equal(reply.summary, "**Goal** — y");
+  assert.deepEqual(reply.problems, [{ subject: "database-access", text: "timed out connecting directly" }]);
+  assert.deepEqual(reply.rules, [
+    { subject: "database-access", text: "Use the tunnel on 5433", evidence: "conv a and b timed out" },
+    { subject: "deploys", text: "Release the staging lock first", evidence: "two conversations hung" },
+    { subject: "deploys", text: "third", evidence: "e" },
   ]);
-  const custom = digestPrompt(undefined, skills, undefined, "Capture debugging lessons for teammates.");
-  assert.match(custom, /Capture debugging lessons for teammates\./);
-  assert.doesNotMatch(custom, /Extract reusable insights/);
-  assert.match(custom, /write a line with only @@skills/);
-  assert.deepEqual(parseDigestReply("**Goal** — z", skills), { summary: "**Goal** — z" }, "an answer without the suggestions line leaves the last ones standing");
-  assert.deepEqual(parseDigestReply("**Goal** — z\n@@skills\n", skills), { summary: "**Goal** — z", suggestions: [] }, "an empty list clears them");
-  assert.deepEqual(keptSuggestions([{ kind: "use", skill: "pdf", reason: "r" }, { kind: "new", skill: "cert-rotation", reason: "r" }], ["joint-bob-resources:pdf"]), [{ kind: "new", skill: "cert-rotation", reason: "r" }]);
-  assert.deepEqual(usedSkills([
-    { role: "toolResult", toolTarget: { skill: "pdf" } },
-    { role: "toolResult", toolTarget: { skill: "joint-bob-resources:pdf" } },
-    { role: "toolResult", isError: true, toolTarget: { skill: "broken" } },
-    { role: "assistant", toolTarget: { skill: "mentioned" } },
-    { role: "toolCall", toolTarget: { skill: "brainstorming" } },
-  ]), ["pdf", "brainstorming"], "a failed load and a mere mention do not count");
+  assert.deepEqual(parseDigestReply("**Goal** — z"), { summary: "**Goal** — z" }, "an answer without the knowledge line leaves what was recorded standing");
+  assert.deepEqual(parseDigestReply("**Goal** — z\n@@knowledge\n"), { summary: "**Goal** — z", problems: [], rules: [] });
 });
 
 test("the routing classifier's tier writes the summary only when it is sure and the model is allowed", () => {
@@ -129,7 +117,7 @@ test("the digest route folds new messages into the summary and follows the node'
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-digest-"));
   const generator = path.join(root, "digest-generator.mjs");
   const calls = path.join(root, "calls.jsonl");
-  await writeFile(generator, `import { appendFile } from "node:fs/promises";\nexport default async (input) => { if (input.material.includes("FAIL please")) throw new Error("model unavailable"); await appendFile(${JSON.stringify(calls)}, JSON.stringify(input) + "\\n"); return "\`\`\`markdown\\n**Goal** — summary " + input.material.split("\\n\\n").length + "\\n\`\`\`\\n@@skills\\nnew cert-rotation — the same steps each time\\nuse made-up — not installed\\nnew pdf — already used"; };\n`);
+  await writeFile(generator, `import { appendFile } from "node:fs/promises";\nexport default async (input) => { if (input.material.includes("FAIL please")) throw new Error("model unavailable"); await appendFile(${JSON.stringify(calls)}, JSON.stringify(input) + "\\n"); return "\`\`\`markdown\\n**Goal** — summary " + input.material.split("\\n\\n").length + "\\n\`\`\`\\n@@knowledge\\nproblem certs — rotation hit a stale lock\\nrule certs — Remove the stale lock before rotating — two conversations hit it"; };\n`);
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   const project = projectNamed(node, "Infra Scripts");
@@ -171,8 +159,11 @@ test("the digest route folds new messages into the summary and follows the node'
     const [firstCall] = await callsMade();
     assert.equal(firstCall.material, "User: Rotate the staging certificates\n\nAssistant: Rotated staging.pem.", "only what was said, never tool output");
     assert.doesNotMatch(firstCall.instructions, /Current summary:/);
-    assert.match(firstCall.instructions, /Skills the conversation used: pdf\./, "the writer knows which skills were loaded");
-    assert.deepEqual(first.body.digest?.suggestions, [{ kind: "new", skill: "cert-rotation", reason: "the same steps each time" }], "an uninstalled or already used skill is not suggested");
+    assert.match(firstCall.instructions, /No rules are waiting\./);
+    assert.deepEqual(readNotes(project.path).map((note) => [note.conversationId, note.problems]), [[conversationId, [{ subject: "certs", text: "rotation hit a stale lock" }]]], "the problem is recorded in the project's folder");
+    const proposals = listProposals(project.path);
+    assert.deepEqual(proposals.map((proposal) => [proposal.action, proposal.subject, proposal.text, proposal.source]), [["add", "certs", "Remove the stale lock before rotating", conversationId]]);
+    assert.equal(normalizedRuleText(proposals[0].text), "remove the stale lock before rotating");
     assert.deepEqual(firstCall.run, { ...sonnet, thinkingLevel: "", source: "conversation" });
 
     assert.equal((await api<DigestResponse>(node, auth, "GET", endpoint)).body.stale, false);
@@ -220,18 +211,8 @@ test("the digest route folds new messages into the summary and follows the node'
     assert.equal(builtIn.body.instructions.custom, null, "saving the built-in text keeps following the built-in text");
     assert.equal((await api<Instructions>(node, auth, "PUT", "/conversation-summary/instructions", { instructions: null })).body.instructions.custom, null);
 
-    const skillSettings = await api<{ skillInstructions: { custom: string | null; default: string } }>(node, auth, "GET", "/conversation-summary/settings");
-    assert.match(skillSettings.body.skillInstructions.default, /reusable insights/);
-    assert.equal(skillSettings.body.skillInstructions.custom, null);
-    const skillSaved = await api<{ skillInstructions: { custom: string | null } }>(node, auth, "PUT", "/conversation-summary/skill-instructions", { instructions: " Capture debugging lessons for teammates. " });
-    assert.equal(skillSaved.status, 200);
-    assert.equal(skillSaved.body.skillInstructions.custom, "Capture debugging lessons for teammates.");
-    assert.equal((await api(node, auth, "PUT", "/conversation-summary/skill-instructions", { instructions: "x".repeat(6_001) })).status, 400);
-    await append([record("user", 12, [{ type: "text", text: "capture lessons" }]), record("assistant", 13, [{ type: "text", text: "Learned a reusable diagnostic." }])]);
-    await api(node, auth, "POST", endpoint, {});
-    const skillCall = (await readFile(calls, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).at(-1);
-    assert.match(skillCall.instructions, /Capture debugging lessons for teammates\./);
-    assert.equal((await api<{ skillInstructions: { custom: string | null } }>(node, auth, "PUT", "/conversation-summary/skill-instructions", { instructions: null })).body.skillInstructions.custom, null);
+    assert.equal(((await api<Record<string, unknown>>(node, auth, "GET", "/conversation-summary/settings")).body).skillInstructions, undefined, "skill suggestion instructions are gone");
+    assert.equal((await api(node, auth, "PUT", "/conversation-summary/skill-instructions", { instructions: null })).status, 404);
 
     const unstarted = await api<DigestResponse>(node, auth, "GET", `/projects/${project.id}/conversations/00000000-0000-4000-8000-000000000000/digest`);
     assert.deepEqual([unstarted.status, unstarted.body.digest, unstarted.body.stale, unstarted.body.turns], [200, null, false, 0], "a conversation with no transcript yet simply has no summary");
@@ -242,7 +223,7 @@ test("the digest route folds new messages into the summary and follows the node'
     const failed = await api<DigestResponse>(node, auth, "POST", endpoint, {});
     assert.equal(failed.status, 200);
     assert.match(failed.body.error ?? "", /model unavailable/);
-    assert.equal(failed.body.digest?.turns, 5, "the last good summary is still returned");
+    assert.equal(failed.body.digest?.turns, 4, "the last good summary is still returned");
     assert.equal((await api(node, auth, "POST", `/projects/not-a-project/conversations/${conversationId}/digest`, {})).status, 404);
   } finally {
     await stopDevNode(server);

@@ -1,16 +1,9 @@
 import { z } from "zod";
-import { actingAccount } from "../../account-context.js";
-import { agentResourcePaths } from "../../agent-resources.js";
-import { actorOwns } from "../../ownership.js";
-import { saveSkillDraft, skillDraftSchema } from "../../skill-draft.js";
-import { isNodeAdmin } from "../admin.js";
-import { generateSkillDraft, skillDraftContext, skillSuggestionSchema } from "../skill-draft-run.js";
-import { reloadSharedSkills } from "../realtime.js";
 import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS, DEFAULT_SUMMARY_INSTRUCTIONS, storedDigest } from "../../conversation-digest.js";
-import { nodeSkillSuggestionInstructions, saveNodeSkillSuggestionInstructions, nodeSummaryInstructions, nodeSummaryPolicy, saveNodeSummaryInstructions, saveNodeSummaryPolicy, summaryInstructionsSchema, summaryPolicySchema } from "../../conversation-summary-policy.js";
+import { DEFAULT_SUMMARY_INSTRUCTIONS, storedDigest } from "../../conversation-digest.js";
+import { nodeSummaryInstructions, nodeSummaryPolicy, saveNodeSummaryInstructions, saveNodeSummaryPolicy, summaryInstructionsSchema, summaryPolicySchema } from "../../conversation-summary-policy.js";
 import { relayServerInstance } from "../../relay/index.js";
 import { publishedRelayPolicy, publishRelayPolicy } from "../../relay/resource-policy.js";
 import { servingSettings } from "../../relay/store.js";
@@ -98,51 +91,6 @@ app.post("/api/projects/:projectId/conversations/:conversationId/digest", async 
   }
 });
 
-// Skill creation is an owner action, not a side effect of opening or summarizing a conversation.
-const skillDraftRoute = "/api/projects/:projectId/conversations/:conversationId/skill-draft";
-async function skillDraftProject(projectId: string, conversationId: string, auth: AuthSession): Promise<ProjectRecord> {
-  const project = await visibleProject(projectId);
-  const account = actingAccount();
-  if (!account || account.isRemoteLogin || !actorOwns("project", project.id, account)
-    || !await conversationListed(project, conversationId, auth)) throw new DigestError(404, "Conversation not found");
-  return project;
-}
-
-app.get(skillDraftRoute, async (request, response, next) => {
-  try {
-    const project = await skillDraftProject(request.params.projectId, request.params.conversationId, response.locals.authSession as AuthSession);
-    response.json({ context: await skillDraftContext(project, request.params.conversationId) });
-  } catch (error) { if (!sendDigestError(response, error)) next(error); }
-});
-app.post(skillDraftRoute, async (request, response, next) => {
-  try {
-    const input = skillSuggestionSchema.parse(request.body);
-    const project = await skillDraftProject(request.params.projectId, request.params.conversationId, response.locals.authSession as AuthSession);
-    response.json(await generateSkillDraft(project, request.params.conversationId, input));
-  } catch (error) {
-    if (error instanceof z.ZodError) { sendError(response, 400, error.message); return; }
-    if (!sendDigestError(response, error)) next(error);
-  }
-});
-app.post(`${skillDraftRoute}/save`, async (request, response, next) => {
-  try {
-    const { approved, scope, ...draft } = skillDraftSchema.extend({ approved: z.literal(true), scope: z.enum(["project", "machine"]) }).parse(request.body);
-    const auth = response.locals.authSession as AuthSession;
-    const project = await skillDraftProject(request.params.projectId, request.params.conversationId, auth);
-    if (scope === "machine" && !isNodeAdmin(auth)) { sendError(response, 403, "Only the node admin can save machine skills"); return; }
-    const destination = scope === "project"
-      ? await saveSkillDraft(project.path, [".agents", "skills"], draft)
-      : await saveSkillDraft(agentResourcePaths().root, ["shared", "skills"], draft);
-    await reloadSharedSkills();
-    response.status(201).json({ path: destination, scope });
-  } catch (error) {
-    if (error instanceof z.ZodError) { sendError(response, 400, error.message); return; }
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") { sendError(response, 409, "A skill with that name already exists. Choose a different name."); return; }
-    if (error instanceof Error && error.message === "Skill destination must be a real directory") { sendError(response, 409, error.message); return; }
-    if (!sendDigestError(response, error)) next(error);
-  }
-});
-
 /** This node's summary policy, the one in force (a joined relay's wins), the one this node publishes as a relay, and its summary instructions. */
 app.get("/api/conversation-summary/settings", async (_request, response, next) => {
   try {
@@ -153,7 +101,6 @@ app.get("/api/conversation-summary/settings", async (_request, response, next) =
       effective: { ...effective, view: summaryPolicyView(effective) },
       relayServing: servingSettings(db).enabled ? { policy: publishedRelayPolicy(db, (await getClusterNode()).id).body.summary ?? null } : null,
       instructions: { custom: nodeSummaryInstructions(), default: DEFAULT_SUMMARY_INSTRUCTIONS },
-      skillInstructions: { custom: nodeSkillSuggestionInstructions(), default: DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS },
     });
   } catch (error) {
     next(error);
@@ -175,17 +122,6 @@ app.put("/api/conversation-summary/instructions", async (request, response, next
     const { instructions } = z.object({ instructions: summaryInstructionsSchema.nullable() }).strict().parse(request.body);
     const custom = instructions && instructions !== DEFAULT_SUMMARY_INSTRUCTIONS ? instructions : null;
     response.json({ instructions: { custom: saveNodeSummaryInstructions(custom), default: DEFAULT_SUMMARY_INSTRUCTIONS } });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/** Admin only: reusable-knowledge extraction instructions, local to this machine. */
-app.put("/api/conversation-summary/skill-instructions", async (request, response, next) => {
-  try {
-    const { instructions } = z.object({ instructions: summaryInstructionsSchema.nullable() }).strict().parse(request.body);
-    const custom = instructions && instructions !== DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS ? instructions : null;
-    response.json({ skillInstructions: { custom: saveNodeSkillSuggestionInstructions(custom), default: DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS } });
   } catch (error) {
     next(error);
   }
