@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.212.3 — 2026-11-04
 
-- Fixed scheduled task model pickers to load from the selected execution host, including auto reply, and block saving when that host's models cannot be loaded.
+- Fixed scheduled task model pickers to load the models of the selected execution host, including auto reply, and block saving while that host's models cannot be loaded.
 
 ## 2.212.2 — 2026-11-04
 
