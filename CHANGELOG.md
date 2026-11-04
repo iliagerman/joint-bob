@@ -3,16 +3,17 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.212.0 — 2026-11-04
 
 - Added a per-project knowledge base for the rules agents learn, kept with the project so it travels with its committed code.
-- Replaced skill suggestions in conversation summaries with rule proposals: repeated problems are noted, and rules wait for a person to approve them, and creating skills from a conversation was removed.
-- Added approving or dismissing a project's rule proposals; approved rules are saved to the project, and dismissed ones are not proposed again.
+- Agents read a project's knowledge index in every conversation and can record, change and remove its rules, so a correction you give once carries into later work.
+- Replaced skill suggestions in conversation summaries with rule proposals: repeated problems are noted, and rules wait for your approval. Creating skills from a conversation was removed.
 - Replaced the activity panel's Generate skill suggestions with rule suggestions you can add to the project's knowledge or dismiss, and removed the setting for skill suggestion instructions.
-- Agents now see a project's knowledge index in every conversation and are taught how to record, change and remove its rules, so a correction you give once can carry into later work.
+- Added approving or dismissing a project's rule proposals; approved rules are saved to the project, and dismissed ones are not proposed again.
+- Added a nightly check at 3 a.m. that removes clearly stale or duplicated project rules and proposes less certain ones for your approval.
 - Added a read-only option for Ask AI reviews, so an answer can read and search the project without editing or running anything.
-- Added a nightly check at 3 a.m. that removes project knowledge rules that are clearly stale or duplicated, and proposes any less certain ones for your approval.
 - Fixed rule approvals and the nightly check removing a rule that changed after it was suggested, duplicate rules removing each other, and rule text under multi-word headings being lost.
+- Each place a pool is assigned now keeps its own pool choice and settings.
 
 ## 2.211.0 — 2026-11-04
 
