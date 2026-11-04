@@ -27,9 +27,17 @@ function database(node: SeededNode): DatabaseSync {
 }
 function withDatabase<T>(node: SeededNode, read: (db: DatabaseSync) => T): T {
   const db = database(node);
-  // The running node writes to this file too; wait for it as its own connections do.
-  db.exec("PRAGMA busy_timeout=5000");
   try { return read(db); } finally { db.close(); }
+}
+/** A transaction cannot start writing once the running node has written since it began. SQLite says so at once, whatever the busy timeout. */
+function whileLocked<T>(write: () => T): T {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try { return write(); } catch (error) {
+      if (!/database is locked/.test(String(error)) || Date.now() > deadline) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+  }
 }
 async function eventually<T>(check: () => T | undefined, limitMs: number): Promise<T> {
   const deadline = Date.now() + limitMs;
@@ -134,9 +142,9 @@ test("a helper whose project became shared refuses on its own machine", { timeou
   const cluster = randomUUID();
   withDatabase(two, db => {
     assert.equal((db.prepare("SELECT owner_node_id owner FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(helperProjectId) as { owner: string }).owner, one.nodeId);
-    createSharingCluster(db, { id: cluster, name: "Team" }, two.nodeId);
-    addSharingMember(db, cluster, two.nodeId, one.nodeId, getSharingCluster(db, cluster).managerEpoch);
-    setResourceShares(db, one.nodeId, "project", helperProjectId, [{ clusterId: cluster, projectId: null }]);
+    whileLocked(() => createSharingCluster(db, { id: cluster, name: "Team" }, two.nodeId));
+    whileLocked(() => addSharingMember(db, cluster, two.nodeId, one.nodeId, getSharingCluster(db, cluster).managerEpoch));
+    whileLocked(() => setResourceShares(db, one.nodeId, "project", helperProjectId, [{ clusterId: cluster, projectId: null }]));
   });
   try {
     const cached = withDatabase(one, db => JSON.parse((db.prepare("SELECT summary FROM assistant_twin_summaries WHERE assistant_id=?").get(helperId) as { summary: string }).summary) as { private: boolean });
@@ -147,7 +155,7 @@ test("a helper whose project became shared refuses on its own machine", { timeou
     assert.equal(withDatabase(two, db => db.prepare("SELECT 1 FROM assistant_asks WHERE id=?").get(asked.ask!)), undefined);
   } finally {
     // Private again, as the other tests expect it.
-    withDatabase(two, db => setResourceShares(db, one.nodeId, "project", helperProjectId, []));
+    withDatabase(two, db => whileLocked(() => setResourceShares(db, one.nodeId, "project", helperProjectId, [])));
   }
 });
 
