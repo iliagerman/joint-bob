@@ -40,7 +40,8 @@ for (const width of [1440, 390]) {
     assert.equal(await page.getByTestId("conversation-chat-settings").getAttribute("open"), null, "status is visible with settings closed");
     const box = (await status.boundingBox())!;
     assert.ok(box.height >= 20 && box.y >= 0 && box.y + box.height <= 844, "processing status stays visible above the composer");
-    assert.equal(await page.getByTestId("conversation-chat-send").textContent(), "Queue");
+    assert.equal(await page.getByTestId("conversation-chat-send").getAttribute("aria-label"), "Queue");
+    assert.equal(await page.getByTestId("conversation-chat-send").locator("svg").count(), 1, "queue keeps the send icon");
     snapshot = { ...snapshot, busy: false, messages: [...snapshot.messages, { id: "answer", role: "assistant", text: "All done" }] };
     await page.evaluate(() => document.dispatchEvent(new Event("conversation-chat-reconnected")));
     await status.filter({ hasText: "Ready" }).waitFor();

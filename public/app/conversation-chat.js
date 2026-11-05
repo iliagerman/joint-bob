@@ -70,7 +70,8 @@ function setBusy(value) {
   busy = value;
   status.dataset.state = value ? "working" : "idle";
   send.disabled = !loadedUrl || savingMode;
-  send.textContent = value ? "Queue" : "Send";
+  send.setAttribute("aria-label", value ? "Queue" : "Send");
+  send.title = value ? "Queue" : "Send";
   clear.disabled = value || !loadedUrl;
   secrets.disabled = value || !loadedUrl;
   secrets.hidden = state.isRemoteLogin;

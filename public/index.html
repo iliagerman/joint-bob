@@ -417,13 +417,13 @@
                   <button type="button" class="ghost compact" id="conversationChatSecrets" data-testid="conversation-chat-secrets" disabled>Secrets (0)</button>
                 </div>
               </details>
-              <button type="button" class="ghost compact" id="conversationChatClear" data-testid="conversation-chat-clear">Clear conversation</button>
               <div id="conversationChatMessages" class="conversation-chat-messages" aria-live="polite" data-testid="conversation-chat-messages"></div>
               <p id="conversationChatStatus" role="status" data-testid="conversation-chat-status"></p>
               <form id="conversationChatForm" class="conversation-chat-form">
                 <label class="sr-only" for="conversationChatInput">Ask about this conversation</label>
                 <textarea id="conversationChatInput" rows="3" placeholder="Ask about this conversation…" data-testid="conversation-chat-input"></textarea>
-                <button type="submit" id="conversationChatSend" class="primary compact" data-testid="conversation-chat-send">Send</button>
+                <button type="button" class="ghost icon-button" id="conversationChatClear" data-testid="conversation-chat-clear" aria-label="Clear conversation" title="Clear conversation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg></button>
+                <button type="submit" id="conversationChatSend" class="primary icon-button" data-testid="conversation-chat-send" aria-label="Send" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></svg></button>
               </form>
             </section>
             <div class="activity-body" id="activityBody" role="tabpanel" aria-labelledby="activityActivityTab" data-testid="activity-body">

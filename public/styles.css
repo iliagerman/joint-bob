@@ -1912,9 +1912,10 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .conversation-chat-message-actions button { min-height: 28px; padding: 3px 6px; font-size: 11px; }
 .conversation-chat-message .md { font-size: 13px; }
 .conversation-chat-message pre { max-width: 100%; overflow: auto; }
-.conversation-chat-form { display: flex; flex: none; flex-direction: column; gap: 6px; }
+.conversation-chat-form { display: grid; flex: none; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 6px; }
 .conversation-chat-form textarea { width: 100%; resize: vertical; min-height: 60px; max-height: 160px; }
-.conversation-chat-form button { align-self: flex-end; }
+.conversation-chat-form button { width: 36px; height: 36px; padding: 8px; }
+.conversation-chat-form button svg { width: 20px; height: 20px; }
 #conversationChatStatus { flex: none; min-height: 22px; display: flex; align-items: center; gap: 8px; font-size: 12px; overflow-wrap: anywhere; }
 #conversationChatStatus[data-state="working"] { color: var(--accent); }
 #conversationChatStatus[data-state="working"]::before { content: ""; flex: none; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: conversation-chat-spin 1s linear infinite; }
