@@ -60,11 +60,12 @@ test("an unstarted conversation has no story transcript, not a Claude path error
     const sessionId = randomUUID();
     await ensureConversationRecord(project.id, "claude", sessionId, "test-node");
     assert.deepEqual((await loadConversationMessages(project, sessionId)).messages, []);
+    await assert.rejects(conversationReviewContext(project, sessionId), /Conversation has no transcript to determine changed files/);
     await assert.rejects(collectStorySources(project, root, sessionId, { scope: "conversation", pendingPaths: [], includeCommits: false }), /Nothing to explain/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("conversation context reads Claude transcripts in a project's worktree, not a synthetic draft path", async () => {
+test("conversation context and Overview file discovery read worktree transcripts, not synthetic draft paths", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-conversation-context-"));
   const previous = process.env.JOINT_BOB_WORKTREE_ROOT;
   process.env.JOINT_BOB_WORKTREE_ROOT = path.join(root, "worktrees");
@@ -95,6 +96,9 @@ test("conversation context reads Claude transcripts in a project's worktree, not
       { role: "user", text: "What is the phase status?" }, { role: "assistant", text: "Phase three is still running." },
     ]);
     assert.equal(result.lastHarness, "claude");
+    const review = await conversationReviewContext(project, sessionId);
+    assert.equal(review.transcript, "User (claude): What is the phase status?\n\nAssistant (claude): Phase three is still running.");
+    assert.equal(review.lastHarness, "claude");
     assert.equal(await readFile(file, "utf8"), transcript);
   } finally {
     if (previous === undefined) delete process.env.JOINT_BOB_WORKTREE_ROOT;

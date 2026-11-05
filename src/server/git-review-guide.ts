@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getHarness, listHarnessSessions } from "../harnesses.js";
 import { listConversationSegments } from "../conversation-records.js";
 import { runGitReview } from "./git-review-run.js";
+import { projectAdditionalPaths } from "./session-scope.js";
 import { gitFileDiff, gitStatus, GitReviewError, type GitFileChange } from "../git-review.js";
 import type { ProjectRecord } from "../types.js";
 
@@ -17,7 +18,8 @@ function parseJson(text: string): unknown {
 }
 
 export async function conversationReviewContext(project: ProjectRecord, conversationId: string): Promise<{ transcript: string; lastHarness: string }> {
-  const sessions = await listHarnessSessions(project);
+  const transcriptProject = { ...project, additionalPaths: await projectAdditionalPaths(project.id) };
+  const sessions = await listHarnessSessions(transcriptProject);
   const session = sessions.find((item) => (item.conversationId ?? item.id) === conversationId);
   if (!session) throw new Error("Conversation not found in this project");
   const records = await listConversationSegments(project.id, conversationId);
@@ -27,7 +29,7 @@ export async function conversationReviewContext(project: ProjectRecord, conversa
   for (const entry of entries) {
     // File discovery uses the same recorded segments as stories, including empty drafts.
     if (!entry.path || entry.path.startsWith("draft:")) continue;
-    const loaded = await getHarness(entry.engine).sessions.loadMessages(project, entry.path);
+    const loaded = await getHarness(entry.engine).sessions.loadMessages(transcriptProject, entry.path);
     for (const message of loaded) {
       if (message.role !== "user" && message.role !== "assistant") continue;
       messages.push(`${message.role === "assistant" ? "Assistant" : "User"} (${entry.engine}): ${message.text.slice(0, 2500)}`);
