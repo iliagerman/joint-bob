@@ -499,10 +499,11 @@ function profileCard(profile) {
   const actions = el("div", { className: "profile-actions" });
   // Kiro profiles are private and standalone: the server refuses to share them.
   actions.append(actionButton("Check status", "provider-profile-check", checkStatus, { icon: "refresh" }), ...(profile.provider === "pi" ? [] : [signIn, signOut]), ...(kiro ? [] : [share]), remove);
-  card.append(head, status, actions);
+  card.append(head, status);
   // A Pi provider's key is asked for below the provider it is for, where the user just clicked Connect.
   if (profile.provider === "pi") card.append(createPiProfileProviderEditor(profile, login, (state, settled) => showLogin(profile, login, state, settled), checkStatus).root);
   else card.append(login);
+  card.append(actions);
   void checkStatus().catch((error) => showStatus(status, { kind: "error", label: "Status unavailable", detail: error.message }));
   return card;
 }

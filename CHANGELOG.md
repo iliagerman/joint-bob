@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.212.5 — 2026-11-05
+
+- Aligned the action buttons across connection profile cards, including after signing in.
+
 ## 2.212.4 — 2026-11-05
 
 - Fixed a Claude turn on a subscription pool to move to the next account when the first reaches its usage limit or loses its sign-in, instead of failing. The turn continues from where it stopped and does not replay its prompt.
