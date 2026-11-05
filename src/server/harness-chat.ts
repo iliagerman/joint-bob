@@ -223,7 +223,7 @@ interface SubscriptionPoolRequest {
   /** An automation that names its own profile never runs on a pool. */
   fixedProfile: boolean;
 }
-async function resolveSubscriptionPool(request: SubscriptionPoolRequest): Promise<TurnSubscriptionPool | undefined> {
+export async function resolveSubscriptionPool(request: SubscriptionPoolRequest): Promise<TurnSubscriptionPool | undefined> {
   const { engine, accountId, usage } = request;
   if (engine === "kiro") return undefined;
   const preferred = profileProviderForRuntime(request.provider);

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.212.6 — 2026-11-05
+
+- Fixed dashboard creation and AI refresh to inherit the project's subscription pool, including workspace and cluster choices, and switch accounts when a pool member reaches its limit.
+
 ## 2.212.5 — 2026-11-05
 
 - Aligned the action buttons across connection profile cards, including after signing in.
