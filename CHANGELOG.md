@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.213.1 — 2026-11-05
+
+- Made Activity Chat clear and send actions compact icons beside the input to leave more room for messages.
+
 ## 2.213.0 — 2026-11-05
 
 - Added the control center in place of the canvas, on the same toolbar button and shortcut: one board of every running conversation and every finished one waiting for review, across all projects, with each conversation's running summary, project filters, a color picker per card, a free layout with reset, and Esc or Exit to leave.
