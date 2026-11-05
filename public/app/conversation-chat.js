@@ -68,6 +68,7 @@ function modelChoice(harness, model) {
 
 function setBusy(value) {
   busy = value;
+  status.dataset.state = value ? "working" : "idle";
   send.disabled = !loadedUrl || savingMode;
   send.textContent = value ? "Queue" : "Send";
   clear.disabled = value || !loadedUrl;
@@ -172,8 +173,12 @@ function renderChat() {
     ? "Read-only. Search this conversation and project files. Messages stay here."
     : "Actions enabled. The agent can edit files and run commands. Messages stay here.";
   setBusy(snapshot.busy || snapshot.queue.length > 0 || submitting.size > 0);
-  const waiting = queued.length + pending.filter((item) => item.queued).length;
-  status.textContent = busy ? `${snapshot.busy ? "Answering…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}` : "";
+  const waiting = waitingMessages.filter((item) => item.queued).length;
+  const failure = snapshot.messages.at(-1)?.error;
+  status.dataset.state = busy ? "working" : failure ? "error" : "idle";
+  status.textContent = busy
+    ? `${snapshot.busy ? streaming ? "Writing…" : "Processing…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}`
+    : failure ? `Failed: ${failure}` : "Ready";
 }
 
 async function refreshChat() {

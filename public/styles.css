@@ -1917,7 +1917,12 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .conversation-chat-form { display: flex; flex: none; flex-direction: column; gap: 6px; }
 .conversation-chat-form textarea { width: 100%; resize: vertical; min-height: 60px; max-height: 160px; }
 .conversation-chat-form button { align-self: flex-end; }
-#conversationChatStatus { font-size: 12px; overflow-wrap: anywhere; }
+#conversationChatStatus { flex: none; min-height: 22px; display: flex; align-items: center; gap: 8px; font-size: 12px; overflow-wrap: anywhere; }
+#conversationChatStatus[data-state="working"] { color: var(--accent); }
+#conversationChatStatus[data-state="working"]::before { content: ""; flex: none; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: conversation-chat-spin 1s linear infinite; }
+#conversationChatStatus[data-state="error"] { color: var(--danger); }
+@keyframes conversation-chat-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #conversationChatStatus[data-state="working"]::before { animation: none; } }
 /* The summary keeps its height and the steps take what is left: a long steps list once squeezed it to a few pixels. */
 /* One scrolling column below the header: nothing in the overview sits in a box of its own, so
    no section is ever cut by a nested scroll edge or hidden under a header. Only the steps list
