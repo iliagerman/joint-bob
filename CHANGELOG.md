@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.213.2 — 2026-11-05
+
+- Fixed the Activity overview refusing long conversations with a size error; it now writes the movie from any conversation length.
+
 ## 2.213.1 — 2026-11-05
 
 - Made Activity Chat clear and send actions compact icons beside the input to leave more room for messages.
