@@ -68,6 +68,24 @@ test("a failed start shows the harness's reason on the queued bubble", async () 
   assert.ok(await bubble.evaluate((element) => element.classList.contains("queued")), "the prompt stays queued for a retry");
 });
 
+test("an unacknowledged startup stays below its prompt across queue refreshes and remains queued on failure", async () => {
+  await renderQueued();
+  const bubble = page.locator('[data-queue-id="q-1"]');
+  await deliver({ type: "agent_start" });
+  for (let refresh = 0; refresh < 2; refresh += 1) {
+    await deliver({ type: "queuedPrompts", prompts: [{ id: "q-1", text: "browse the dev site", editableText: "browse the dev site", revision: 3, starting: true }] });
+    assert.equal(await bubble.evaluate((element) => Boolean(element.compareDocumentPosition(document.querySelector("#messages .live-activity")) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+  }
+  await deliver({ type: "agent_end" });
+  await deliver({ type: "promptFailed", queueId: "q-1", error: "The monthly usage limit has been reached" });
+  await deliver({ type: "queuedPrompts", prompts: [{ id: "q-1", text: "browse the dev site", editableText: "browse the dev site", revision: 4, starting: false }] });
+  assert.equal(await page.getByTestId("live-activity").count(), 0);
+  assert.equal(await bubble.getAttribute("data-queue-starting"), null);
+  assert.equal(await bubble.locator('.message-receipt[data-read="false"]').count(), 1, "a refused start stays undelivered");
+  assert.equal(await bubble.getByTestId("queued-message-force-start-button").isEnabled(), true);
+  assert.equal(await bubble.getByTestId("queued-message-error").innerText(), "The monthly usage limit has been reached");
+});
+
 test("a later failure replaces the earlier reason instead of stacking", async () => {
   await renderQueued();
   await deliver({ type: "promptFailed", queueId: "q-1", error: "first reason" });

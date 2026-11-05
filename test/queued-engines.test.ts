@@ -295,6 +295,8 @@ for (const outcome of ["cancelled", "started", "cancel-failed"] as const) {
       const queued = listQueuedPrompts(`${fixture.projectId}:${sessionId}`)[0];
       assert.equal(queued.dispatchState, "starting");
       assert.equal(opened.messages.some((frame) => frame.type === "promptStarted"), false);
+      await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "queuedPrompts"
+        && (frame.prompts as Array<{ id: string; starting?: boolean }>).some((prompt) => prompt.id === queued.id && prompt.starting)), 1_500);
       const acknowledgement = opened.messages.find((frame) => frame.type === "userMessage" && frame.queued)!;
       // An attached page has the pre-start revision; a reconnect has the stored revision.
       const queueRevision = outcome === "cancelled" ? acknowledgement.revision : queued.revision;
@@ -666,6 +668,10 @@ test("Claude process failure after spawn but before init leaves queue pending", 
     const pending = listQueuedPrompts(`${fixture.projectId}:${sessionId}`);
     assert.equal(pending.length, 1, "spawn alone must not consume queued prompt");
     assert.equal(pending[0].dispatchState, "pending");
+    const snapshots = opened.messages.filter((frame) => frame.type === "queuedPrompts")
+      .flatMap((frame) => frame.prompts as Array<{ id: string; starting: boolean }>).filter((prompt) => prompt.id === pending[0].id);
+    assert.equal(snapshots.some((prompt) => prompt.starting), true, "startup is visible before acknowledgement");
+    assert.equal(snapshots.at(-1)?.starting, false, "a failed start clears its live placement");
     assert.equal(opened.messages.some((frame) => frame.type === "promptStarted"), false);
   } finally { process.env.JOINT_BOB_TEST_ENGINE_LOG = log; updateSettings(saved); }
 });

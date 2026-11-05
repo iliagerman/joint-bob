@@ -343,7 +343,7 @@ export function refreshHarnessPromptQueue(connection: HarnessChatConnection): vo
   const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !prompt.systemEventId);
   publish(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => {
     const images = new Set(prompt.images.map(({ path: imagePath }) => imagePath));
-    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, ...(prompt.author ? { author: prompt.author } : {}), scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
+    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, ...(prompt.author ? { author: prompt.author } : {}), scheduled: isScheduledPromptText(prompt.promptText), starting: startingIds.has(prompt.id), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
   }) });
   publish(connection, { type: "queueUpdate", pending: prompts.length });
 }
@@ -593,6 +593,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
     const latest = listQueuedPrompts(queueKey(connection)).find(({ id }) => id === queued.id);
     if (!latest || latest.revision !== queued.revision || !beginQueuedPrompt(queued.id, queued.revision)) return;
     startingIds.add(queued.id);
+    refreshHarnessPromptQueue(connection);
     enteredPrompt = true;
     promptStarted(connection.project.id, connection.conversationId, queued.requestId);
     let origin: string | undefined;
@@ -667,7 +668,11 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
     } finally {
       try {
         if (activeDifficulty && origin) saveDifficulty({ ...activeDifficulty, endedAt: new Date().toISOString(), outcome }, origin);
-      } finally { startingIds.delete(queued.id); promptEnded(connection.project.id, connection.conversationId, queued.requestId); }
+      } finally {
+        startingIds.delete(queued.id);
+        refreshHarnessPromptQueue(connection);
+        promptEnded(connection.project.id, connection.conversationId, queued.requestId);
+      }
     }
   } catch (error) {
     if (!enteredPrompt) {

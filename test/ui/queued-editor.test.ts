@@ -135,6 +135,49 @@ test("Force start disables itself with a spinner until the request resolves", as
   assert.equal(await third.locator(".queued-force-spinner").count(), 0);
 });
 
+test("force-started work stays below its prompt during startup and after acknowledgement", async () => {
+  await openQueue();
+  await page.evaluate(async () => {
+    const transcript = await import("/app/chat-transcript.js");
+    const { handleSocketPayload } = await import("/app/socket.js");
+    transcript.appendMessage("user", "Interrupted request");
+    handleSocketPayload({ type: "agent_start" });
+    handleSocketPayload({ type: "toolStart", toolName: "Bash", toolCallId: "old-work" });
+    handleSocketPayload({ type: "toolEnd", toolName: "Bash", toolCallId: "old-work", text: "Stopped", isError: true });
+  });
+  const third = page.getByTestId("queued-message-73");
+  await third.getByTestId("queued-message-force-start-button").click();
+  const belowPrompt = () => third.evaluate((bubble) => Boolean(bubble.compareDocumentPosition(document.querySelector("#messages .live-activity")) & Node.DOCUMENT_POSITION_FOLLOWING));
+  assert.equal(await belowPrompt(), false, "the interrupted turn stays above the waiting prompt until cancellation finishes");
+
+  await page.evaluate(async () => {
+    const { handleSocketPayload } = await import("/app/socket.js");
+    handleSocketPayload({ type: "agent_end" });
+    handleSocketPayload({ type: "queuedPrompts", prompts: [
+      { id: "73", text: "Third", editableText: "Third", revision: 4, starting: true },
+      { id: "71", text: "Original", editableText: "Original", revision: 1 },
+      { id: "72", text: "Second", editableText: "Second", revision: 2 },
+    ] });
+    handleSocketPayload({ type: "agent_start" });
+  });
+  assert.equal(await belowPrompt(), true, "new work must start below its prompt, even before the harness acknowledges it");
+  assert.equal(await third.locator('.message-receipt[data-read="false"]').count(), 1, "startup must not claim delivery");
+  const pending = page.getByTestId("queued-message-71");
+  assert.equal(await pending.evaluate((bubble) => Boolean(bubble.compareDocumentPosition(document.querySelector("#messages .live-activity")) & Node.DOCUMENT_POSITION_PRECEDING)), true, "other queued prompts stay below current work");
+
+  await page.evaluate(async () => {
+    const { handleSocketPayload } = await import("/app/socket.js");
+    handleSocketPayload({ type: "promptStarted", queueId: "73" });
+    handleSocketPayload({ type: "toolStart", toolName: "Bash", toolCallId: "new-work" });
+    handleSocketPayload({ type: "toolEnd", toolName: "Bash", toolCallId: "new-work", text: "Done" });
+    handleSocketPayload({ type: "assistantFinal", text: "New answer" });
+  });
+  assert.equal(await belowPrompt(), true);
+  assert.deepEqual(await page.locator("#messages .message").evaluateAll((messages) => messages.map((message) => message._raw)), ["Interrupted request", "Third", "New answer", "Original\n\nAttached: notes.txt", "Second"]);
+  assert.deepEqual(await page.locator("#messages .activity-marker").evaluateAll((markers) => markers.map((marker) => marker.previousElementSibling.previousElementSibling._raw)), ["Interrupted request", "Third"]);
+  await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_end" }));
+});
+
 test("queued messages can swap positions and merge any selection", async () => {
   await openQueue();
   const queuedText = () => page.locator(".message.user.queued").evaluateAll((messages) => messages.map((message) => message._raw));

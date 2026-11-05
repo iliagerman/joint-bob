@@ -65,9 +65,14 @@ export function syncLiveActivity() {
   // A turn that starts in a conversation with no messages yet, a scheduled run's, is no longer
   // waiting for a first message.
   elements.messages.querySelector(".empty-state[data-first-message]")?.remove();
-  // It stays the last thing before the queued prompts, even when one of them starts.
+  // Startup belongs below its prompt, even before the harness acknowledges delivery.
+  const starting = messageHost().querySelector(":scope > .message.queued[data-queue-starting]");
   const after = liveActivity.nextElementSibling;
-  if (liveActivity.parentElement !== messageHost() || (after && !after.matches(".queued-batch-controls, .message.queued"))) {
+  if (starting) {
+    const actions = starting.nextElementSibling?.classList.contains("message-actions") ? starting.nextElementSibling : null;
+    const anchor = actions ?? starting;
+    if (liveActivity.previousElementSibling !== anchor) anchor.after(liveActivity);
+  } else if (liveActivity.parentElement !== messageHost() || (after && !after.matches(".queued-batch-controls, .message.queued"))) {
     liveActivity.remove();
     appendBeforeQueuedMessages(liveActivity);
   }
@@ -1037,6 +1042,7 @@ export function clearQueuedMark(queueId) {
   const receipt = bubble.querySelector(".message-receipt");
   if (receipt) setReceiptState(receipt, true);
   delete bubble.dataset.queueId;
+  delete bubble.dataset.queueStarting;
   delete bubble.dataset.queuedEditableText;
   bubble.querySelector(".queued-controls")?.remove();
   bubble.querySelector(".queued-editor")?.remove();

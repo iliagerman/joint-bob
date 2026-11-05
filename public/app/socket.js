@@ -505,15 +505,17 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       if (!retained.has(bubble.dataset.queueId)) removeQueuedMessage(bubble.dataset.queueId);
     }
     for (const prompt of prompts) {
-      const existing = elements.messages.querySelector(`[data-queue-id="${prompt.id}"]`);
-      if (existing) {
-        if (Number(existing.dataset.queueRevision) !== prompt.revision) updateQueuedMessage(prompt.id, prompt.text, prompt.editableText, prompt.settings, prompt.revision);
-        continue;
+      let bubble = elements.messages.querySelector(`[data-queue-id="${prompt.id}"]`);
+      if (bubble) {
+        if (Number(bubble.dataset.queueRevision) !== prompt.revision) updateQueuedMessage(prompt.id, prompt.text, prompt.editableText, prompt.settings, prompt.revision);
+      } else {
+        const sentAt = prompt.timestamp ? new Date(prompt.timestamp) : true;
+        bubble = markMessageQueued(appendMessage("user", prompt.text, sentAt, prompt.attachments, false, undefined, prompt.author), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
       }
-      const sentAt = prompt.timestamp ? new Date(prompt.timestamp) : true;
-      markMessageQueued(appendMessage("user", prompt.text, sentAt, prompt.attachments, false, undefined, prompt.author), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
+      bubble.toggleAttribute("data-queue-starting", prompt.starting === true);
     }
     syncQueuedMessageOrder(prompts.map((prompt) => prompt.id));
+    syncLiveActivity();
     return;
   }
   if (payload.type === "conversationDigest") {
