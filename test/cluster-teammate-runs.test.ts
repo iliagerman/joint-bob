@@ -107,7 +107,8 @@ test("a teammate's messages run on the third machine that runs the conversation,
     assert.deepEqual(await runs(), [`claude:${server.nodeId}`]);
     const sessionId = String(ready.sessionId);
 
-    const row = await eventually(async () => (await api<{ sessions?: SessionRow[] }>(maya, onMaya, "GET", `/projects/${project.id}/sessions`)).body.sessions?.find((candidate) => candidate.id === sessionId), "the teammate to list the conversation");
+    // The conversation's record and where it runs replicate as separate events, so the row can be listed a moment before its machine is known.
+    const row = await eventually(async () => (await api<{ sessions?: SessionRow[] }>(maya, onMaya, "GET", `/projects/${project.id}/sessions`)).body.sessions?.find((candidate) => candidate.id === sessionId && candidate.executionNodeId), "the teammate to list the conversation with the machine it runs on");
     assert.equal(row.executionNodeId, server.nodeId, "the teammate's machine knows where the conversation runs");
     const params = { projectId: project.id, sessionPath: row.path, sessionId: row.id, nodeId: server.nodeId };
 
