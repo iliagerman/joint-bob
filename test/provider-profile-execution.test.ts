@@ -80,7 +80,11 @@ test("OpenAI refresh uses the canonical SDK lock and writes rotated tokens once 
 
 test("a signed-out or failed-refresh OpenAI profile never uses another node credential", async () => {
   const profile = createProviderProfile("failed-refresh-owner", { label: "Expired work", provider: "openai-codex" });
-  await assert.rejects(refreshedProfileCredential(profile), /Sign in to Expired work again/);
+  await assert.rejects(refreshedProfileCredential(profile), (error: Error) => {
+    assert.match(error.message, /Sign in to Expired work on this node/);
+    assert.match(error.message, /No other account was used/);
+    return true;
+  });
   await mkdir(path.dirname(openAIAuthPath(profile)), { recursive: true });
   await writeFile(openAIAuthPath(profile), JSON.stringify({ "openai-codex": { type: "oauth", access: "fixture-expired", refresh: "fixture-revoked", expires: 1 } }), { mode: 0o600 });
   const models = await profileModelRuntime(profile), provider = models.getProvider("openai-codex")!;
@@ -125,7 +129,7 @@ test("Claude profile contexts remain independent during overlapping turns", asyn
     for (const [conversation, profile] of [["c1", one], ["c2", two]] as const) setProviderProfileSelection("context-owner", { provider: "claude", scope: "conversation", scopeId: JSON.stringify([project.id, conversation]), profileId: profile.id });
     for (const profile of [one, two]) {
       await mkdir(path.dirname(openAIAuthPath(profile)), { recursive: true, mode: 0o700 });
-      await writeFile(openAIAuthPath(profile), JSON.stringify({ anthropic: { type: "oauth", access: `fixture-${profile.id}`, refresh: "fixture-refresh", expires: Date.now() + 3_600_000 } }), { mode: 0o600 });
+      await writeFile(openAIAuthPath(profile), JSON.stringify({ anthropic: { type: "oauth", access: `fixture-${profile.id}`, refresh: "fixture-refresh", expires: Date.now() + 8 * 3_600_000 } }), { mode: 0o600 });
     }
     let release!: () => void;
     let entered!: () => void;

@@ -11,14 +11,14 @@ import { getClusterNode } from "../src/cluster.js";
 // Profile writes are stamped with this node's identity for twin sync.
 await getClusterNode();
 
-const credential = (access = "synthetic-access", refresh = "synthetic-refresh") => ({ type: "oauth", access, refresh, expires: Date.now() + 3_600_000 });
+const credential = (access = "synthetic-access", refresh = "synthetic-refresh") => ({ type: "oauth", access, refresh, expires: Date.now() + 8 * 3_600_000 });
 async function canonical(profile: ReturnType<typeof createProviderProfile>, value: object) {
   await mkdir(path.dirname(openAIAuthPath(profile)), { recursive: true, mode: 0o700 });
   await writeFile(openAIAuthPath(profile), JSON.stringify(value), { mode: 0o600 });
 }
 async function legacy(profile: ReturnType<typeof createProviderProfile>) {
   await mkdir(profileDirectory(profile), { recursive: true, mode: 0o700 });
-  await writeFile(path.join(profileDirectory(profile), ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "legacy-access", refreshToken: "legacy-refresh", expiresAt: Date.now() + 3_600_000 } }), { mode: 0o600 });
+  await writeFile(path.join(profileDirectory(profile), ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "legacy-access", refreshToken: "legacy-refresh", expiresAt: Date.now() + 8 * 3_600_000 } }), { mode: 0o600 });
 }
 test("Claude migration is serialized, canonical tokens win, and logout prevents reseeding", async () => {
   const profile = createProviderProfile("broker-owner", { label: "Migration", provider: "claude" });
