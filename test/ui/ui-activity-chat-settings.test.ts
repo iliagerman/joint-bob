@@ -20,6 +20,12 @@ for (const width of [1440, 390]) {
     await toggle.waitFor();
     const readOnly = page.getByTestId("conversation-chat-read-only");
     assert.equal(await readOnly.isVisible(), false);
+    const clear = page.getByTestId("conversation-chat-clear");
+    assert.equal(await clear.isVisible(), true, "clear conversation stays visible with settings closed");
+    assert.equal(await clear.textContent(), "Clear conversation");
+    const cleared = page.waitForResponse(response => response.url().endsWith("/chat") && response.request().method() === "DELETE");
+    await clear.click();
+    assert.equal((await cleared).status(), 200);
     await toggle.click();
     assert.equal(await readOnly.isVisible(), true);
     const modeSaved = page.waitForResponse(response => response.url().endsWith("/chat") && response.request().method() === "PATCH");
