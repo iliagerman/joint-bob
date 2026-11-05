@@ -213,6 +213,7 @@ function activeUpdateRecoveries(): Array<{ record: UpdateRecoveryRecord; shared:
       kind: task ? "task" : "chat", engine: shared.engine, projectId: shared.projectId, cwd: shared.cwd,
       sessionId: shared.session.id, sessionPath: shared.session.file ?? "", taskId: task?.taskId ?? null,
       phase: task?.phase ?? null, queuedPrompts: shared.session.queuedPrompts(), settings, model: settings.modelId || null, effort: settings.reasoning || null,
+      accountId: shared.turnAccountId ?? null,
     }) });
   }
   return active;

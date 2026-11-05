@@ -202,3 +202,51 @@ test("runClaudePrompt lets background agents run past the CLI's wait ceiling", a
     else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
   }
 });
+
+/**
+ * Claude Code 2.1.318 writes a refused request (here a subscription limit) as an assistant
+ * message flagged is_api_error_message. It must stay a failure with its status, never output,
+ * or a subscription pool would not hand the turn to another account.
+ */
+test("runClaudePrompt reports a refused API request as a failure with its status, not as output", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-api-error-"));
+  const previousDataDir = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  try {
+    const fakeClaude = path.join(root, "claude-fake");
+    const limit = "You've hit your 5-hour limit · resets 3:10am (Asia/Jerusalem)";
+    const stream = path.join(root, "stream.jsonl");
+    await writeFile(stream, [
+      { type: "system", subtype: "init", session_id: "33333333-3333-4333-8333-333333333333", tools: ["Bash"] },
+      { type: "assistant", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: limit }] }, parent_tool_use_id: null, error: "rate_limit", is_api_error_message: true, api_error_status: 429 },
+      { type: "result", subtype: "success", is_error: true, api_error_status: 429, terminal_reason: "api_error", result: limit },
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n", "utf8");
+    await writeFile(fakeClaude, ["#!/bin/sh", "cat >/dev/null", `cat '${stream}'`, "exit 1", ""].join("\n"), "utf8");
+    await chmod(fakeClaude, 0o755);
+
+    const settings = await import(`../src/settings.ts?claude-api-error=${Date.now()}-${Math.random()}`);
+    settings.updateSettings({
+      projects: { homePath: path.join(root, "home") },
+      claude: { executable: fakeClaude, configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-projects") },
+      syncthing: { endpoint: "" },
+    });
+    const { runClaudePrompt } = await import(`../src/claude-service.ts?claude-api-error=${Date.now()}-${Math.random()}`);
+
+    const events: Array<{ type: string; error?: string }> = [];
+    const result = await runClaudePrompt({ cwd: root, projectId: "api-error-project", prompt: "hello", onEvent: (event: { type: string; error?: string }) => events.push(event) }).done;
+
+    assert.equal(result.ok, false);
+    assert.equal(result.sawOutput, false);
+    assert.equal(result.error, limit);
+    assert.deepEqual(result.apiError, { status: 429, code: "rate_limit" });
+    assert.deepEqual(events.filter((event) => event.type === "textDelta"), []);
+    assert.deepEqual(events.filter((event) => event.type === "assistantError").map((event) => event.error), [limit], "the refusal is shown once, as an error");
+
+    const { classifyPoolAttemptFailure } = await import("../src/provider-profiles/pool-execution.js");
+    assert.equal(classifyPoolAttemptFailure(Object.assign(new Error(result.error), { status: 429, code: "rate_limit" }), false)?.reason, "quota");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
+  }
+});
+

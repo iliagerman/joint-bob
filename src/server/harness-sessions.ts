@@ -20,6 +20,8 @@ export interface SharedHarnessSession {
   liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void; watchdogStopping?: boolean;
   /** The sign-in the running turn uses, so a page that opens mid-turn shows it on the reply. */
   turnConnection?: TurnConnectionView | null;
+  /** The account the running turn acts as, so an update recovery resumes it on that account's subscription. */
+  turnAccountId?: string | null;
   /** When the inactivity watchdog cancelled this turn; a turn still busy long after is a zombie. */
   watchdogStoppedAt?: number;
   /** Set while Joint Bob awaits a compaction; `abandon` releases that wait when the watchdog stops it. */

@@ -53,30 +53,47 @@ export function classifyPoolAttemptFailure(error: unknown, started: boolean): Po
   const status = details.status ?? details.statusCode;
   const code = typeof details.code === "string" ? details.code.toLowerCase() : "";
   const message = `${code} ${error.message}`.toLowerCase();
-  const reason: PoolFailureReason | undefined = status === 429 || /rate[_ -]?limit|quota[_ -]?(?:exceeded|exhausted)|usage limit|too many requests|insufficient_quota/.test(message)
+  // Claude reports a subscription limit as "You've hit your 5-hour limit" with the code rate_limit.
+  const reason: PoolFailureReason | undefined = status === 429 || /rate[_ -]?limit|quota[_ -]?(?:exceeded|exhausted)|usage limit|hit your [\w -]*limit|too many requests|insufficient_quota|billing_error/.test(message)
     ? "quota"
-    : status === 401 || status === 403 || /invalid_grant|authentication[_ -]?error|unauthorized|token (?:expired|revoked)|sign[- ]in required|sign in to .* again|sign in on this node/.test(message)
+    : status === 401 || status === 403 || /invalid_grant|authentication[_ -]?(?:error|failed)|unauthorized|token (?:expired|revoked)|sign[- ]in required|sign in to .* again|sign in on this node/.test(message)
       ? "auth"
       : undefined;
   return reason ? new PoolAttemptFailure(reason, started, error.message, { cause: error }) : undefined;
 }
 
+/** A failure the next pool member can take over from: quota or sign-in at any point, an unusable member before it starts. */
+function handsOver(failure: PoolAttemptFailure): boolean {
+  return failure.started ? failure.reason === "quota" || failure.reason === "auth" : ["quota", "auth", "unavailable"].includes(failure.reason);
+}
+
+/**
+ * Runs a turn on each pool member in turn until one finishes it. A member that fails before
+ * starting is rolled back to the last checkpoint and the next one gets the same prompt. A member
+ * that runs out of quota or sign-in mid-turn keeps the work it did: the next member is told to
+ * continue (`continuing`), so nothing already done is replayed.
+ */
 export async function runPoolAttempts<T, C extends { provider: ProfileProvider }>(
   candidates: readonly C[],
   preferredProvider: ProfileProvider | undefined,
-  attempt: (candidate: C) => Promise<T>,
-  restore: () => Promise<void>,
+  attempt: (candidate: C, continuing: boolean) => Promise<T>,
+  checkpoint: () => Promise<() => Promise<void>>,
   sameProviderOnly = false,
 ): Promise<T> {
   const ordered = orderPoolCandidates(candidates, preferredProvider, sameProviderOnly);
   if (!ordered.length) throw new Error("No compatible subscription profile is available in this pool");
+  let restore = await checkpoint();
+  let continuing = false;
   for (let index = 0; index < ordered.length; index += 1) {
-    try { return await attempt(ordered[index]); }
+    try { return await attempt(ordered[index], continuing); }
     catch (error) {
       const failure = classifyPoolAttemptFailure(error, false);
-      if (!failure || failure.started || !["quota", "auth", "unavailable"].includes(failure.reason)) throw error;
+      if (!failure || !handsOver(failure)) throw error;
       if (index === ordered.length - 1) throw failure;
-      await restore();
+      if (failure.started) {
+        continuing = true;
+        restore = await checkpoint();
+      } else await restore();
     }
   }
   throw new Error("Subscription pool attempts ended unexpectedly");

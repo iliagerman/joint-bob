@@ -3,7 +3,10 @@ import { realpath } from "node:fs/promises";
 import { getClusterNode } from "../cluster.js";
 import { ensureConversationRecord, getConversationRecord } from "../conversation-records.js";
 import { getHarness, getHarnessRuntime } from "../harnesses.js";
-import type { HarnessModelSettings } from "../harnesses/runtime.js";
+import type { HarnessModelSettings, HarnessPrompt } from "../harnesses/runtime.js";
+import { runAsAccount } from "../account-context.js";
+import { ownerAsActor, resourceOwner } from "../ownership.js";
+import { resolvePoolModelSettings } from "../provider-profiles/pool-execution.js";
 import { buildHandoffContext } from "../handoff-context.js";
 import { recoverMergeTransactions } from "../merge-journal.js";
 import { ensureSessionTitle } from "../names.js";
@@ -13,7 +16,7 @@ import { beginTicketMerge, completeTicketMergeRun, ticketMergeConflicts, TicketM
 import type { HarnessId, ProjectRecord, TaskPhase, TaskPhaseConfig, TaskRecord } from "../types.js";
 import { completeUpdateRecovery, failUpdateRecovery, listPendingUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
 import { promptTextWithAttachments, taskAttachmentFile } from "./chat.js";
-import { drainHarnessPromptQueue, harnessChatConnections } from "./harness-chat.js";
+import { announceRecoveryConnection, announceSharedConnection, drainHarnessPromptQueue, harnessChatConnections, promptOnSubscriptionPool, resolveRecoverySubscriptionPool } from "./harness-chat.js";
 import { harnessSessionBusy, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 import { broadcastToProject } from "./realtime.js";
 import { claimConversationLocally, requireLocalConversationOwner } from "./sessions-helpers.js";
@@ -305,32 +308,55 @@ async function recoverChat(record: UpdateRecoveryRecord): Promise<void> {
   await claimConversationLocally(record.engine, record.sessionId, local.id);
   const conversation = await getConversationRecord(record.projectId, record.engine, record.sessionId);
   const conversationId = conversation?.conversationId ?? record.sessionId;
+  const project = await getProject(record.projectId);
+  if (!project) throw new Error("Recovery project not found");
   const shared = await openHarnessSession(record.engine, { projectId: record.projectId, cwd: record.cwd, sessionId: record.sessionId, sessionPath: record.sessionPath, conversationId });
   shared.turnInFlight += 1;
+  // The turn resumes as the account it ran as, on that account's subscription (a pool fails over
+  // as it would have). A record kept before accounts were recorded acts as the project's owner,
+  // like other background work for a project.
+  const actor = ownerAsActor(record.accountId ?? resourceOwner("project", record.projectId));
+  shared.turnAccountId = actor?.accountId ?? null;
   broadcastToProject(record.projectId, { type: "sessionsChanged" });
   try {
-    const legacySettings = !record.settings && (record.model !== null || record.effort !== null)
-      ? { ...shared.session.settings(), ...(record.model !== null ? { modelId: record.model } : {}), ...(record.effort !== null ? { reasoning: record.effort } : {}) }
-      : undefined;
-    const settings = record.settings ?? legacySettings;
-    if (settings) {
-      const runtime = await getHarnessRuntime(record.engine);
-      await runtime.validateSettings(settings);
-      await shared.session.configure(settings);
-    }
-    await shared.session.preflight();
-    for (const prompt of [updateContinuationPrompt, ...record.queuedPrompts]) await shared.session.prompt({ text: prompt, beforeStart: async () => {
-      if (flags.updatePreparing) throw new Error("An update is being prepared");
-      await requireLocalConversationOwner(shared.engine, record.sessionId);
-      if (flags.updatePreparing) throw new Error("An update is being prepared");
-    } });
+    await runAsAccount(actor, () => resumeChat(record, shared, project.type!));
     await completeUpdateRecovery(record.id);
   } finally {
     shared.turnInFlight -= 1;
+    if (!shared.turnInFlight) { shared.turnConnection = null; shared.turnAccountId = null; }
     sendHarnessStatus(shared);
     broadcastToProject(record.projectId, { type: "sessionsChanged" });
     const connection = [...harnessChatConnections].find((candidate) => candidate.shared === shared);
     if (connection) void drainHarnessPromptQueue(connection).catch((error) => console.warn("Post-recovery queue failed", error));
+  }
+}
+
+async function resumeChat(record: UpdateRecoveryRecord, shared: SharedHarnessSession, workspaceId: string): Promise<void> {
+  const legacySettings = !record.settings && (record.model !== null || record.effort !== null)
+    ? { ...shared.session.settings(), ...(record.model !== null ? { modelId: record.model } : {}), ...(record.effort !== null ? { reasoning: record.effort } : {}) }
+    : undefined;
+  const settings = record.settings ?? legacySettings;
+  if (settings) {
+    const runtime = await getHarnessRuntime(record.engine);
+    await runtime.validateSettings(settings);
+    await shared.session.configure(settings);
+  }
+  const pool = await resolveRecoverySubscriptionPool(shared, workspaceId);
+  if (!pool) {
+    await shared.session.preflight();
+    await announceRecoveryConnection(shared);
+  }
+  const initial = shared.session.settings();
+  for (const prompt of [updateContinuationPrompt, ...record.queuedPrompts]) {
+    const input: HarnessPrompt = { text: prompt, beforeStart: async () => {
+      if (flags.updatePreparing) throw new Error("An update is being prepared");
+      await requireLocalConversationOwner(shared.engine, record.sessionId);
+      if (flags.updatePreparing) throw new Error("An update is being prepared");
+    } };
+    if (!pool) await shared.session.prompt(input);
+    else await promptOnSubscriptionPool(shared.session, pool, initial,
+      (candidate) => resolvePoolModelSettings(shared.engine, candidate.provider, initial, undefined, pool.fallbackModels[candidate.provider]), input,
+      (candidate) => announceSharedConnection(shared, { pool: { name: pool.name }, profile: { label: candidate.label } }));
   }
 }
 

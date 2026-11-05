@@ -10,7 +10,7 @@ import { profileLogins } from "./login.js";
 import { claudeOAuthIdentity } from "./claude-identity.js";
 import { prepareClaudeProfile, readLegacyClaudeCredential, removeLegacyClaudeCredential } from "./claude.js";
 import { withProfileAuthority } from "./broker.js";
-import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
+import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, turnTokenValidityMs, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
 import { accessibleProviderProfile, listProviderProfiles, machineSignInChosen, providerProfile, resolveProviderProfile, type ProfileProvider, type ProfileScope, type ProviderProfile } from "./store.js";
 
 export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolChoice, updateSubscriptionPool } from "./pools.js";
@@ -157,8 +157,9 @@ export async function claudeProfileAccessToken(profile: ProviderProfile): Promis
 }
 
 /**
- * This node's own sign-in, refreshed under its lock to stay valid for ten minutes, or
- * undefined when the user never signed in here (or signed out). Twins borrow from this.
+ * This node's own sign-in, refreshed under its lock to last as long as a turn needs (see
+ * turnTokenValidityMs), or undefined when the user never signed in here (or signed out).
+ * Twins borrow from this.
  */
 export async function localProfileCredential(profile: ProviderProfile): Promise<ProfileOAuthCredential | undefined> {
   if (profile.provider === "kiro") throw new Error("Kiro profiles are standalone; their credentials never leave this node");
@@ -168,7 +169,7 @@ export async function localProfileCredential(profile: ProviderProfile): Promise<
   const refresh = async () => {
     if (readStoredCredential(providerId, openAIAuthPath(profile))?.type !== "oauth") return undefined;
     try {
-      await (await profileModelRuntime(profile)).getAuth(providerId, { minOAuthValidityMs: MIN_TOKEN_VALIDITY_MS, env: {} });
+      await (await profileModelRuntime(profile)).getAuth(providerId, { minOAuthValidityMs: turnTokenValidityMs(profile), env: {} });
       const fresh = readStoredCredential(providerId, openAIAuthPath(profile));
       if (fresh?.type !== "oauth" || !fresh.access || fresh.expires < Date.now() + MIN_TOKEN_VALIDITY_MS) throw new Error(message);
       return fresh;
@@ -231,7 +232,7 @@ export async function profileAvailability(profile: ProviderProfile): Promise<{ s
   if (profile.provider === "pi" || profile.provider === "kiro") return { ...local, twin: null };
   if (local.signedIn || local.message !== "Sign in on this node") return { ...local, twin: null };
   const { holder, unchecked } = await twinLoginHolder(profile);
-  if (holder) return { signedIn: false, twin: holder, message: `Uses the sign-in on ${holder}. Turns here borrow short-lived tokens from it.` };
+  if (holder) return { signedIn: false, twin: holder, message: `Uses the sign-in on ${holder}. Turns here stop while it is offline; sign in here too so this machine works on its own.` };
   const note = unchecked.length ? ` ${unchecked.join(", ")} could not be checked.` : "";
   return { signedIn: false, twin: null, message: `Sign in on this node${note}` };
 }

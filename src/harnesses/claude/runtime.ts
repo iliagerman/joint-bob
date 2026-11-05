@@ -291,7 +291,12 @@ class ClaudeSession implements HarnessSession {
       stopClaudeSession(this.id, this.nativeFile ?? claudeSessionFilePath(this.options.cwd, this.id));
     }
     this.pushAssistant(turn);
-    if (!result.ok) throw new Error(this.stopReason ?? result.error ?? (result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output"));
+    if (!result.ok && this.stopReason) throw new Error(this.stopReason);
+    if (!result.ok) {
+      const error = new Error(result.error ?? (result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output"));
+      // The status and code let a subscription pool tell a usage limit or sign-in failure from any other.
+      throw result.apiError ? Object.assign(error, { status: result.apiError.status ?? undefined, code: result.apiError.code ?? undefined }) : error;
+    }
     this.markStarted(input, state);
     if (result.tools !== null) this.availableTools = [...result.tools];
     if (!this.nativeFile && result.sessionId) this.captureSession(result.sessionId);

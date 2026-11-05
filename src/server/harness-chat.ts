@@ -32,7 +32,7 @@ import { runAutoResponder } from "./auto-respond-run.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
 import { getHarness, getHarnessRuntime, harnessForProvider, listHarnesses, listHarnessModels, listHarnessSessions } from "../harnesses.js";
-import type { HarnessModelSettings, HarnessSession } from "../harnesses/runtime.js";
+import type { HarnessModelSettings, HarnessPrompt, HarnessSession } from "../harnesses/runtime.js";
 import { setSessionTitle } from "../names.js";
 import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts } from "../secrets.js";
 import { getProjectLock } from "../project-locks.js";
@@ -210,17 +210,25 @@ function currentSettings(connection: HarnessChatConnection): QueuedSettings {
 }
 function selectedHarness(settings: QueuedSettings): HarnessId { return settings.harnessId ?? harnessForProvider(settings.provider).id; }
 
-interface TurnSubscriptionPool { id: string; name: string; fallbackModels: Partial<Record<ProfileProvider, string>>; candidates: PoolProfileContext[]; sameProviderOnly: boolean }
+export interface TurnSubscriptionPool { id: string; name: string; fallbackModels: Partial<Record<ProfileProvider, string>>; candidates: PoolProfileContext[]; sameProviderOnly: boolean }
 function profileProviderForRuntime(provider: string): ProfileProvider | undefined {
   if (provider === "anthropic" || provider === "claude") return "claude";
   return provider === "openai-codex" ? provider : "pi";
 }
-async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<TurnSubscriptionPool | undefined> {
-  const engine = queued.settings?.harnessId ?? connection.engine;
+interface SubscriptionPoolRequest {
+  engine: HarnessId; provider: string; projectId: string; workspaceId: string; conversationId: string;
+  /** Whose subscription choice applies; none means only a cluster pool can. */
+  accountId: string | undefined;
+  usage: "automation" | "interactive";
+  /** An automation that names its own profile never runs on a pool. */
+  fixedProfile: boolean;
+}
+async function resolveSubscriptionPool(request: SubscriptionPoolRequest): Promise<TurnSubscriptionPool | undefined> {
+  const { engine, accountId, usage } = request;
   if (engine === "kiro") return undefined;
-  const preferred = profileProviderForRuntime(queued.settings?.provider ?? connection.shared.session.settings().provider);
+  const preferred = profileProviderForRuntime(request.provider);
   const local = await getClusterNode(), db = await clusterV2Database();
-  const assignments = resolveClusterSubscriptionPools(db, local.id, connection.project.id);
+  const assignments = resolveClusterSubscriptionPools(db, local.id, request.projectId);
   if (assignments.length) {
     const signatures = new Set(assignments.map(({ poolOwnerNodeId, poolId, manifest }) => JSON.stringify([poolOwnerNodeId, poolId, manifest])));
     if (signatures.size > 1) throw new Error("This project has conflicting cluster subscription pools");
@@ -230,11 +238,8 @@ async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, qu
       candidates: assignment.manifest.members.map((member) => ({ profileId: member.profileId, provider: member.provider, label: member.label,
         poolId: assignment.poolId, clusterId: assignment.clusterId, poolOwnerNodeId: assignment.poolOwnerNodeId })) };
   }
-  if (queued.automationProfile?.profileId || !preferred) return undefined;
-  const accountId = queued.automationProfile?.accountId ?? actingAccount()?.accountId ?? queued.author?.accountId ?? connection.author?.accountId;
-  if (!accountId) return undefined;
-  const scope = { projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId, clusterIds: projectClusterIds(db, local.id, connection.project.id) };
-  const usage = queued.automationProfile ? "automation" : "interactive";
+  if (request.fixedProfile || !preferred || !accountId) return undefined;
+  const scope = { projectId: request.projectId, workspaceId: request.workspaceId, conversationId: request.conversationId, clusterIds: projectClusterIds(db, local.id, request.projectId) };
   const choice = (engine === "pi" ? resolveSubscriptionChoice(accountId, "pi", scope, usage) : undefined)
     ?? resolveSubscriptionChoice(accountId, preferred, scope, usage);
   if (choice?.kind !== "pool") return undefined;
@@ -242,22 +247,81 @@ async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, qu
   return { id: choice.pool.id, name: choice.pool.name, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",
     candidates: profiles.map((profile) => ({ profileId: profile.id, provider: profile.provider, label: profile.label, poolId: choice.pool.id, profile })) };
 }
+function resolveTurnSubscriptionPool(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<TurnSubscriptionPool | undefined> {
+  return resolveSubscriptionPool({
+    engine: queued.settings?.harnessId ?? connection.engine, provider: queued.settings?.provider ?? connection.shared.session.settings().provider,
+    projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId,
+    accountId: queued.automationProfile?.accountId ?? actingAccount()?.accountId ?? queued.author?.accountId ?? connection.author?.accountId,
+    usage: queued.automationProfile ? "automation" : "interactive", fixedProfile: Boolean(queued.automationProfile?.profileId),
+  });
+}
+/** The pool a turn an update interrupted resumes on: the choice of the account it runs as (see recoverChat). */
+export function resolveRecoverySubscriptionPool(shared: SharedHarnessSession, workspaceId: string): Promise<TurnSubscriptionPool | undefined> {
+  return resolveSubscriptionPool({ engine: shared.engine, provider: shared.session.settings().provider, projectId: shared.projectId, workspaceId,
+    conversationId: shared.conversationId, accountId: actingAccount()?.accountId, usage: "interactive", fixedProfile: false });
+}
+
+const POOL_CONTINUATION_PROMPT = "The subscription account this turn was running on reached its usage limit or lost its sign-in, so the turn moved to another account in the pool. Continue from where it stopped; do not repeat completed side effects.";
+
+/**
+ * Runs one prompt on a subscription pool, member by member (see runPoolAttempts). A member taking
+ * over mid-turn gets a continuation prompt instead of the original, which already ran.
+ */
+export async function promptOnSubscriptionPool(session: HarnessSession, pool: TurnSubscriptionPool, initial: HarnessModelSettings,
+  settingsFor: (candidate: PoolProfileContext) => HarnessModelSettings, input: HarnessPrompt, announce: (candidate: PoolProfileContext) => void): Promise<void> {
+  if (!session.checkpointPoolAttempt || !session.restorePoolAttempt) throw new Error("This harness cannot safely retry a subscription pool attempt");
+  await runPoolAttempts(pool.candidates, profileProviderForRuntime(initial.provider), async (candidate, continuing) => {
+    const settings = settingsFor(candidate);
+    let started = false;
+    const unsubscribe = session.subscribe((event) => {
+      if (["textDelta", "thinkingDelta", "toolStart", "assistantFinal"].includes(String(event.type))) started = true;
+    });
+    try {
+      announce(candidate);
+      await withPoolProfile(candidate, async () => {
+        await session.configure(settings);
+        await session.preflight();
+        await session.prompt(continuing ? { text: POOL_CONTINUATION_PROMPT, beforeStart: input.beforeStart, onStarted: input.onStarted } : input);
+      });
+    } catch (error) {
+      const failure = classifyPoolAttemptFailure(error, started);
+      if (failure) throw failure;
+      throw error;
+    } finally { unsubscribe(); }
+  }, async () => {
+    const checkpoint = await session.checkpointPoolAttempt!();
+    return () => session.restorePoolAttempt!(checkpoint);
+  }, pool.sameProviderOnly);
+}
 
 function announceConnection(connection: HarnessChatConnection, queueId: string, view: TurnConnectionView): void {
   connection.shared.turnConnection = view;
   publish(connection, { type: "turnConnection", queueId, ...view });
 }
+/** Names the sign-in a turn started without a queued prompt (an update recovery) runs on. */
+export function announceSharedConnection(shared: SharedHarnessSession, view: TurnConnectionView): void {
+  shared.turnConnection = view;
+  for (const candidate of harnessChatConnections) if (candidate.shared === shared) send(candidate.socket, { type: "turnConnection", ...view });
+}
 /**
  * The sign-in a turn without a pool runs on, as the harness itself resolves it: the chosen or only
  * profile, or this machine's own sign-in when none applies. Shown under the message and on the reply.
  */
-async function announceTurnConnection(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
-  const engine = queued.settings?.harnessId ?? connection.engine;
+async function profileConnectionView(projectId: string, conversationId: string, engine: HarnessId, provider: string): Promise<TurnConnectionView | undefined> {
   // Only these harnesses run on Joint Bob profiles; any other keeps its own sign-in, unlabelled.
-  if (engine !== "claude" && engine !== "pi" && engine !== "kiro") return;
-  const provider = queued.settings?.provider ?? connection.shared.session.settings().provider;
-  const profile = await projectProviderProfile(connection.project.id, connection.conversationId, provider, engine);
-  announceConnection(connection, queued.id, { profile: { label: profile?.label ?? "this machine's sign-in" } });
+  if (engine !== "claude" && engine !== "pi" && engine !== "kiro") return undefined;
+  const profile = await projectProviderProfile(projectId, conversationId, provider, engine);
+  return { profile: { label: profile?.label ?? "this machine's sign-in" } };
+}
+async function announceTurnConnection(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
+  const view = await profileConnectionView(connection.project.id, connection.conversationId, queued.settings?.harnessId ?? connection.engine,
+    queued.settings?.provider ?? connection.shared.session.settings().provider);
+  if (view) announceConnection(connection, queued.id, view);
+}
+/** Names the profile an update recovery without a pool resumes on. */
+export async function announceRecoveryConnection(shared: SharedHarnessSession): Promise<void> {
+  const view = await profileConnectionView(shared.projectId, shared.conversationId, shared.engine, shared.session.settings().provider);
+  if (view) announceSharedConnection(shared, view);
 }
 
 async function writable(connection: HarnessChatConnection): Promise<void> {
@@ -502,6 +566,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
   const previousInternalTurn = shared.internalTurn;
   shared.internalTurn = Boolean(queued.systemEventId);
   shared.turnInFlight += 1;
+  shared.turnAccountId = actingAccount()?.accountId ?? null;
   markHarnessInput(shared);
   const preparationStartedAt = new Date().toISOString();
   let enteredPrompt = false;
@@ -575,30 +640,10 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
       } };
       if (!pool) await connection.shared.session.prompt(promptInput);
       else {
-        const session = connection.shared.session;
-        if (!session.checkpointPoolAttempt || !session.restorePoolAttempt) throw new Error("This harness cannot safely retry a subscription pool attempt");
-        const checkpoint = await session.checkpointPoolAttempt();
-        const initialSettings = queued.settings ? runtimeSettings(queued.settings) : session.settings();
-        const preferred = profileProviderForRuntime(initialSettings.provider);
-        await runPoolAttempts(pool.candidates, preferred, async (candidate) => {
-          const settings = poolCandidateSettings(connection, pool!, candidate, initialSettings, difficulty);
-          let started = false;
-          const unsubscribe = session.subscribe((event) => {
-            if (["textDelta", "thinkingDelta", "toolStart", "assistantFinal"].includes(String(event.type))) started = true;
-          });
-          try {
-            if (!queued.systemEventId) announceConnection(connection, queued.id, { pool: { name: pool!.name }, profile: { label: candidate.label } });
-            await withPoolProfile(candidate, async () => {
-              await session.configure(settings);
-              await session.preflight();
-              await session.prompt(promptInput);
-            });
-          } catch (error) {
-            const failure = classifyPoolAttemptFailure(error, started);
-            if (failure) throw failure;
-            throw error;
-          } finally { unsubscribe(); }
-        }, async () => session.restorePoolAttempt!(checkpoint), pool.sameProviderOnly);
+        const initialSettings = queued.settings ? runtimeSettings(queued.settings) : connection.shared.session.settings();
+        await promptOnSubscriptionPool(connection.shared.session, pool, initialSettings,
+          (candidate) => poolCandidateSettings(connection, pool!, candidate, initialSettings, difficulty), promptInput,
+          (candidate) => { if (!queued.systemEventId) announceConnection(connection, queued.id, { pool: { name: pool!.name }, profile: { label: candidate.label } }); });
         recordQueueSettings(queueKey(connection), currentSettings(connection));
       }
       if (!claimed) throw new Error("Harness did not start the queued prompt");
@@ -639,7 +684,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
   } finally {
     // switchHarness transfers the busy counter to the destination shared session.
     connection.shared.turnInFlight -= 1;
-    if (!connection.shared.turnInFlight) connection.shared.turnConnection = null;
+    if (!connection.shared.turnInFlight) { connection.shared.turnConnection = null; connection.shared.turnAccountId = null; }
     shared.internalTurn = previousInternalTurn;
     connection.shared.scheduledTurn = false;
     sendHarnessStatus(connection.shared);

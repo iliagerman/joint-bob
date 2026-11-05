@@ -47,6 +47,8 @@ export interface ClaudeRunResult {
   error: string | null;
   /** Built-in tool names the CLI reported in its init record, when it sent one. */
   tools: string[] | null;
+  /** The API refused a request (a usage limit, a sign-in error): its HTTP status and the CLI's error code. */
+  apiError: { status: number | null; code: string | null } | null;
 }
 
 export interface ClaudeRunOptions {
@@ -550,6 +552,12 @@ export async function loadClaudeMessages(sessionPath: string, options?: { contex
       }
       continue;
     }
+    // The CLI's note of a refused API request ("You've hit your 5-hour limit", model
+    // "<synthetic>") is a failed turn, not a model's answer: it replays as the error it was live.
+    if (record.isApiErrorMessage === true) {
+      if (!options?.contextOnly) messages.push({ id: String(index), role: "error", text: claudeMessageText(record), ...stamp });
+      continue;
+    }
     // A tool result arrives as its own record, so replaying it here keeps the
     // prose around a tool call reading in the order the turn streamed it.
     for (const part of Array.isArray(message.content) ? message.content : []) {
@@ -696,6 +704,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     assistantText: "",
     error: null as string | null,
     tools: null as string[] | null,
+    apiError: null as { status: number | null; code: string | null } | null,
     // Tool calls started and not yet answered, so a run that dies says what it was doing.
     openTools: new Map<string, string>(),
     // Text already streamed via deltas for the in-flight assistant message, so
@@ -729,6 +738,16 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const handleAssistantMessage = (record: UnknownRecord): void => {
     const message = asRecord(record.message);
     const content = Array.isArray(message.content) ? message.content : [];
+    // The CLI writes a refused API request ("You've hit your 5-hour limit") as an assistant
+    // message. It is a failure, not an answer: counting it as output would stop a pool from
+    // handing the turn to another account. A subagent's refusal reaches the turn as a tool result.
+    if (record.is_api_error_message === true && !record.parent_tool_use_id) {
+      state.apiError = { status: typeof record.api_error_status === "number" ? record.api_error_status : null, code: typeof record.error === "string" ? record.error : null };
+      const text = content.map((part) => asRecord(part)).filter((block) => block.type === "text" && typeof block.text === "string").map((block) => String(block.text)).join("\n").trim();
+      state.error = text || `Claude API request failed (${state.apiError.code ?? state.apiError.status ?? "unknown"})`;
+      options.onEvent({ type: "assistantError", error: state.error });
+      return;
+    }
     for (const part of content) {
       const block = asRecord(part);
       if (block.type === "text" && typeof block.text === "string") {
@@ -807,9 +826,11 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     }
     if (record.type === "result") {
       if (record.is_error) {
+        const reported = state.apiError !== null;
+        if (typeof record.api_error_status === "number") state.apiError = { status: record.api_error_status, code: state.apiError?.code ?? null };
         state.error = typeof record.result === "string" && record.result ? record.result
           : typeof record.subtype === "string" && record.subtype ? `Claude run failed (${record.subtype})` : "Claude run failed";
-        if (!state.sawOutput) options.onEvent({ type: "assistantError", error: state.error });
+        if (!state.sawOutput && !reported) options.onEvent({ type: "assistantError", error: state.error });
       }
     }
   };
@@ -829,7 +850,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const done = new Promise<ClaudeRunResult>((resolve) => {
     child.on("error", (error) => {
       options.onEvent({ type: "assistantError", error: `Could not start Claude: ${error.message}` });
-      resolve({ ok: false, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText, tools: state.tools, error: `Could not start Claude: ${error.message}` });
+      resolve({ ok: false, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText, tools: state.tools, error: `Could not start Claude: ${error.message}`, apiError: null });
     });
     child.on("close", (code, signal) => {
       if (state.buffer) handleLine(state.buffer);
@@ -840,7 +861,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
       if (code !== 0 && !state.sawOutput && state.stderr.trim()) {
         options.onEvent({ type: "assistantError", error: state.stderr.trim().slice(0, 2000) });
       }
-      resolve({ ok: code === 0, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText.trim(), tools: state.tools, error: code === 0 ? null : state.error });
+      resolve({ ok: code === 0, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText.trim(), tools: state.tools, error: code === 0 ? null : state.error, apiError: code === 0 ? null : state.apiError });
     });
   });
 

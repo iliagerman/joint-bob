@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.212.4 — 2026-11-05
+
+- Fixed a Claude turn on a subscription pool to move to the next account when the first reaches its usage limit or loses its sign-in, instead of failing. The turn continues from where it stopped and does not replay its prompt.
+- Fixed Claude usage-limit messages ("You've hit your 5-hour limit") to show as errors on reload, not as answers by a model called "<synthetic>".
+- Fixed an update that interrupts a turn to resume it as the account the turn ran as, through that account's pool, instead of the project owner's sign-in.
+- Fixed a twin without its own sign-in to keep using a token it borrowed earlier while the holder is offline, and to require a Claude token that lasts at least two hours before a turn starts. When nothing can be borrowed, the error now says to sign in on this node too.
+
 ## 2.212.3 — 2026-11-04
 
 - Fixed scheduled task model pickers to load the models of the selected execution host, including auto reply, and block saving while that host's models cannot be loaded.

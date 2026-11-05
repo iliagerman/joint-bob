@@ -134,3 +134,34 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/** A refused API request replays as the error it was live, not as an answer by a model called "<synthetic>". */
+test("a reloaded Claude transcript shows a refused API request as an error, never as model context", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "claude-api-error-reload-"));
+  const previous = getSettings();
+  try {
+    const sessions = path.join(root, "claude-projects");
+    updateSettings({
+      runtimes: { ...previous.runtimes, claude: { ...previous.runtimes.claude, sessionPath: sessions } },
+      syncthing: { endpoint: "" },
+    });
+    const transcript = path.join(sessions, "project", "session.jsonl");
+    await mkdir(path.dirname(transcript), { recursive: true });
+    const limit = "You've hit your 5-hour limit · resets 3:10am (Asia/Jerusalem)";
+    await writeFile(transcript, [
+      { type: "user", timestamp: "2026-11-05T00:45:43.724Z", message: { role: "user", content: "keep going" } },
+      // As Claude Code 2.1.318 records it.
+      { type: "assistant", timestamp: "2026-11-05T00:45:45.187Z", perTurnEffort: "medium", error: "rate_limit", isApiErrorMessage: true, apiErrorStatus: 429,
+        message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: limit }] } },
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n");
+    const messages = await loadClaudeMessages(`claude:${transcript}`);
+    assert.deepEqual(messages.map(({ role, text, attribution }) => ({ role, text, attribution })), [
+      { role: "user", text: "keep going", attribution: undefined },
+      { role: "error", text: limit, attribution: undefined },
+    ]);
+    assert.deepEqual((await loadClaudeMessages(`claude:${transcript}`, { contextOnly: true })).map(({ role }) => role), ["user"]);
+  } finally {
+    updateSettings({ runtimes: previous.runtimes, syncthing: { endpoint: previous.syncthing.endpoint } });
+    await rm(root, { recursive: true, force: true });
+  }
+});

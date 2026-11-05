@@ -165,7 +165,7 @@ function render() {
   title.append(heading, el("p", { text: "Sign in to your accounts under Profiles, group them for failover under Pools, and choose which one each conversation uses under Assignments." }));
   const synced = el("span", { className: "profile-badge synced", text: "Synced with your twins" }); synced.prepend(menuIcon("transfer"));
   header.append(icon, title, synced);
-  const about = el("p", { className: "settings-hint", text: "A sign-in stays on the machine where you signed in and never goes through the relay; a twin without its own sign-in borrows short-lived tokens from that machine. A profile shared for automation serves automations only, never human turns." });
+  const about = el("p", { className: "settings-hint", text: "A sign-in stays on the machine where you signed in and never goes through the relay; a twin without its own sign-in borrows short-lived tokens from that machine, so it stops while that machine is offline. Sign in on each machine that runs turns. A profile shared for automation serves automations only, never human turns." });
   for (const name of Object.keys(builders)) sections[name] = builders[name]();
   sections.header = header; sections.about = about;
   showView();
@@ -446,7 +446,7 @@ function statusOf(body) {
   if (body.signedIn) return { kind: "ok", label: "Signed in on this node", detail: "Tokens refresh automatically here." };
   // Twins never borrow a Kiro sign-in, so only this node can sign it in.
   if (body.provider === "kiro" && body.message.startsWith("Sign in on this node")) return { kind: "warn", label: "Not signed in", detail: "Kiro sign-ins stay on this node." };
-  if (body.twin) return { kind: "twin", label: `Using the sign-in on ${body.twin}`, detail: "Turns here borrow short-lived tokens from it." };
+  if (body.twin) return { kind: "twin", label: `Using the sign-in on ${body.twin}`, detail: `Turns here stop while ${body.twin} is offline. Sign in here too so this machine works on its own.` };
   if (body.message.startsWith("Sign in on this node")) return { kind: "warn", label: "Not signed in", detail: `Sign in on this node or on a twin.${body.message.slice("Sign in on this node".length)}` };
   return { kind: "error", label: "Sign-in unavailable", detail: body.message };
 }
