@@ -4,7 +4,7 @@ import { loadHarnesses, loadSessionNodes } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
-import { selectedProject, shortSessionTitle } from "./layout.js";
+import { selectedProject, sessionIsVisible, shortSessionTitle } from "./layout.js";
 import { changeSessionOptimistically } from "./optimistic-sessions.js";
 import { renderProjects } from "./project-list.js";
 import { selectProject } from "./project-selection.js";
@@ -110,8 +110,8 @@ export function schedulePendingReviewsRefresh() {
 }
 
 /**
- * What waits for review, by project. Every count and the inbox dialog read this one list, so
- * the badges, the menu and the dialog cannot disagree. The open project's own conversations
+ * What waits for review, by project. The global inbox includes hidden conversations;
+ * project badges apply the list's visibility settings. The open project's own conversations
  * are live, so they beat the inbox snapshot; mid-switch the list is empty and not yet loaded,
  * so the snapshot still answers for it.
  */
@@ -127,7 +127,7 @@ function pendingReviewGroups() {
 
 /** Reviews pile up in projects you are not looking at, so the row carries the count. */
 export function pendingReviewCountForProject(projectId) {
-  return pendingReviewGroups().find((group) => group.projectId === projectId)?.sessions.length ?? 0;
+  return pendingReviewGroups().find((group) => group.projectId === projectId)?.sessions.filter((session) => sessionIsVisible(session, projectId)).length ?? 0;
 }
 
 function pendingReviewCount() {

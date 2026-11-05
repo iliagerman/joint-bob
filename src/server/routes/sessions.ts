@@ -692,6 +692,8 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
             agentId: session.agentId,
             agentLabel: session.agentLabel,
             updatedAt: session.updatedAt,
+            cronTaskId: session.cronTaskId,
+            doneAt: session.doneAt,
           })),
       };
     }));
@@ -723,6 +725,8 @@ app.get("/api/running", async (_request, response, next) => {
           executionNodeId: session.executionNodeId,
           turnRunning: session.turnRunning,
           backgroundRunning: session.backgroundRunning,
+          cronTaskId: session.cronTaskId,
+          doneAt: session.doneAt,
           running: true,
         })),
       };

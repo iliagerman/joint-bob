@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.213.3 — 2026-11-05
+
+- Fixed project running and pending-review badges counting scheduled or done conversations hidden from the conversation list.
+
 ## 2.213.2 — 2026-11-05
 
 - Fixed the Activity overview refusing long conversations with a size error; it now writes the movie from any conversation length.

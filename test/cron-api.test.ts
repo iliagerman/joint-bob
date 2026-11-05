@@ -100,6 +100,17 @@ test("different schedules run concurrently in isolated conversations that join p
       }
     });
     assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 2, "both isolated agents must start before either finishes");
+    const history = await api<{ sessions: Array<{ id: string; cronTaskId?: string }> }>(node, auth, "GET", `/projects/${base.projectId}/sessions`);
+    const target = history.body.sessions.find(session => session.cronTaskId === tasks[1].id)!;
+    assert.ok(target, "the reviewable scheduled run is listed while running");
+    const done = await api(node, auth, "PUT", `/projects/${base.projectId}/sessions/done`, { sessionId: target.id, engine: "claude", done: true });
+    assert.equal(done.status, 200);
+    type Snapshot = { projects: Array<{ projectId: string; sessions: Array<{ id: string; cronTaskId?: string; doneAt?: string }> }> };
+    const running = await api<Snapshot>(node, auth, "GET", "/running");
+    assert.equal(running.status, 200);
+    const runningTarget = running.body.projects.find(project => project.projectId === base.projectId)!.sessions.find(session => session.id === target.id)!;
+    assert.equal(runningTarget.cronTaskId, tasks[1].id, "running snapshots retain scheduled provenance for project badge visibility");
+    assert.ok(runningTarget.doneAt, "running snapshots retain the done mark for project badge visibility");
     await writeFile(path.join(root, "claude.release"), "");
     await until(async () => {
       const listed = await readTasks();
@@ -110,6 +121,11 @@ test("different schedules run concurrently in isolated conversations that join p
     assert.equal(sessions.body.sessions.find(session => session.cronTaskId === tasks[0].id)?.reviewState, "reviewed", "silent run should not enter review");
     assert.ok(sessions.body.sessions.find(session => session.cronTaskId === tasks[0].id)?.silentReviewUntil, "silent boundary should persist on conversation");
     assert.equal(sessions.body.sessions.find(session => session.cronTaskId === tasks[1].id)?.reviewState, "needs_review", "ordinary run still needs review");
+    const pending = await api<Snapshot>(node, auth, "GET", "/reviews/pending");
+    assert.equal(pending.status, 200);
+    const pendingTarget = pending.body.projects.find(project => project.projectId === base.projectId)!.sessions.find(session => session.id === target.id)!;
+    assert.equal(pendingTarget.cronTaskId, tasks[1].id, "review snapshots retain scheduled provenance for project badge visibility");
+    assert.equal(pendingTarget.doneAt, runningTarget.doneAt, "review snapshots retain the done mark for project badge visibility");
   } finally {
     if (child) await stopDevNode(child);
     await rm(root, { recursive: true, force: true });

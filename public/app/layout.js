@@ -113,11 +113,16 @@ function isDoneConversation(session) {
   return Boolean(session.doneAt);
 }
 
-/** Done conversations are out of sight — and out of the counts — until the reader asks for them. */
-function isVisible(session) {
-  return (state.showDoneConversations || !isDoneConversation(session))
-    && (!session.cronTaskId || (state.showScheduledConversations
-      && state.knownCronTaskIds.has(session.cronTaskId) && !state.hiddenCronTaskIds.has(session.cronTaskId)));
+/** Project lists and badges share visibility, including saved settings for unopened projects. */
+export function sessionIsVisible(session, projectId = state.activeProjectId) {
+  const active = projectId === state.activeProjectId;
+  const visibility = active
+    ? { done: state.showDoneConversations, scheduled: state.showScheduledConversations }
+    : state.projectConversationVisibility[projectId] || {};
+  // Other projects' snapshots already exclude schedules hidden from history on the server.
+  return (visibility.done === true || !isDoneConversation(session))
+    && (!session.cronTaskId || (visibility.scheduled === true
+      && (!active || (state.knownCronTaskIds.has(session.cronTaskId) && !state.hiddenCronTaskIds.has(session.cronTaskId)))));
 }
 
 function matchesClassification(session) {
@@ -132,7 +137,7 @@ function matchesChatFilters(session) {
 }
 
 export function updateChatFilterCounts() {
-  const sessions = state.sessions.filter((session) => matchesClassification(session) && sessionMatchesClusters(session) && isVisible(session));
+  const sessions = state.sessions.filter((session) => matchesClassification(session) && sessionMatchesClusters(session) && sessionIsVisible(session));
   const counts = { all: sessions.length, active: 0, review: 0, done: 0, cron: sessions.filter(session => session.cronTaskId).length };
   for (const session of sessions) counts[sessionChatState(session)] += 1;
   for (const count of elements.chatFilters.querySelectorAll("[data-filter-count]")) {
@@ -143,7 +148,7 @@ export function updateChatFilterCounts() {
 export function filteredSessions() {
   const query = normalizedQuery(elements.sessionSearchInput.value || "");
   return state.sessions.filter((session) => {
-    if (!matchesClassification(session) || !sessionMatchesClusters(session) || !isVisible(session)) return false;
+    if (!matchesClassification(session) || !sessionMatchesClusters(session) || !sessionIsVisible(session)) return false;
     const searchableText = `${shortSessionTitle(session)}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase();
     if (query && !searchableText.includes(query)) return false;
     return matchesChatFilters(session);

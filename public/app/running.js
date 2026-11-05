@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { sessionIsVisible } from "./layout.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { selectProject } from "./project-selection.js";
@@ -69,8 +70,8 @@ function renderRunningEntry(group, entry) {
 }
 
 export function runningCountForProject(projectId) {
-  if (projectId === state.activeProjectId && !state.sessionsLoading) return state.sessions.filter((session) => session.running).length;
-  return runningProjects.find((group) => group.projectId === projectId)?.sessions.length ?? 0;
+  if (projectId === state.activeProjectId && !state.sessionsLoading) return state.sessions.filter((session) => session.running && sessionIsVisible(session, projectId)).length;
+  return runningProjects.find((group) => group.projectId === projectId)?.sessions.filter((session) => sessionIsVisible(session, projectId)).length ?? 0;
 }
 
 function renderRunningBadges() {
