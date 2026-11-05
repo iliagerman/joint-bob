@@ -4,7 +4,7 @@ import { mayReplicateEvent } from "../replication-v2.js";
 import { conversationOfAnotherProject } from "./projects.js";
 import { projectAdditionalPaths } from "../session-scope.js";
 import { randomUUID } from "node:crypto";
-import { lstat, unlink } from "node:fs/promises";
+import { copyFile, lstat, unlink } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
@@ -35,7 +35,7 @@ import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ConversationForkError, forkLocalConversation } from "../conversation-fork.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
 import { broadcastToAllClients, broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
-import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
+import { disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy } from "../harness-sessions.js";
 import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionNtfySchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
 import { stopConversationBackgroundTasks } from "../background-tasks.js";
 import { listProjectSessionsWithReviewState, listReviewScopeSessions, requireLocalConversationOwner, noteUnannouncedRunChanges, sharedProjectSessions } from "../sessions-helpers.js";
@@ -540,6 +540,82 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
   return unavailable;
 }
 
+// Fence before cancelling: a cancelled turn must not dispatch the next queued prompt.
+async function prepareForcedOwnership(project: ProjectRecord, session: SessionSummary, fence: ConversationOwnership): Promise<string> {
+  const current = await getConversationOwnership(session.harnessId, session.id);
+  const local = await getClusterNode();
+  if (!sameConversationOwnership(current, fence)) {
+    if (current && current.epoch >= fence.epoch) throw new TaskWorktreeError("Ownership changed during force transfer; check again");
+    const applied = await compareAndSetConversationOwnership(current, fence, local.id);
+    if (!applied.accepted) throw new TaskWorktreeError("Ownership changed during force transfer; check again");
+  }
+  const live = findHarnessSession(project.id, session.harnessId, session.id);
+  if (live && harnessTurnBusy(live)) await live.session.cancel("Stopped by an explicit force ownership transfer");
+  const record = await getConversationRecord(project.id, session.harnessId, session.id);
+  await stopConversationBackgroundTasks(record?.conversationId ?? session.id);
+  const deadline = Date.now() + 10_000;
+  while (live && harnessSessionBusy(live) && Date.now() < deadline) await delay(50);
+  if (live && harnessSessionBusy(live)) throw new TaskWorktreeError("The running conversation did not stop; ownership remains fenced");
+  const file = getHarness(session.harnessId).paths.transcriptFile?.(session.path);
+  if (!file || session.draft) throw new TaskWorktreeError("A local transcript is required for force transfer");
+  const saved = `${file}.force-transfer-${randomUUID()}.bak`;
+  await copyFile(file, saved);
+  return saved;
+}
+
+app.post(["/api/cluster/sessions/force-prepare", "/api/cluster/v2/runtime/sessions/force-prepare"], async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const { projectId, record } = z.object({ projectId: z.string().min(1), record: ownershipSchema }).parse(request.body);
+    if (record.ownerNodeId !== response.locals.machineNodeId || record.status !== "recovering") { sendError(response, 403, "Force transfer must be fenced by its destination"); return; }
+    const project = await getProject(projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const session = (await listProjectScopeSessions(project)).find(item => item.id === record.sessionId && item.harnessId === record.engine);
+    if (!session) { sendError(response, 404, "Conversation not found"); return; }
+    response.json({ saved: await prepareForcedOwnership(project, session, record) });
+  } catch (error) { next(error); }
+});
+
+async function forceLocalSessionOwnership(project: ProjectRecord, session: SessionSummary, localId: string, peers: ClusterPeer[]) {
+  const unavailable = new Set<string>();
+  // Read every peer, including when this node is already the recorded owner.
+  // The live runner can be a different machine from the recorded owner.
+  await Promise.all(peers.map(async peer => {
+    try {
+      const query = new URLSearchParams({ engine: session.harnessId, sessionId: session.id });
+      const reply = await runtimeFetch(`${peer.url}/api/cluster/sessions/ownership?${query}`, { signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS) });
+      if (!reply.ok) throw new Error(`Cannot check ownership on ${peer.name} (${reply.status})`);
+      const remote = z.object({ ownership: ownershipSchema.nullable() }).parse(await reply.json()).ownership;
+      if (remote) await receiveReplicationBatch({ events: [ownershipEvent(remote, peer.id)] });
+    } catch (error) { if (!peerIsUnreachable(error)) throw error; unavailable.add(peer.id); }
+  }));
+  const expected = await getConversationOwnership(session.harnessId, session.id);
+  if (expected && expected.ownerNodeId !== localId && !peers.some(peer => peer.id === expected.ownerNodeId)) unavailable.add(expected.ownerNodeId);
+  const fence: ConversationOwnership = { engine: session.harnessId, sessionId: session.id, ownerNodeId: localId, epoch: (expected?.epoch ?? 0) + 1, status: "recovering", transferToNodeId: null };
+  const fenced = await compareAndSetConversationOwnership(expected, fence, localId);
+  if (!fenced.accepted) throw new TaskWorktreeError("Ownership changed during force transfer; check again");
+  const saved = await prepareForcedOwnership(project, session, fence);
+  await Promise.all(peers.filter(peer => !unavailable.has(peer.id)).map(async peer => {
+    try {
+      const reply = await runtimeFetch(`${peer.url}/api/cluster/sessions/force-prepare`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: project.id, record: fence }), signal: AbortSignal.timeout(30_000),
+      });
+      if (!reply.ok) throw new Error(`Could not stop and preserve the conversation on ${peer.name} (${reply.status}); ownership remains fenced`);
+    } catch (error) { if (!peerIsUnreachable(error)) throw error; unavailable.add(peer.id); }
+  }));
+  const ownership: ConversationOwnership = { ...fence, epoch: fence.epoch + 1, status: "owned" };
+  const committed = await compareAndSetConversationOwnership(fence, ownership, localId);
+  if (!committed.accepted) throw new TaskWorktreeError("Ownership changed during force transfer; check again");
+  await Promise.all(peers.filter(peer => !unavailable.has(peer.id)).map(async peer => {
+    try {
+      const result = await applyOwnershipToPeer(peer, ownership, localId);
+      if (!result.accepted) throw new Error(`Ownership transferred, but ${peer.name} reports a different owner; check again`);
+    } catch (error) { if (!peerIsUnreachable(error)) throw error; unavailable.add(peer.id); }
+  }));
+  return { sessionPath: session.path, ownership, pendingPeerIds: [...unavailable], saved };
+}
+
 const transferringSessions = new Set<string>();
 
 export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false, signal?: AbortSignal): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[]; saved?: string }> {
@@ -547,15 +623,17 @@ export async function takeLocalSessionOwnership(project: ProjectRecord, payload:
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
+  if (payload.force && matching.draft) throw new TaskWorktreeError("Wait for the conversation transcript to synchronize before forcing ownership");
   await assertDraftTakeoverReady(project, matching, local.id, peers);
   const engine: ConversationEngine = matching.harnessId;
   const sessionId = matching.id;
-  if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
+  if (!payload.force && conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
   const key = `${engine}:${sessionId}`;
   if (transferringSessions.has(key)) throw new TaskWorktreeError("A transfer is already in progress for this conversation");
   transferringSessions.add(key);
   try {
   signal?.throwIfAborted();
+  if (payload.force) return await forceLocalSessionOwnership(project, matching, local.id, peers);
   const unavailable = await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers, requireOnline);
   const expected = await getConversationOwnership(engine, sessionId);
   let saved: string | undefined;

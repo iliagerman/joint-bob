@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.214.0 — 2026-11-05
+
+- Added a confirmed Force ownership transfer button to stop reachable runs and recover stuck ownership, preserving histories and warning about unreachable machines.
+
 ## 2.213.3 — 2026-11-05
 
 - Fixed project running and pending-review badges counting scheduled or done conversations hidden from the conversation list.

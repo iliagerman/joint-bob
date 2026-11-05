@@ -55,6 +55,7 @@ export const elements = {
   conversationLockDetail: document.querySelector("#conversationLockDetail"),
   conversationLockStatus: document.querySelector("#conversationLockStatus"),
   conversationLockTakeButton: document.querySelector("#conversationLockTakeButton"),
+  conversationLockForceButton: document.querySelector("#conversationLockForceButton"),
   doneConversationNotice: document.querySelector("#doneConversationNotice"),
   doneConversationTitle: document.querySelector("#doneConversationTitle"),
   doneConversationDetail: document.querySelector("#doneConversationDetail"),

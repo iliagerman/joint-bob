@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
@@ -29,7 +30,7 @@ async function signedPost(mesh: Mesh, sender: SeededNode, recipient: SeededNode,
 }
 
 /** The takeover a user starts from the conversation on this node. */
-async function takeOwnership(mesh: Mesh, node: SeededNode, body: { sessionId?: string; sessionPath: string }): Promise<{ status: number; body: Record<string, unknown> }> {
+async function takeOwnership(mesh: Mesh, node: SeededNode, body: { sessionId?: string; sessionPath: string; force?: boolean }): Promise<{ status: number; body: Record<string, unknown> }> {
   const session = mesh.sessions.get(node)!;
   return json(await fetch(`${node.url}/api/projects/${mesh.projectId}/sessions/take-ownership`, {
     method: "POST",
@@ -220,6 +221,62 @@ async function exercisePiOwnership(
   assert.equal(invocations[invocations.length - 1], `pi:${source.nodeId}`);
   assert.equal((await readdir(sessionRoot)).some((name) => name.includes(".sync-conflict-")), false);
 }
+
+test("force takeover stops an active owner only after an explicit request", { timeout: 180_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-force-mesh-"));
+  const children: ChildProcess[] = [];
+  const sockets: WebSocket[] = [];
+  try {
+    const environment = await seedDevEnvironment(root, 2);
+    const [source, destination] = environment.nodes;
+    const project = source.projects[0];
+    const transcriptPath = path.join(environment.home, ".pi", "sessions", "force-session.jsonl");
+    const mesh: Mesh = { environment, projectId: project.id, invocationLog: path.join(root, "invocations.log"), holdDir: path.join(root, "engine-holds"), sessions: new Map() };
+    await mkdir(mesh.holdDir);
+    await writeFile(transcriptPath, piTranscript("force-session", project.path));
+    children.push(await startNode(mesh, source), await startNode(mesh, destination));
+    await pairTwinNodes(environment);
+    await Promise.all([browserSession(mesh, source), browserSession(mesh, destination)]);
+    await seedConversationOwnership(mesh, source, transcriptPath);
+    const socket = await openConversation(mesh, source, transcriptPath);
+    sockets.push(socket);
+    let ended = false;
+    socket.on("message", raw => { if (JSON.parse(raw.toString()).type === "agent_end") ended = true; });
+    socket.send(JSON.stringify({ type: "prompt", message: "held turn" }));
+    await waitForInvocation(mesh.invocationLog, `pi:${source.nodeId}`);
+    const before = await readFile(transcriptPath, "utf8");
+    const normal = await takeOwnership(mesh, destination, { sessionPath: transcriptPath });
+    assert.notEqual(normal.status, 200, "normal takeover must not interrupt a turn");
+    // Reproduce the incident: metadata names the destination, but the source is still running.
+    for (const node of environment.nodes) {
+      const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+      try { db.prepare("UPDATE conversation_ownership SET owner_node_id = ?, epoch = epoch + 1 WHERE session_id = ?").run(destination.nodeId, "force-session"); }
+      finally { db.close(); }
+    }
+    const forced = await takeOwnership(mesh, destination, { sessionPath: transcriptPath, force: true });
+    assert.equal(forced.status, 200, JSON.stringify(forced.body));
+    assert.equal((forced.body.ownership as Record<string, unknown>).ownerNodeId, destination.nodeId);
+    assert.deepEqual(forced.body.pendingPeerIds, []);
+    assert.equal(ended, true, "the held turn was cancelled");
+    assert.equal(await readFile(transcriptPath, "utf8"), before, "force never replaces a history");
+    assert.equal(await readFile(String(forced.body.saved), "utf8"), before, "destination history is backed up");
+    assert.equal((await prompt(socket, "stale writer")).type, "error");
+    const spoof = await signedPost(mesh, source, destination, "sessions/force-prepare", {
+      projectId: project.id, record: { ...(forced.body.ownership as object), status: "recovering" },
+    });
+    assert.equal(spoof.status, 403, "a peer cannot claim another destination's force fence");
+    await stopDevNode(children.pop()!);
+    const offline = await takeOwnership(mesh, source, { sessionPath: transcriptPath, force: true });
+    assert.equal(offline.status, 200, JSON.stringify(offline.body));
+    assert.equal((offline.body.ownership as Record<string, unknown>).ownerNodeId, source.nodeId);
+    assert.deepEqual(offline.body.pendingPeerIds, [destination.nodeId]);
+    assert.equal(await readFile(transcriptPath, "utf8"), before);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await Promise.all(children.map(stopDevNode));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("two real servers fence a second writer and preserve takeover across an offline peer and restart", { timeout: 240_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-real-mesh-"));

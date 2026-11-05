@@ -83,6 +83,8 @@ export function renderConversationLock() {
       : `This conversation is owned by ${lock.nodeName}. Open it there to continue \u2014 a ticket conversation stays on its node.`;
   elements.conversationLockTakeButton.hidden = !takeable;
   const transferring = shared.ownershipTaking || Boolean(shared.ownershipWait);
+  elements.conversationLockForceButton.hidden = !takeable;
+  elements.conversationLockForceButton.disabled = transferring;
   elements.conversationLockTakeButton.disabled = !takeable;
   elements.conversationLockTakeButton.textContent = transferring ? "Cancel transfer" : "Take ownership";
   elements.conversationLockTakeButton.title = transferring ? "Cancel this ownership transfer" : takeable ? `Move ownership to this node from ${lock.nodeName}` : "";

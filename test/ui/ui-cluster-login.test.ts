@@ -186,6 +186,24 @@ test("an open remote conversation can switch locally and take ownership", async 
   await nodeSelect.selectOption(mac.nodeId);
   await takeButton.waitFor({ state: "visible", timeout: 30_000 });
   assert.equal(await takeButton.isEnabled(), true, "a completed takeover does not leave the button disabled for the next node switch");
+  const forceButton = homeserverPage.getByTestId("conversation-lock-force-button");
+  assert.equal(await forceButton.isEnabled(), true);
+  const forcedRequests: unknown[] = [];
+  homeserverPage.on("request", request => {
+    if (request.url().endsWith("/sessions/take-ownership") && request.method() === "POST") forcedRequests.push(request.postDataJSON());
+  });
+  await forceButton.click();
+  await homeserverPage.locator("#confirmDialog[open]").waitFor();
+  assert.match(await homeserverPage.locator("#confirmMessage").innerText(), /unreachable machine may keep running/);
+  await homeserverPage.locator("#confirmCancelButton").click();
+  assert.deepEqual(forcedRequests, [], "cancel sends no force request");
+  await waitForOwner("thread-based-agent-builder", homeserver.nodeId);
+  await forceButton.click();
+  await homeserverPage.locator("#confirmAcceptButton").click();
+  await waitForOwner("thread-based-agent-builder", mac.nodeId);
+  await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
+  assert.equal(forcedRequests.length, 1, "one explicit confirmation sends one request");
+  assert.equal((forcedRequests[0] as { force: boolean }).force, true);
 });
 
 test("switching an empty conversation moves ownership without prompting", async () => {
