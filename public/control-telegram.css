@@ -1,0 +1,12 @@
+/* Control center: Telegram, a row in Bob's settings. */
+.control-telegram { display: flex; flex-direction: column; gap: 7px; }
+.control-telegram-head button { flex: none; }
+.control-telegram-form { display: flex; flex-direction: column; gap: 7px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.control-telegram-form input, .control-telegram-form select { width: 100%; min-width: 0; padding: 4px 8px; font-size: 12px; }
+.control-telegram-form button[type="submit"] { align-self: flex-start; }
+.control-telegram-steps { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+.control-telegram-notice, .control-telegram-owner { margin: 0; font-size: 12px; }
+.control-telegram-notice { color: #f2b44b; }
+.control-telegram-link-block { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12px; }
+.control-telegram-link-block a { color: var(--accent); overflow-wrap: anywhere; }
+.control-telegram > button { align-self: flex-start; }

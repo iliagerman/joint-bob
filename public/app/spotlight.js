@@ -21,7 +21,7 @@ const workspaceDestinations = [
   { kind: "destination", title: "Projects window", subtitle: "Workspace window", action: () => setMobileView("projects") },
   { kind: "destination", title: "Conversations window", subtitle: "Workspace window", action: () => setMobileView("sessions") },
   { kind: "destination", title: "Messages window", subtitle: "Current conversation", action: () => setMobileView("chat") },
-  { kind: "destination", title: "Canvas window", subtitle: "Workspace canvas", action: () => setMobileView("canvas") },
+  { kind: "destination", title: "Control center", subtitle: "Every running conversation", action: () => setMobileView("control") },
   { kind: "destination", title: "Recent conversations", subtitle: "Recently opened conversations", action: () => document.querySelector("[data-recent-sessions-open]").click() },
   ...elements.settingsTabs.map((tab) => ({
     kind: "settings",

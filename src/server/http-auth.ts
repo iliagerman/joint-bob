@@ -85,7 +85,7 @@ export function securityHeaders(request: Request, response: Response, next: Next
   // Safari and Chrome refuse every clip ("The operation is not supported").
   response.setHeader("Content-Security-Policy", `default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob:; style-src-elem ${inlineStyle}; style-src-attr ${inlineStyle}; script-src 'self'`);
   response.setHeader("X-Content-Type-Options", "nosniff");
-  // The canvas, assistant automations, assistant sign-in viewer, file dialog and dashboards embed same-origin views. All
+  // Assistant automations, assistant sign-in viewer, file dialog and dashboards embed same-origin views. All
   // other documents stay unframeable (including the separate sandboxed HTML browser mode). A
   // dashboard frame sets its own sandbox policy, which allows no requests at all.
   const filePreview = /^\/api\/projects\/[^/]+\/file$/.test(request.path) && request.query.browser !== "1" && request.query.download !== "1";
@@ -93,7 +93,7 @@ export function securityHeaders(request: Request, response: Response, next: Next
   const assistantAutomation = request.path === "/" && request.query.assistantAutomation === "1"
     && (request.query.assistantAction === "cron" || request.query.assistantAction === "webhook");
   const assistantSignIn = request.path === "/browser.html" && request.query.embedded === "1";
-  response.setHeader("X-Frame-Options", (request.path === "/" && request.query.canvasPane === "1") || assistantAutomation || assistantSignIn || filePreview || dashboardFrame ? "SAMEORIGIN" : "DENY");
+  response.setHeader("X-Frame-Options", assistantAutomation || assistantSignIn || filePreview || dashboardFrame ? "SAMEORIGIN" : "DENY");
   response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   if (request.path.startsWith("/api/")) response.setHeader("Cache-Control", "no-store");

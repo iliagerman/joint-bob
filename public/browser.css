@@ -160,15 +160,8 @@
 /* Modeless on narrow screens. Chat stays mounted and no socket is stopped. */
 body.browser-visible #browserPanel { position: fixed; z-index: 35; inset: 12% 8px calc(var(--nav-height) + 8px); box-shadow: var(--shadow); }
 @media (min-width: 1200px) {
-  body.browser-visible:not(.canvas-pane-mode) .shell { grid-template-columns: var(--col-projects) var(--col-chats) minmax(220px, 1fr) minmax(320px, 1.15fr); }
+  body.browser-visible .shell { grid-template-columns: var(--col-projects) var(--col-chats) minmax(220px, 1fr) minmax(320px, 1.15fr); }
   body.browser-visible #browserPanel { position: static; box-shadow: none; height: 100%; }
-}
-/* A canvas iframe has its own conversation state and its own modeless viewer. */
-body.canvas-pane-mode.browser-visible .shell { display: grid; grid-template-rows: minmax(220px, 45%) minmax(0, 1fr); gap: 4px; }
-body.canvas-pane-mode.browser-visible #chatPanel { height: auto; min-height: 0; }
-body.canvas-pane-mode.browser-visible #browserPanel { position: static; height: 100%; box-shadow: none; border-radius: 0; }
-@media (min-width: 1100px) {
-  body.canvas-pane-mode.browser-visible .shell { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 }
 @container (max-width: 600px) {
   .browser-heading { padding: 10px; }

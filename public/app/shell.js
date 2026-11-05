@@ -175,7 +175,6 @@ export async function enableNotifications() {
 // Conversations enter review in every project, not only the open one, so a device subscribes once
 // for all of them and stays subscribed before any project is selected.
 export async function subscribeToPush() {
-  if (state.canvasPaneMode) return;
   if (!state.notificationsEnabled || !notificationPermissionGranted()) return;
   const registration = await navigator.serviceWorker.ready;
   const existing = await registration.pushManager.getSubscription();

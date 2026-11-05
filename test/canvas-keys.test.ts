@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { canonicalCanvasKeyToken, CANVAS_KEY_TOKENS } from "../src/canvas-keys.ts";
-import { canonicalCanvasKey } from "../public/canvas-layout.js";
+import { canonicalCanvasKey } from "../public/keymap.js";
 
 // The browser and the node each hold their own copy of the vocabulary: one is an ES
 // module the page loads, the other is TypeScript the server compiles. A key the page

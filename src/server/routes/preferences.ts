@@ -10,11 +10,10 @@ import { z } from "zod";
 import { syncLocalSkills } from "../../agent-resources.js";
 import { listAuditEvents } from "../../audit.js";
 import type { AuthSession } from "../../auth.js";
-import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "../../canvas-shortcuts.js";
 import { getClusterNode } from "../../cluster.js";
 import { clearHarnessSessionCache, harnessForSessionPath, listHarnessSessions } from "../../harnesses.js";
 import { ensureManagedHome } from "../../managed-home.js";
-import { getUserPreferences, normalizeCanvasKeymapPreference, normalizeCanvasLayoutPreference, readLegacyRecentSessions, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
+import { getUserPreferences, normalizeCanvasKeymapPreference, readLegacyRecentSessions, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
 import { listUserRecentSessions, migrateLegacyRecentSessions, removeUserRecentSession, setUserRecentSession, type SyncedRecentSession } from "../../recent-sessions.js";
 import { checkRuntimeSettings, getProjectResourcePaths, getRuntimeDefaults, getSettings, updateProjectResourcePaths, updateSettings } from "../../settings.js";
 import { getProject, listWorkspaces } from "../../store.js";
@@ -121,127 +120,13 @@ app.put("/api/pins", async (request, response, next) => {
   }
 });
 
-/* Canvas keyboard bindings belong to the account, not the node, so every route keys
-   on the signed-in username and the store replicates the change to the cluster. */
-const canvasShortcutTargetSchema = z.object({
-  projectId: z.string().trim().min(1).max(120),
-  engine: registeredHarnessIdSchema,
-  sessionId: z.string().trim().min(1).max(200),
-}).strict();
-
-app.get("/api/canvas/shortcuts", (_request, response) => {
-  const session = response.locals.authSession as AuthSession;
-  response.json({ shortcuts: listCanvasShortcuts(session.accountId) });
-});
-
-app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
-  try {
-    const session = response.locals.authSession as AuthSession;
-    const target = canvasShortcutTargetSchema.parse(request.body);
-    const local = await getClusterNode();
-    const shortcuts = setCanvasShortcut(session.accountId, request.params.binding, target, local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
-    response.json({ shortcuts });
-  } catch (error) {
-    if (error instanceof Error && /canvas binding/i.test(error.message)) {
-      sendError(response, 400, error.message);
-      return;
-    }
-    next(error);
-  }
-});
-
-/* Closing a conversation releases the key it holds right now. Deleting the binding the
-   page last saw would take a key another node has since moved to a different pane. */
-app.post("/api/canvas/shortcuts/release", async (request, response, next) => {
-  try {
-    const session = response.locals.authSession as AuthSession;
-    const target = canvasShortcutTargetSchema.parse(request.body);
-    const local = await getClusterNode();
-    const shortcuts = releaseCanvasShortcuts(session.accountId, [target], local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
-    response.json({ shortcuts });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.delete("/api/canvas/shortcuts/:binding", async (request, response, next) => {
-  try {
-    const session = response.locals.authSession as AuthSession;
-    const local = await getClusterNode();
-    const shortcuts = clearCanvasShortcut(session.accountId, request.params.binding, local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
-    response.json({ shortcuts });
-  } catch (error) {
-    if (error instanceof Error && /canvas binding/i.test(error.message)) {
-      sendError(response, 400, error.message);
-      return;
-    }
-    next(error);
-  }
-});
-
-/** Iterative bound checked before the recursive Zod schema, so a pathologically
- * nested layout is rejected as a 400 instead of exhausting the parse stack. */
-function canvasLayoutExceedsLimits(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  const layout = value as { root?: unknown; rows?: unknown; pages?: unknown };
-  if (Array.isArray(layout.pages)) {
-    if (layout.pages.length > 9) return true;
-    let nodes = 0;
-    for (const page of layout.pages) {
-      if (!page || typeof page !== "object") return true;
-      const root = (page as { root?: unknown }).root;
-      const stack: Array<[unknown, number]> = root ? [[root, 0]] : [];
-      let pagePanes = 0;
-      while (stack.length) {
-        const [node, depth] = stack.pop()!;
-        if (!node || typeof node !== "object") continue;
-        if (++nodes > 160 || depth > 8) return true;
-        const item = node as { kind?: unknown; first?: unknown; second?: unknown };
-        if (item.kind === "pane" && ++pagePanes > 8) return true;
-        stack.push([item.first, depth + 1], [item.second, depth + 1]);
-      }
-    }
-  }
-  if (Array.isArray(layout.rows)) {
-    if (layout.rows.length > 10) return true;
-    // 10 rows x 8 panes bounds a row payload; anything beyond is malformed.
-    const oversizedRow = layout.rows.some((row) => !row || typeof row !== "object"
-      || !Array.isArray((row as { panes?: unknown }).panes) || (row as { panes: unknown[] }).panes.length > 8);
-    if (oversizedRow) return true;
-  }
-  // Inspect a root even when a malicious payload also supplies rows; otherwise
-  // the extra property could bypass this iterative guard before Zod sees it.
-  const root = layout.root;
-  if (!root || typeof root !== "object") return false;
-  const stack: Array<[unknown, number]> = [[root, 0]];
-  let nodes = 0;
-  while (stack.length) {
-    const [node, depth] = stack.pop()!;
-    if (!node || typeof node !== "object") continue;
-    if (++nodes > 80 || depth > 8) return true;
-    // Descend regardless of kind: a malformed kind must not reach the recursive
-    // schema parser and blow the stack before validation can reject it.
-    const item = node as { first?: unknown; second?: unknown };
-    stack.push([item.first, depth + 1], [item.second, depth + 1]);
-  }
-  return false;
-}
-
 app.put("/api/preferences", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
-    if (canvasLayoutExceedsLimits((request.body as { canvasLayout?: unknown }).canvasLayout)) {
-      sendError(response, 400, "Canvas layout is too large or too deep");
-      return;
-    }
     const parsed = userPreferencesSchema.parse(request.body);
-    const { canvasLayout, canvasKeymap, ...preferences } = parsed;
+    const { canvasLayout: _removedCanvasLayout, canvasKeymap, ...preferences } = parsed;
     const update: Partial<UserPreferences> = preferences;
     if (canvasKeymap) update.canvasKeymap = normalizeCanvasKeymapPreference(canvasKeymap);
-    if (canvasLayout) update.canvasLayout = normalizeCanvasLayoutPreference(canvasLayout);
     // A visitor's travelling preferences (theme, sounds, keymap…) change at home first.
     if (session.isRemoteLogin) {
       const current = getUserPreferences(session.userId) as unknown as Record<string, unknown>;

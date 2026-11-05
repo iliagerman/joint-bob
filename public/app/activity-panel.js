@@ -92,7 +92,7 @@ resizeHandle.addEventListener("keydown", (event) => {
 
 function storedOpen() {
   if (chosenOpen !== null) return chosenOpen;
-  return window.innerWidth >= 1280 && !document.body.classList.contains("canvas-pane-mode");
+  return window.innerWidth >= 1280;
 }
 
 export function activityPanelOpen() {

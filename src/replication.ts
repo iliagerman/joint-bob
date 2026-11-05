@@ -5,11 +5,11 @@ import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { applyConversationOwnershipEvent, ensureConversationOwnershipSchema } from "./conversation-ownership.js";
-import { applyCanvasShortcutEvent, ensureCanvasShortcutSchema } from "./canvas-shortcuts.js";
 import { applyGlobalInstructionsEvent, ensureGlobalInstructionsSchema } from "./global-instructions.js";
 import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } from "./conversation-reviews.js";
 import { applyConversationNotificationDeliveredEvent, applyConversationNotificationEvent, ensureConversationNotificationSchema } from "./conversation-notifications.js";
 import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
+import { applyMemoryEvent } from "./control-center/memory-sync.js";
 import { applyConversationGoalEvent, ensureConversationGoalSchema } from "./conversation-goals.js";
 import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
 import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
@@ -35,7 +35,7 @@ export interface ReplicationEvent {
   createdAt: string;
 }
 export interface ReplicationBatch { events: ReplicationEvent[]; }
-export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "shortcutsChanged" | "pinsChanged" | "recentsChanged" | "instructionsChanged";
+export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "pinsChanged" | "recentsChanged" | "instructionsChanged";
 interface OutboxRow { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string; }
 interface NamePayload { scope: "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
 interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
@@ -86,7 +86,7 @@ function ensureProjectLockSchema(db: DatabaseSync): void {
 
 async function replicationDatabase(): Promise<DatabaseSync> {
   if (databasePromise) return databasePromise;
-  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationNotificationSchema(db); ensureConversationGoalSchema(db); ensureCanvasShortcutSchema(db); ensureGlobalInstructionsSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); ensureRoutingPolicySchema(db); ensureUsageSchema(db); return db; })();
+  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationNotificationSchema(db); ensureConversationGoalSchema(db); db.exec("DROP TABLE IF EXISTS canvas_shortcuts; DROP TABLE IF EXISTS canvas_shortcut_binding_marks; DROP TABLE IF EXISTS canvas_shortcut_conversation_marks; DROP TABLE IF EXISTS canvas_shortcut_clock;"); ensureGlobalInstructionsSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); ensureRoutingPolicySchema(db); ensureUsageSchema(db); return db; })();
   return databasePromise;
 }
 
@@ -104,7 +104,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   const payload = event.payload as Record<string, unknown> | null | undefined;
   if (!payload || typeof payload !== "object") return undefined;
   if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
-  if (!["task", "story", "project.lock", "conversation.record", "conversation.author", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
+  if (!["task", "story", "project.lock", "conversation.record", "conversation.author", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "control.memory", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
@@ -270,7 +270,6 @@ export function replicationInvalidations(events: ReplicationEvent[]): Replicatio
   if (entityTypes.has("name.override") || entityTypes.has("project.lock") || entityTypes.has("model.usage") || entityTypes.has("usage.difficulty")) invalidations.add("projectsChanged");
   if (["name.override", "task", "conversation.ownership", "conversation.record", "conversation.queue", "conversation.goal", "conversation.review", "conversation.notification", "model.usage", "usage.difficulty"].some((type) => entityTypes.has(type))) invalidations.add("sessionsChanged");
   if (entityTypes.has("task")) invalidations.add("tasksChanged");
-  if (entityTypes.has("canvas.shortcut")) invalidations.add("shortcutsChanged");
   if (entityTypes.has("user.pin")) invalidations.add("pinsChanged");
   if (entityTypes.has("user.recent")) invalidations.add("recentsChanged");
   if (entityTypes.has("instructions.global")) invalidations.add("instructionsChanged");
@@ -403,8 +402,10 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "conversation.notification.delivered": applyConversationNotificationDeliveredEvent,
   "conversation.goal": applyConversationGoalEvent,
   "conversation.author": applyMessageAuthorEvent,
-  "canvas.shortcut": applyCanvasShortcutEvent,
+  // The canvas and its conversation shortcuts are gone; machines that still run an older version keep sending these.
+  "canvas.shortcut": () => undefined,
   "instructions.global": applyGlobalInstructionsEvent,
+  "control.memory": applyMemoryEvent,
   "user.pin": applyUserPinEvent,
   "user.recent": applyUserRecentSessionEvent,
   "model.usage": applyUsageEvent,

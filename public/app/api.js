@@ -125,6 +125,5 @@ export function savePin(target, pinned) {
 }
 
 export function savePreferencesInBackground(partial) {
-  if (state.canvasPaneMode) return;
   void savePreferences(partial).catch((error) => console.warn("Could not save preferences", error));
 }

@@ -1,0 +1,29 @@
+/* Control center: the Dashboards tab and the dashboard shown over the board. */
+.control-dash { padding: 12px 14px; gap: 10px; overflow: auto; }
+.control-dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.control-dash-head > div { flex: 1 1 140px; min-width: 0; }
+.control-dash-head h2 { margin: 0; font-size: 15px; }
+.control-dash-head .control-hint { margin-top: 2px; }
+.control-dash-list { flex: 1; min-height: 150px; overflow: hidden; display: flex; flex-direction: column; gap: 10px; }
+.control-dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.control-dash-card { height: 132px; box-sizing: border-box; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; min-width: 0; overflow: hidden; }
+.control-dash-card:hover, .control-dash-card:focus-visible { border-color: var(--line-strong); }
+.control-dash-card .control-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.control-dash-card .control-badge.bob { color: var(--accent); }
+.control-dash-card .control-badge.you, .control-dash-card .control-badge.shared { color: var(--muted); }
+.control-dash-card[data-status="draft"] { border-style: dashed; }
+.control-dash-state { display: flex; align-items: center; gap: 7px; font-size: 12px; background: var(--field); border-radius: 7px; padding: 6px 8px; min-height: 18px; }
+.control-dash-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding-top: 2px; }
+.control-dash-pager[hidden] { display: none; }
+
+#controlDashboardDialog .dashboard-card {
+  display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px;
+  width: min(1200px, calc(100vw - 24px)); height: min(820px, calc(100dvh - 24px)); max-width: none; max-height: none;
+  margin: auto; padding: 14px 18px 16px; overflow: hidden; background: var(--panel);
+}
+.control-dash-viewer-body { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.control-dash-viewer-body .dashboard-view-stage { flex: 1; min-height: 0; overflow: hidden; }
+.control-dash-ask { display: grid; gap: 6px; }
+.control-dash-ask[hidden] { display: none; }
+.control-dash-ask textarea { width: 100%; resize: vertical; }
+.control-dash-ask-actions { display: flex; justify-content: flex-end; gap: 6px; }

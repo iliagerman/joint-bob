@@ -1,0 +1,101 @@
+/* Control center: phone. Bob's chat fills the screen; the board and its tabs are not shown as columns (public/app/control-phone.js adds the strip, the sheet and the way back). Nothing here applies above 1023px. */
+.phone-back, .phone-strip, .phone-agent, .phone-sheet, .phone-view-bar { display: none; }
+.phone-waiting[hidden] { display: none; }
+.app-menu-panel .phone-waiting { position: static; display: inline-grid; margin-left: 8px; vertical-align: middle; }
+.focus-more .phone-waiting { top: 3px; right: 3px; min-width: 18px; height: 18px; border: 0; font-size: 10px; }
+
+@media (max-width: 1023px) {
+  body.view-control #controlCenterPanel { display: flex; position: relative; }
+  #controlCenterPanel > .panel-bar, #controlCenterPanel > .control-tabs { display: none; }
+  #controlCenterMain { position: relative; display: block; min-width: 0; }
+  #controlCenterMain > .control-chat { position: absolute; inset: 0; width: auto; border: 0; }
+  .control-chat-resize, #controlChatSide { display: none; }
+
+  /* The other tabs: only the chosen one, over the chat, with the way back. */
+  .control-stage { display: none; }
+  body.control-phone-view .control-stage { display: flex; position: absolute; inset: 0; z-index: 6; background: var(--panel); }
+  .phone-view-bar { display: flex; align-items: center; gap: 8px; flex: none; padding: calc(6px + env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px)); border-bottom: 1px solid var(--line); background: var(--header); }
+  body:not(.focus-ui) .phone-view-bar { padding-right: 56px; }
+  .phone-view-bar b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Header: Bob and his state, the bell (added by the triggers feature) and the settings. */
+  .control-chat-head { min-height: 52px; gap: 6px; padding: calc(8px + env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 8px max(12px, env(safe-area-inset-left, 0px)); }
+  body:not(.focus-ui) .control-chat-head { padding-right: 56px; }
+  .control-chat-head > div { flex: 1 1 auto; min-width: 0; }
+  .control-chat-head small { display: none; }
+  .control-chat-head > button { flex: none; }
+  .phone-back { display: inline-grid; place-items: center; width: 34px; min-width: 34px; padding: 0; font-size: 24px; line-height: 1; }
+  #controlChatMonitor { display: inline-flex; align-items: center; gap: 6px; border-color: var(--line-strong); border-radius: 999px; }
+  #controlChatMonitor::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
+  #controlChatMonitor.paused::before { background: #f2b44b; }
+
+  /* The strip wraps instead of scrolling sideways. */
+  .phone-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px max(12px, env(safe-area-inset-right, 0px)) 8px max(12px, env(safe-area-inset-left, 0px)); border-bottom: 1px solid var(--line); }
+  .phone-chip { display: inline-flex; align-items: center; min-height: 32px; max-width: 100%; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; white-space: nowrap; }
+  .phone-chip[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
+  .phone-chip.ok { border-color: transparent; background: color-mix(in srgb, var(--danger) 82%, #000); color: #fff; font-weight: 600; }
+  .phone-chip.you { border-color: transparent; background: #f2b44b; color: #1a1205; font-weight: 600; }
+
+  .control-chat-settings { flex: none; max-height: min(60dvh, 440px); overflow-y: auto; }
+  .control-chat-settings input[type="checkbox"] { flex: none; width: 18px; height: 18px; min-height: 0; padding: 0; }
+  .control-chat-filters { flex-wrap: nowrap; padding: 6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px)); }
+  .control-chat-filters select { flex: 1 1 0; min-width: 0; min-height: 30px; }
+  .control-chat-filters .control-chip { flex: none; min-height: 30px; padding: 0 10px; font-size: 12px; }
+  /* A phone on its side has no height to spare for filters. */
+  @media (max-height: 520px) { .control-chat-filters { display: none; } }
+
+  /* Messages: approvals and questions are cards in the timeline, with buttons a thumb can hit. */
+  .control-chat-messages { padding: 10px max(12px, env(safe-area-inset-right, 0px)) 10px max(12px, env(safe-area-inset-left, 0px)); font-size: 14px; }
+  .control-entry { min-width: 0; }
+  .control-msg { max-width: 94%; }
+  .control-action { min-height: 36px; padding: 0 14px; font-size: 13px; }
+  .control-actions { gap: 8px; }
+  .control-entry[data-importance="needs-ok"], .control-entry[data-importance="needs-you"] { padding: 8px 10px; border: 1px solid; border-radius: 12px; }
+  .control-entry[data-importance="needs-ok"] { border-color: color-mix(in srgb, #ef6b6b 55%, transparent); background: color-mix(in srgb, #ef6b6b 6%, var(--panel)); }
+  .control-entry[data-importance="needs-you"] { border-color: color-mix(in srgb, #f2b44b 55%, transparent); background: color-mix(in srgb, #f2b44b 6%, var(--panel)); }
+  .control-entry[data-importance="needs-ok"] .control-msg, .control-entry[data-importance="needs-you"] .control-msg { max-width: 100%; padding: 0; border: 0; background: none; }
+
+  /* Composer: project and agent chips above the message box, a round send button. */
+  .control-chat-form { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; padding: 8px max(12px, env(safe-area-inset-right, 0px)) 10px max(12px, env(safe-area-inset-left, 0px)); }
+  body.focus-ui .control-chat-form { padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)); }
+  .control-chat-project { grid-column: 1; font-size: 0; }
+  .control-chat-project select { width: auto; max-width: 150px; min-height: 32px; padding: 0 28px 0 12px; border-radius: 999px; font-size: 12.5px; }
+  .phone-agent { grid-column: 2; display: block; justify-self: start; overflow: hidden; text-overflow: ellipsis; line-height: 30px; }
+  .control-chat-box { grid-column: 1 / -1; align-items: center; }
+  .control-chat-box textarea { height: 46px; min-height: 46px; padding: 10px 16px; border-radius: 23px; }
+  .control-chat-box .primary { flex: none; display: grid; place-items: center; width: 46px; min-height: 46px; height: 46px; padding: 0; border-radius: 50%; border-color: transparent; background: var(--accent); color: var(--on-ink); font-size: 0; }
+  .control-chat-box .primary::before { content: "↑"; font-size: 22px; font-weight: 700; line-height: 1; }
+
+  /* The agents sheet: a compact bottom sheet over the chat; a row is an agent and its one action. */
+  .phone-sheet:not([hidden]) { display: flex; }
+  .phone-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; flex-direction: column; padding: 8px max(12px, env(safe-area-inset-right, 0px)) 12px max(12px, env(safe-area-inset-left, 0px)); border-top: 1px solid var(--line-strong); border-radius: 18px 18px 0 0; background: var(--header); box-shadow: 0 -10px 30px rgb(0 0 0 / 0.25); }
+  body.focus-ui .phone-sheet { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
+  .phone-grab { align-self: center; width: 40px; height: 4px; margin-bottom: 4px; border-radius: 2px; background: var(--line-strong); }
+  .phone-sheet-head { display: flex; align-items: center; justify-content: space-between; }
+  .phone-sheet-list { min-width: 0; overflow: hidden; }
+  .phone-heading { padding: 8px 2px 4px; color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .phone-heading b { color: var(--text); }
+  .phone-heading.ok b { color: #ff9d9d; }
+  .phone-heading.you b { color: #f2b44b; }
+  .phone-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 2px; border-top: 1px solid var(--line); }
+  .phone-row::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #4a4f57; }
+  .phone-row.ok::before { background: #ef6b6b; }
+  .phone-row.you::before { background: #f2b44b; }
+  .phone-row.running::before { background: var(--accent); }
+  .phone-row.review::before { background: #7b8cff; }
+  .phone-row-text { flex: 1 1 0; min-width: 0; }
+  .phone-row-text b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .phone-row-text small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .phone-row.ok .phone-row-text small { -webkit-line-clamp: 3; font-family: var(--mono); font-size: 11.5px; }
+  .phone-row-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 58%; }
+  .phone-action { min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; white-space: nowrap; }
+  .phone-action.warn { border-color: transparent; background: #f2b44b; color: #1a1205; font-weight: 600; }
+  .phone-action:disabled { opacity: 0.5; }
+  .phone-pager { display: flex; align-items: center; justify-content: center; gap: 8px; padding-top: 6px; color: var(--muted); font-size: 11px; }
+  .phone-pager[hidden] { display: none; }
+  .phone-empty { margin: 8px 2px; color: var(--muted); }
+
+  /* The Focus menu's round handle sits above the composer, not on the send button. */
+  body.view-control #focusControlsButton { bottom: 156px; }
+  body.control-phone-sheet #focusControlsButton { display: none; }
+}

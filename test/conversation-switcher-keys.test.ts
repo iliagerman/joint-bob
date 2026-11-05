@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isSwitcherKey, isSwitcherNavigationCode, switcherHeld, switcherStep } from "../public/canvas-layout.js";
+import { isSwitcherKey, isSwitcherNavigationCode, switcherHeld, switcherStep } from "../public/keymap.js";
 
 const event = (code: string, modifiers: Record<string, boolean> = {}) => ({
   code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...modifiers,

@@ -54,6 +54,7 @@ import { claimConversationLocally, describeConversationOwner, type ForeignConver
 import { flags } from "./state.js";
 import { measureOperation } from "./performance-diagnostics.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
+import { autoRespondHeldBack } from "./control-center-watch.js";
 import { cancelGuardianReviews, decideGuardianReview, onGuardianEvent, pendingGuardianReviews } from "../guardian/reviews.js";
 import { conversationLiveModel, requestDigestQuietly, summaryPolicyNow, summaryPolicyView } from "./conversation-digest-runner.js";
 import { storedDigest } from "../conversation-digest.js";
@@ -743,6 +744,7 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
   const projectId = connection.project.id;
   const state = await getAutoRespond(projectId, connection.conversationId);
   if (state?.status !== "active") return false;
+  if (await autoRespondHeldBack(state)) return false;
   if (state.retry && Date.parse(state.retry.nextAt) > Date.now()) { armAutoRetry(connection, state); return false; }
   const shared = connection.shared;
   if (harnessSessionBusy(shared) || listQueuedPrompts(queueKey(connection)).some(prompt => !deferredAutoPrompt(prompt, state))) return false;

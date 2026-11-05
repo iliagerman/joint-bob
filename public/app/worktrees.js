@@ -23,7 +23,7 @@ function worktreesUrl(projectId, suffix = "") {
 
 export async function loadWorktrees() {
   const projectId = state.activeProjectId;
-  if (!projectId || state.canvasPaneMode) return;
+  if (!projectId) return;
   const generation = ++loadGeneration;
   // Listing must stay fast even when checking finished worktrees takes seconds.
   const { worktrees: listed } = await api(worktreesUrl(projectId));

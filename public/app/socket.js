@@ -745,8 +745,8 @@ const INVALIDATION_HANDLERS = {
   instructionsChanged: () => document.dispatchEvent(new Event("instructions-changed")),
   projectsChanged: () => refreshProjectsQuietly(),
   pinsChanged: () => loadPins().catch((error) => console.warn(error)),
+  controlCenterChanged: () => window.dispatchEvent(new CustomEvent("control-center-changed")),
   recentsChanged: () => loadRecentSessions().catch((error) => console.warn(error)),
-  shortcutsChanged: () => state.canvasController?.reloadShortcuts(),
   tasksChanged: () => loadTasks().catch((error) => console.warn(error)),
   worktreesChanged: () => loadWorktrees().catch((error) => console.warn(error)),
   profileChanged: () => reloadTravellingPreferences().catch((error) => console.warn(error)),
@@ -764,8 +764,6 @@ let sessionsRefreshPending = false;
 let sessionsRefreshPromise;
 
 export async function refreshSessionsQuietly() {
-  // The pane frame hosts one conversation; parent-shell list polling stays off.
-  if (state.canvasPaneMode) return;
   const projectId = state.activeProjectId;
   if (!projectId) return;
   if (state.sessionsRefreshing) { sessionsRefreshPending = true; return sessionsRefreshPromise; }
@@ -846,9 +844,6 @@ export function closeWatchSocket() {
 }
 
 export function ensureWatchSocket() {
-  // One watch socket per tab; a pane frame's tab is the canvas parent's document,
-  // and panes never render the lists the watch socket feeds.
-  if (state.canvasPaneMode) return;
   if (!state.activeProjectId) {
     closeWatchSocket();
     return;

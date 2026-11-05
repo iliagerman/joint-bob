@@ -19,6 +19,15 @@
     <link rel="stylesheet" href="/browser.css" />
     <link rel="stylesheet" href="/focus.css" />
     <link rel="stylesheet" href="/dashboards.css" />
+    <link rel="stylesheet" href="/control-center.css" />
+    <link rel="stylesheet" href="/control-automations.css" />
+    <link rel="stylesheet" href="/control-dashboards.css" />
+    <link rel="stylesheet" href="/control-memory.css" />
+    <link rel="stylesheet" href="/control-triggers.css" />
+    <link rel="stylesheet" href="/control-assistants.css" />
+    <link rel="stylesheet" href="/control-moves.css" />
+    <link rel="stylesheet" href="/control-phone.css" />
+    <link rel="stylesheet" href="/control-clusters.css" />
     <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css" />
     <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css" />
     <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
@@ -113,7 +122,7 @@
           <button class="ghost icon-button" id="projectNotesButton" type="button" data-notes-open aria-label="Project notes" title="Project notes" data-shortcut-hint="toggleNotes" data-testid="projects-open-notes-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M15 3.5v3h3M9 11h6M9 15h6"/></svg></button>
           <button class="ghost icon-button" id="projectBoardButton" type="button" aria-label="Project board" title="Project board" data-testid="projects-open-board-button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></button>
           <a class="ghost icon-button" id="openAssistantsButton" href="/assistant.html" aria-label="Switch to assistants" title="Assistants" data-testid="projects-open-assistants-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3"/><path d="M4.5 9a3 3 0 0 1 3-3h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3z"/><path d="M8.5 12h.01M15.5 12h.01M9 16h6"/></svg></a>
-          <button class="ghost icon-button" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas" data-shortcut-hint="toggleView" data-testid="projects-open-canvas-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg></button>
+          <button class="ghost icon-button" id="openControlCenterButton" type="button" aria-label="Open the control center" title="Control center" data-shortcut-hint="toggleView" data-testid="projects-open-control-center-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.6M12 17.9v2.6M3.5 12h2.6M17.9 12h2.6"/></svg></button>
           <button class="ghost icon-button usage-open" type="button" data-usage-open data-shortcut-hint="costs" data-testid="usage-open" aria-label="Costs" title="Costs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg><kbd class="shortcut-hint" aria-hidden="true"></kbd></button>
           <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-shortcut-hint="settings" data-testid="settings-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -229,43 +238,80 @@
         <div class="board-columns" id="boardColumns"></div>
       </section>
 
-      <section class="panel view-panel canvas" id="canvasPanel" aria-label="Canvas">
+      <section class="panel view-panel control-center" id="controlCenterPanel" aria-label="Control center">
         <header class="panel-bar">
-          <button class="ghost icon-button back-button" id="canvasBackButton" type="button" aria-label="Back to conversations" data-testid="canvas-back-button">‹</button>
           <div class="panel-title">
-            <h1>Canvas</h1>
-            <p>Existing conversations, side by side</p>
+            <h1>Control center</h1>
+            <p class="control-count" id="controlCenterCount" data-testid="control-center-count"></p>
           </div>
-          <button class="ghost compact" id="canvasFinderButton" data-shortcut-hint="paneSearch" type="button" title="Search the conversations on the canvas" data-testid="canvas-finder-button">Find</button>
-          <button class="ghost compact" id="canvasKeymapButton" type="button" title="Configure canvas keyboard shortcuts" data-testid="canvas-keymap-button">Shortcuts</button>
-          <button class="ghost compact" id="canvasOrganizeButton" type="button" title="Lay every conversation out as an even grid" data-testid="canvas-organize-button">Organize</button>
-          <button class="primary compact" id="canvasAddButton" type="button" data-testid="canvas-add-button">+ Add conversation</button>
+          <button class="ghost compact" id="controlCenterRefresh" type="button" data-testid="control-center-refresh">Refresh</button>
+          <button class="ghost compact" id="controlCenterCloseButton" type="button" title="Back to your workspace (Esc)" data-testid="control-center-close-button">Exit <kbd>Esc</kbd></button>
         </header>
-        <div class="canvas-page-strip" aria-label="Canvas pages">
-          <div id="canvasPageTabs" role="tablist" data-testid="canvas-page-tabs"></div>
-          <button class="ghost compact" id="canvasPageMoveLeftButton" type="button" aria-label="Move page left" data-testid="canvas-page-move-left-button">←</button>
-          <button class="ghost compact" id="canvasPageMoveRightButton" type="button" aria-label="Move page right" data-testid="canvas-page-move-right-button">→</button>
-          <button class="ghost compact" id="canvasPageAddButton" data-shortcut-hint="createPage" type="button" aria-label="Create page" data-testid="canvas-page-add-button">+ Page</button>
-          <button class="ghost compact danger" id="canvasPageDeleteButton" type="button" aria-label="Delete page" data-testid="canvas-page-delete-button">Delete</button>
+        <nav class="control-tabs" id="controlTabs" role="tablist" aria-label="Control center views" data-testid="control-center-tabs"></nav>
+        <div class="control-main" id="controlCenterMain">
+          <div class="control-stage" id="controlViews">
+            <section class="control-view" id="controlViewLive" data-view="live" role="tabpanel">
+              <div class="control-bar">
+                <div class="control-filters" id="controlCenterFilters" aria-label="Filter by project" data-testid="control-center-filters"></div>
+                <div class="control-layout" id="controlCenterLayout" aria-label="Layout">
+                  <button type="button" data-layout="grouped" data-testid="control-center-layout-grouped">Grouped</button>
+                  <button type="button" data-layout="free" data-testid="control-center-layout-free">Free</button>
+                </div>
+                <button class="ghost compact" id="controlCenterReset" type="button" title="Back to the default arrangement, colors and filters" data-testid="control-center-reset">Reset layout</button>
+              </div>
+              <div class="control-board" id="controlCenterBoard" data-testid="control-center-board"></div>
+            </section>
+          </div>
+          <aside class="control-chat" id="controlChat" aria-label="Bob" data-testid="control-chat">
+            <div class="control-chat-resize" id="controlChatResize" title="Drag to resize" data-testid="control-chat-resize"></div>
+            <header class="control-chat-head">
+              <div><b>Bob</b><small id="controlChatState">Acts as you in every project</small></div>
+              <button class="ghost compact" id="controlChatMonitor" type="button" title="Pause or restore everything Bob does on its own" data-testid="control-chat-monitor">Monitoring</button>
+              <button class="ghost compact" id="controlChatSettingsButton" type="button" title="Bob's agent, model and threshold" data-testid="control-chat-settings-button">Settings</button>
+              <button class="ghost compact" id="controlChatSide" type="button" title="Move the chat to the other side" data-testid="control-chat-side">⇄</button>
+            </header>
+            <div class="control-chat-paused" id="controlChatPaused" hidden data-testid="control-chat-paused">
+              <span>Bob is paused. Agents keep running; nobody answers for them, and questions wait for you on the board.</span>
+              <button class="primary compact" id="controlChatRestore" type="button">Restore</button>
+            </div>
+            <div class="control-chat-settings" id="controlChatSettings" hidden data-testid="control-chat-settings">
+              <b>Bob's own agent</b>
+              <label>Agent <select id="controlBobHarness" data-testid="control-bob-harness"></select></label>
+              <label>Model <select id="controlBobModel" data-testid="control-bob-model"></select></label>
+              <label>Effort <select id="controlBobThinking" data-testid="control-bob-thinking"></select></label>
+              <label>Decision model <select id="controlBobClassifier" data-testid="control-bob-classifier"><option value="typesafe">TypeSafe</option><option value="laya">Laya</option></select></label>
+              <label>Minimum confidence <input id="controlBobThreshold" type="number" min="0" max="100" step="1" data-testid="control-bob-threshold"> %</label>
+              <label>Auto respond <select id="controlBobAutoRespond" data-testid="control-bob-auto-respond"><option value="bob">Bob decides per task</option><option value="always">Bob always answers for the agent</option><option value="never">Never: agents wait for me</option></select></label>
+              <label class="control-check"><input id="controlBobAsk" type="checkbox" data-testid="control-bob-ask"> Ask me before Bob saves anything</label>
+              <div class="control-guard" id="controlBobGuard" data-testid="control-bob-guard">
+                <span id="controlBobGuardText"></span>
+                <button class="ghost compact" id="controlBobGuardButton" type="button" hidden data-testid="control-bob-guard-button">Turn on</button>
+              </div>
+              <p class="control-hint">Below the confidence, Bob's agent decides instead of the decision model. Work Bob starts uses this agent unless you say otherwise in your message.</p>
+            </div>
+            <div class="control-chat-filters" id="controlChatFilters" data-testid="control-chat-filters">
+              <select id="controlChatFilterProject" aria-label="Filter the chat by project" data-testid="control-chat-filter-project"><option value="">All projects</option><option value="general">General</option></select>
+              <button type="button" class="control-chip active" data-importance="" data-testid="control-chat-importance-all">All</button>
+              <button type="button" class="control-chip" data-importance="important" data-testid="control-chat-importance-important">Needs me</button>
+              <button type="button" class="control-chip" data-importance="reports" data-testid="control-chat-importance-reports">Reports</button>
+              <button type="button" class="control-chip" data-importance="fyi" data-testid="control-chat-importance-fyi">FYI</button>
+            </div>
+            <div class="control-chat-messages" id="controlChatMessages" role="log" aria-live="polite" data-testid="control-chat-messages"></div>
+            <form class="control-chat-form" id="controlChatForm">
+              <label class="control-chat-project">Project
+                <select id="controlChatProject" data-testid="control-chat-project"><option value="">Auto</option></select>
+              </label>
+              <div class="control-chat-box">
+                <textarea id="controlChatInput" rows="2" placeholder="Ask about any project, or give Bob a task…" data-testid="control-chat-input"></textarea>
+                <button class="primary compact" type="submit" id="controlChatSend" data-testid="control-chat-send">Send</button>
+              </div>
+            </form>
+          </aside>
         </div>
-        <div class="canvas-view-controls" aria-label="Canvas view controls">
-          <label for="canvasProjectFilter">Project
-            <select id="canvasProjectFilter" data-testid="canvas-project-filter"><option value="">All projects</option></select>
-          </label>
-          <label for="canvasArrangeSelect">Arrange
-            <select id="canvasArrangeSelect" data-testid="canvas-arrange-select">
-              <option value="">Arrange</option>
-              <option value="project">Project</option>
-              <option value="recent">Recent activity</option>
-              <option value="created">Date added</option>
-            </select>
-          </label>
-        </div>
-        <div class="canvas-shortcut-bar" id="canvasShortcutBar" aria-label="Canvas keyboard shortcuts" data-testid="canvas-shortcut-bar" hidden></div>
-        <div class="canvas-root" id="canvasRoot" data-testid="canvas-root"></div>
       </section>
 
       <main class="panel view-panel chat" id="chatPanel" aria-label="Conversation">
+        <div class="control-popup-bar" id="controlPopupBar" data-testid="control-popup-bar"><span class="control-popup-project" id="controlPopupProject"></span><span class="control-popup-mode" id="controlPopupMode" data-testid="control-popup-mode"></span><button class="primary compact" id="controlPopupTake" type="button" data-testid="control-popup-take">✋ Take control</button><button class="ghost compact" id="controlPopupClose" type="button" title="Back to the board (Esc)" data-testid="control-popup-close">Close</button></div>
         <header class="chat-topbar">
           <button class="ghost icon-button back-button" id="backToSessionsButton" type="button" aria-label="Back to conversations" data-testid="chat-back-button">‹</button>
           <div class="chat-title-block">
@@ -283,6 +329,7 @@
             </div>
           </div>
         </header>
+        <div class="control-lease-banner" id="controlLeaseBanner" hidden data-testid="control-lease-banner"><span>You're in control of this conversation. Bob and auto respond will not answer for the agent while you are here.</span><button class="ghost compact" id="controlLeaseGiveBack" type="button" data-testid="control-lease-give-back">Give back to Bob</button></div>
         <div class="chat-toolbar panel-toolbar" id="chatToolbar">
           <div class="chat-session-controls">
             <label class="chat-control" for="chatNodeSelect" data-shortcut-hint="runsOn">
@@ -317,7 +364,6 @@
                 <button class="ghost compact chat-action" id="chatGitButton" data-shortcut-hint="git" type="button" data-testid="chat-git-button" title="Git" aria-label="Git"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6.5" cy="5.5" r="2"/><circle cx="6.5" cy="18.5" r="2"/><circle cx="17.5" cy="7.5" r="2"/><path d="M6.5 7.5v9"/><path d="M17.5 9.5c0 4.5-6 3.5-10 7.3"/></svg><span class="chat-action-label">Git</span></button>
                 <button class="ghost compact chat-action" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notify" data-testid="chat-notify-button" aria-label="Notify"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg><span class="chat-action-label">Notify</span></button>
                 <button class="ghost compact chat-action" id="autoRespondButton" data-shortcut-hint="autoRespond" type="button" title="Auto respond" data-testid="chat-auto-respond-button" aria-label="Auto respond"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 13-5"/><path d="M18 3.5V7h-3.5"/><path d="M19.5 12a7.5 7.5 0 0 1-13 5"/><path d="M6 20.5V17h3.5"/></svg><span class="chat-action-label">Auto respond</span></button>
-                <button class="ghost compact chat-action" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button" title="Add to canvas" aria-label="Add to canvas"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M12 8v8M8 12h8"/></svg><span class="chat-action-label">Add to canvas</span></button>
                 <button class="ghost compact chat-action" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button" title="Rename" aria-label="Rename"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 19.5l1-4L16 5a2.1 2.1 0 0 1 3 3L8.5 18.5z"/><path d="m14 7 3 3"/></svg><span class="chat-action-label">Rename</span></button>
                 <button class="ghost compact chat-action" id="chatMoreDashboardButton" type="button" data-testid="chat-more-dashboard-button" title="Dashboard" aria-label="Dashboard"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4z"/><path d="M13 4h7v4h-7z"/><path d="M13 10h7v10h-7z"/><path d="M4 13h7v7H4z"/></svg><span class="chat-action-label">Dashboard</span></button>
                 <button class="ghost compact chat-action" id="chatCronButton" data-shortcut-hint="scheduledTasks" type="button" data-testid="chat-cron-button" title="Scheduled tasks" aria-label="Scheduled tasks"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M12 13v3.2l2.2 1.3"/></svg><span class="chat-action-label">Scheduled tasks</span></button>
@@ -516,54 +562,7 @@
       </form>
     </dialog>
 
-    <dialog id="canvasShortcutDialog" data-testid="canvas-shortcut-dialog">
-      <form class="dialog-card" method="dialog">
-        <div>
-          <span class="eyebrow">Canvas</span>
-          <h2>Keyboard shortcut</h2>
-        </div>
-        <p class="canvas-shortcut-subject" id="canvasShortcutSubject" data-testid="canvas-shortcut-subject"></p>
-        <label for="canvasShortcutKey"><span id="canvasShortcutChordLabel">Press ⌘⇧ with this key</span>
-          <input id="canvasShortcutKey" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="A-Z, 0-9, [ or Enter" data-testid="canvas-shortcut-key-input" />
-        </label>
-        <p class="canvas-picker-status" id="canvasShortcutStatus" role="status" data-testid="canvas-shortcut-status"></p>
-        <div class="dialog-actions">
-          <button class="ghost" type="submit" data-testid="canvas-shortcut-cancel-button">Cancel</button>
-          <button class="ghost danger" id="canvasShortcutRemoveButton" type="button" data-testid="canvas-shortcut-remove-button">Remove</button>
-          <button class="primary" id="canvasShortcutSaveButton" type="button" data-testid="canvas-shortcut-save-button">Save</button>
-        </div>
-      </form>
-    </dialog>
 
-    <dialog id="canvasConversationDialog" data-testid="canvas-conversation-dialog">
-      <form class="dialog-card" method="dialog">
-        <div>
-          <span class="eyebrow">Canvas</span>
-          <h2>Add conversation</h2>
-        </div>
-        <label for="canvasProjectSelect">Project
-          <select id="canvasProjectSelect" data-testid="canvas-project-select"></select>
-        </label>
-        <label for="canvasSessionSearch">Search conversations
-          <input id="canvasSessionSearch" type="search" autocomplete="off" data-testid="canvas-session-search" />
-        </label>
-        <div id="canvasClassification" class="field-group"></div>
-        <p class="settings-hint">Classification applies only when starting a new conversation.</p>
-        <label for="canvasSplitPosition">Place the new pane
-          <select id="canvasSplitPosition" data-testid="canvas-split-position">
-            <option value="right" selected>Right of target</option>
-            <option value="left">Left of target</option>
-            <option value="below">Below</option>
-            <option value="above">Above</option>
-          </select>
-        </label>
-        <p class="canvas-picker-status" id="canvasPickerStatus" role="status" data-testid="canvas-picker-status"></p>
-        <div class="canvas-session-options" id="canvasSessionOptions" data-testid="canvas-session-options"></div>
-        <div class="dialog-actions">
-          <button class="ghost" type="submit" data-testid="canvas-picker-cancel-button">Cancel</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog id="spotlightDialog" data-testid="spotlight-dialog">
       <form class="dialog-card spotlight-card" method="dialog">
@@ -584,24 +583,6 @@
       </form>
     </dialog>
 
-    <dialog id="canvasFinderDialog" data-testid="canvas-finder-dialog">
-      <form class="dialog-card" method="dialog">
-        <div>
-          <span class="eyebrow">Canvas</span>
-          <h2>Go to conversation</h2>
-          <p>Type any part of a title. Enter opens the highlighted conversation; the arrow keys move the highlight.</p>
-        </div>
-        <label class="search-shell" for="canvasFinderInput">
-          <span class="sr-only">Search conversations on the canvas</span>
-          <input id="canvasFinderInput" type="search" autocomplete="off" spellcheck="false" placeholder="Search conversations on the canvas" data-testid="canvas-finder-input" />
-        </label>
-        <p class="canvas-picker-status" id="canvasFinderStatus" role="status" data-testid="canvas-finder-status"></p>
-        <div class="canvas-finder-results" id="canvasFinderResults" data-testid="canvas-finder-results"></div>
-        <div class="dialog-actions">
-          <button class="ghost" type="submit" data-testid="canvas-finder-cancel-button">Close</button>
-        </div>
-      </form>
-    </dialog>
 
 
     <dialog id="loginDialog" data-testid="login-dialog">
@@ -955,7 +936,7 @@
               <input id="settingsConversationHistoryDays" type="number" min="1" max="3650" step="1" required data-testid="settings-conversation-history-days" />
               days
             </label>
-            <p class="settings-hint">Older transcripts stay on disk and load only when opened from a pin, recent item, canvas pane, or direct link.</p>
+            <p class="settings-hint">Older transcripts stay on disk and load only when opened from a pin, recent item, or direct link.</p>
             <div data-admin-only>
             <label>Delete conversations with no activity for
               <input id="settingsConversationRetentionDays" type="number" min="1" max="3650" step="1" required data-testid="settings-conversation-retention-days" />
@@ -1888,20 +1869,10 @@
         <section class="settings-panel" id="settingsPanel-shortcuts" role="tabpanel" aria-labelledby="settingsTab-shortcuts" tabindex="0" hidden>
           <p>Every keyboard shortcut in Joint Bob, in one place. Press <kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> anywhere in the app to come straight back here.</p>
           <label class="canvas-keymap-search" for="canvasKeymapSearch">Find a shortcut
-            <input id="canvasKeymapSearch" type="text" autocomplete="off" spellcheck="false" placeholder="split, page, reviews, pane&hellip;" data-testid="canvas-keymap-search-input" />
+            <input id="canvasKeymapSearch" type="text" autocomplete="off" spellcheck="false" placeholder="reviews, notes, costs, conversation&hellip;" data-testid="canvas-keymap-search-input" />
           </label>
           <p class="settings-hint">Click a field, then press a shortcut. You can follow one modified key with a second key, as in Control Space then Backslash. Shortcuts hold at most four physical keys and need Command, Control, or Option. Backspace clears a shortcut.</p>
-          <div class="canvas-keymap-grid">
-            <label class="canvas-keymap-command canvas-keymap-base" for="canvasKeymapBase">The chord every conversation key rides under
-              <input id="canvasKeymapBase" type="text" readonly autocomplete="off" spellcheck="false" data-testid="canvas-keymap-base-input" />
-            </label>
-          </div>
           <div id="canvasKeymapCommands" class="canvas-keymap-grid" data-testid="canvas-keymap-commands"></div>
-          <div class="shortcut-conversation-keys">
-            <h3>Conversation keys</h3>
-            <p class="settings-hint">A key you gave one conversation on the canvas, fired with the chord above plus its key. Set these from a conversation&rsquo;s shortcut button on the canvas.</p>
-            <div id="shortcutConversationList" data-testid="settings-conversation-shortcut-list"></div>
-          </div>
           <div class="canvas-keymap-leader" data-testid="canvas-keymap-leader">
             <h3>Fixed shortcuts</h3>
             <p>These cannot be changed:</p>

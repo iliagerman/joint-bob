@@ -172,29 +172,6 @@ test("Escape cancels the switch and leaves the open conversation as it was", asy
   assert.equal(await isCurrent(other), false);
 });
 
-test("the chord still opens the list while a chat pane on the canvas has the keyboard", async () => {
-  await page.getByTestId("projects-open-canvas-button").click();
-  await page.getByTestId("canvas-add-button").click();
-  await page.locator(".canvas-session-option").first().waitFor({ timeout: 20_000 });
-  await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
-  await page.locator(".canvas-session-option", { hasText: "Thread-Based Agent Builder" }).first().click();
-  // A pane is its own document: its keys reach this page only once its app has loaded and
-  // forwards them, so the test waits for the pane's composer and types into it first.
-  const composer = page.frameLocator('iframe[title*="Thread-Based Agent Builder"]').locator("#messageInput");
-  await composer.waitFor({ timeout: 20_000 });
-  await composer.click();
-
-  await holdChord();
-  await page.keyboard.press(cycleKey);
-  // Keyboard forwarding uses postMessage, so key dispatch can finish before the parent handles it.
-  await page.locator(".conversation-switcher").waitFor({ state: "visible" });
-  assert.equal(await overlayOpen(), true, "the list opens from inside the pane");
-  assert.ok(await rows().count() >= 2, "the list has the conversations opened before");
-  await letGoOfChord();
-  // The pane's release reaches this page as a message, so the close is awaited rather than read.
-  await page.locator(".conversation-switcher").waitFor({ state: "hidden", timeout: 5_000 });
-});
-
 test("a mouse click on a row opens it while the chord is held", async () => {
   // Control+click is a context-menu gesture on a Mac, so the row must not depend on a click event that never comes.
   await holdChord();

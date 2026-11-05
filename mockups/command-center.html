@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control center · Joint Bob design preview</title>
+<style>
+  :root { --bg:#101215; --surface:#171a1e; --raised:#1d2126; --field:#22272d; --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+    --text:#ebeced; --muted:#9499a1; --dim:#6b7078; --accent:#3fcfa8; --warn:#f2b44b; --bad:#ef6b6b; --blue:#7b8cff; --violet:#c08bff; }
+  * { box-sizing:border-box }
+  html, body { margin:0; height:100%; background:#0b0c0e; color:var(--text); font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+  button { font:inherit; color:inherit; background:none; border:0; cursor:pointer }
+  .review { display:flex; gap:12px; align-items:center; padding:6px 14px; background:#2a2140; color:#d9ccff; font-size:12px }
+  .review b { color:#fff } .review .sp { flex:1 }
+  .review button { border:1px solid rgba(255,255,255,.25); border-radius:6px; padding:2px 8px; font-size:12px }
+  .app { --chatw:400px; display:grid; grid-template-columns:230px minmax(0,1fr) var(--chatw); height:calc(100% - 30px); background:var(--bg) }
+
+  /* left: projects */
+  .side { border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0 }
+  .brand { display:flex; align-items:center; gap:8px; padding:12px 14px; border-bottom:1px solid var(--line) }
+  .brand .logo { width:24px; height:24px; border-radius:7px; background:color-mix(in srgb,var(--accent) 25%,var(--surface)); display:grid; place-items:center; font-size:13px }
+  .brand b { font-size:14px } .brand small { display:block; color:var(--muted); font-size:11px; line-height:1.1 }
+  .side h4 { margin:12px 14px 4px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim) }
+  .proj { display:flex; align-items:center; gap:8px; padding:6px 14px; border-left:2px solid transparent; width:100%; text-align:left }
+  .proj:hover { background:var(--surface) }
+  .proj.on { background:var(--raised); border-left-color:var(--accent) }
+  .proj .sw { width:8px; height:8px; border-radius:3px; flex:none }
+  .proj .nm { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .pill { font-size:11px; padding:0 6px; border-radius:999px; line-height:17px; background:var(--field); color:var(--muted) }
+  .pill.run { color:var(--accent); background:color-mix(in srgb,var(--accent) 14%,transparent) }
+  .pill.you { color:#1a1205; background:var(--warn); font-weight:600 }
+  .side .foot { margin-top:auto; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:11px }
+  .side .foot span { display:flex; align-items:center; gap:6px } .dotg { width:7px; height:7px; border-radius:50%; background:var(--accent); display:inline-block }
+
+  /* center */
+  .main { display:flex; flex-direction:column; min-width:0; min-height:0 }
+  .tabs { display:flex; align-items:center; gap:4px; padding:8px 14px; border-bottom:1px solid var(--line) }
+  .tab { padding:5px 11px; border-radius:7px; color:var(--muted) }
+  .tab.on { background:var(--raised); color:var(--text) }
+  .tab .pill { margin-left:5px }
+  .tabs .sp { flex:1 }
+  .search { background:var(--field); border:1px solid var(--line); border-radius:7px; padding:5px 10px; color:var(--muted); width:220px }
+  .view { flex:1; overflow:hidden; padding:12px 14px; display:none; flex-direction:column; gap:12px; min-height:0 }
+  .view.on { display:flex }
+  .lane-h { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); margin:2px 0 -4px }
+  .lane-h b { color:var(--text); font-size:12px }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:10px }
+
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:10px 11px; display:flex; flex-direction:column; gap:6px; cursor:pointer; position:relative }
+  .card:hover { border-color:var(--line2) }
+  .card.you { border-color:color-mix(in srgb,var(--warn) 55%,transparent); background:color-mix(in srgb,var(--warn) 6%,var(--surface)) }
+  .card.done { opacity:.92 }
+  .card .top { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted) }
+  .card .top .sw { width:7px; height:7px; border-radius:2px }
+  .card .top .sp { flex:1 }
+  .card .ttl { font-weight:600; font-size:13px; line-height:1.3 }
+  .by { font-size:10.5px; padding:0 6px; border-radius:999px; border:1px solid var(--line2); color:var(--muted) }
+  .by.bob { color:var(--accent); border-color:color-mix(in srgb,var(--accent) 40%,transparent) }
+  .live { font-size:12px; color:#c9ccd1; background:var(--field); border-radius:7px; padding:6px 8px; min-height:34px; display:flex; gap:7px; align-items:flex-start }
+  .live .pulse { width:7px; height:7px; border-radius:50%; background:var(--accent); flex:none; margin-top:5px; animation:p 1.4s infinite }
+  .card.you .live .pulse { background:var(--warn); animation:none }
+  .card.done .live .pulse { background:var(--blue); animation:none }
+  @keyframes p { 0%,100% { opacity:1 } 50% { opacity:.25 } }
+  .meta { display:flex; gap:10px; font-size:11px; color:var(--dim) }
+  .meta b { color:var(--muted); font-weight:500 }
+  .q { font-size:12px; border-left:2px solid var(--warn); padding:2px 0 2px 8px; color:#f1dcb4 }
+  .acts { display:flex; gap:6px; flex-wrap:wrap }
+  .btn { border:1px solid var(--line2); border-radius:7px; padding:3px 9px; font-size:12px; background:var(--raised) }
+  .btn.pri { background:var(--accent); color:#06201a; border-color:transparent; font-weight:600 }
+  .btn.warn { background:var(--warn); color:#1a1205; border-color:transparent; font-weight:600 }
+  .drill { display:none; border-top:1px solid var(--line); padding-top:7px; margin-top:2px; font-size:12px; color:#c9ccd1 }
+  .card.open .drill { display:block }
+  .drill ol { margin:4px 0 6px; padding-left:17px } .drill li { margin:1px 0 }
+  .drill .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin-top:6px }
+
+  /* project overview */
+  .ov-head { display:flex; align-items:flex-start; gap:12px }
+  .ov-head h2 { margin:0; font-size:18px } .ov-head p { margin:2px 0 0; color:var(--muted) }
+  .ov-head .sp { flex:1 }
+  .ov { display:grid; grid-template-columns:1.25fr 1fr; gap:12px; min-height:0 }
+  .panel { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:10px 12px }
+  .panel h3 { margin:0 0 6px; font-size:12px; color:var(--muted); font-weight:600; display:flex; align-items:center; gap:8px }
+  .panel h3 .sp { flex:1 }
+  .row { display:flex; align-items:center; gap:8px; padding:5px 0; border-top:1px solid var(--line); font-size:12.5px }
+  .row:first-of-type { border-top:0 }
+  .row .t { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .row .w { color:var(--dim); font-size:11px; white-space:nowrap }
+  .st { width:8px; height:8px; border-radius:50%; flex:none }
+  .st.run { background:var(--accent) } .st.you { background:var(--warn) } .st.rev { background:var(--blue) } .st.idle { background:#4a4f57 }
+
+  /* automations */
+  table { width:100%; border-collapse:collapse; font-size:12.5px }
+  th { text-align:left; font-weight:500; color:var(--dim); font-size:11px; padding:6px 8px; border-bottom:1px solid var(--line) }
+  td { padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:middle }
+  td .sub { display:block; color:var(--dim); font-size:11px }
+  .kind { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--field) }
+  .kind.cron { color:var(--violet) } .kind.hook { color:#7fc4ff }
+  .tog { width:28px; height:16px; border-radius:999px; background:var(--accent); position:relative; display:inline-block }
+  .tog::after { content:""; position:absolute; right:2px; top:2px; width:12px; height:12px; border-radius:50%; background:#06201a }
+  .tog.off { background:#3a3f46 } .tog.off::after { left:2px; right:auto; background:#9aa0a8 }
+  .ok { color:var(--accent) } .bad { color:var(--bad) }
+  .pager { display:flex; justify-content:flex-end; gap:6px; align-items:center; color:var(--dim); font-size:11px; padding-top:6px }
+
+  /* right: chat */
+  .chat { border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0; background:#0f1114 }
+  .chat-h { display:flex; align-items:center; gap:9px; padding:10px 14px; border-bottom:1px solid var(--line) }
+  .chat-h .bot { width:28px; height:28px; border-radius:9px; background:color-mix(in srgb,var(--accent) 25%,var(--surface)); display:grid; place-items:center }
+  .chat-h b { font-size:13px } .chat-h small { display:block; color:var(--muted); font-size:11px; line-height:1.15 }
+  .chat-h .sp { flex:1 }
+  .msgs { flex:1; overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:9px }
+  .m { max-width:90%; padding:7px 11px; border-radius:12px; background:var(--surface); border:1px solid var(--line); white-space:pre-wrap }
+  .m.u { align-self:flex-end; background:color-mix(in srgb,var(--accent) 14%,var(--surface)); border-color:color-mix(in srgb,var(--accent) 28%,transparent) }
+  .m.a { align-self:flex-start; border-left:2px solid var(--accent) }
+  .m ul { margin:3px 0 0; padding-left:16px; white-space:normal } .m li { margin:1px 0 }
+  .via { align-self:flex-start; display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11.5px; padding:3px 9px; border:1px dashed var(--line2); border-radius:999px; flex-wrap:wrap }
+  .via .d { width:6px; height:6px; border-radius:50%; background:var(--accent) }
+  .via u { text-decoration:none; color:var(--accent); cursor:pointer }
+  .via .why { display:none; width:100%; color:var(--dim); font-size:11px; padding:2px 0 }
+  .via.open .why { display:block }
+  .pick { align-self:flex-start; display:flex; flex-direction:column; gap:6px; background:var(--surface); border:1px solid var(--line2); border-radius:12px; padding:8px 10px; max-width:92% }
+  .pick .chips { display:flex; gap:6px; flex-wrap:wrap }
+  .chip { border:1px solid var(--line2); border-radius:999px; padding:2px 10px; font-size:12px; background:var(--raised) }
+  .chip small { color:var(--dim) }
+  .esc { align-self:stretch; border:1px solid color-mix(in srgb,var(--warn) 55%,transparent); background:color-mix(in srgb,var(--warn) 7%,var(--surface)); border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; gap:6px }
+  .esc .who { font-size:11px; color:var(--warn); font-weight:600 }
+  .report { align-self:stretch; border:1px solid color-mix(in srgb,var(--blue) 45%,transparent); background:color-mix(in srgb,var(--blue) 7%,var(--surface)); border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; gap:5px }
+  .report .who { font-size:11px; color:#aab4ff; font-weight:600 }
+  .day { align-self:center; color:var(--dim); font-size:11px }
+  .compose { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:6px }
+  .scope { display:flex; gap:6px; align-items:center; font-size:11.5px; color:var(--muted) }
+  .scope .chip { font-size:11.5px; padding:1px 8px }
+  .box { display:flex; gap:8px; align-items:flex-end }
+  .box textarea { flex:1; resize:none; background:var(--field); border:1px solid var(--line2); border-radius:10px; color:var(--text); padding:8px 10px; font:inherit; height:58px }
+  .send { background:var(--accent); color:#06201a; border-radius:9px; padding:8px 12px; font-weight:600 }
+  .hint { color:var(--dim); font-size:11px }
+
+  .app.chatleft { grid-template-columns:230px var(--chatw) minmax(0,1fr) }
+  .app.chatleft .chat { order:1; border-left:0; border-right:1px solid var(--line) } .app.chatleft .main { order:2 } .app .side { order:0 }
+  .chat { position:relative }
+  .rz { position:absolute; top:0; bottom:0; width:7px; cursor:col-resize; z-index:5 }
+  .app:not(.chatleft) .rz { left:-3px } .app.chatleft .rz { right:-3px }
+  .rz:hover, .rz.drag { background:color-mix(in srgb,var(--accent) 45%,transparent) }
+  .seg { display:inline-flex; border:1px solid var(--line2); border-radius:8px; overflow:hidden }
+  .seg button { padding:4px 11px; color:var(--muted) } .seg button.on { background:var(--raised); color:var(--text) }
+  .card { border-left:3px solid var(--cc, transparent) }
+  .grip { cursor:grab; color:var(--dim); letter-spacing:-2px } .card.drag { opacity:.4 }
+  .card { background:var(--tint, var(--surface)) } input.swatch { -webkit-appearance:none; appearance:none; padding:0; cursor:pointer; background:none; width:16px; height:16px; border-radius:50% } input.swatch::-webkit-color-swatch-wrapper { padding:0 } input.swatch::-webkit-color-swatch { border:1px solid var(--line2); border-radius:50% } input.swatch::-moz-color-swatch { border:1px solid var(--line2); border-radius:50% }
+  .swatch { width:13px; height:13px; border-radius:50%; background:var(--cc, #3a3f46); border:1px solid var(--line2) }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.62); display:none; align-items:center; justify-content:center; z-index:50 }
+  .modal.on { display:flex }
+  .dlg { width:min(980px,92vw); height:min(640px,88vh); background:var(--bg); border:1px solid var(--line2); border-radius:14px; display:flex; flex-direction:column; overflow:hidden }
+  .dh { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line) } .dh .sp { flex:1 }
+  .lock { font-size:12px; color:var(--warn); border:1px solid color-mix(in srgb,var(--warn) 50%,transparent); border-radius:999px; padding:1px 9px }
+  .lock.ro { color:var(--blue); border-color:color-mix(in srgb,var(--blue) 50%,transparent) }
+  .db { flex:1; display:grid; grid-template-columns:minmax(0,1fr) 270px; min-height:0 }
+  .tr { overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:8px }
+  .db .sd { border-left:1px solid var(--line); padding:12px; overflow:auto; font-size:12px; color:#c9ccd1 }
+  .df { display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--line) } .df textarea { flex:1; resize:none; height:46px; background:var(--field); border:1px solid var(--line2); border-radius:10px; color:var(--text); padding:7px 10px; font:inherit }
+  .dfoot { padding:0 14px 8px; color:var(--dim); font-size:11px }
+  .tl { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em }
+  .pop { position:absolute; bottom:78px; left:12px; right:12px; background:var(--raised); border:1px solid var(--line2); border-radius:12px; padding:10px 12px; display:none; flex-direction:column; gap:8px; z-index:6; box-shadow:0 8px 30px rgba(0,0,0,.5) }
+  .pop.on { display:flex } .pop label { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px } .pop label span { width:96px }
+  .pop select, .pop input { flex:1; background:var(--field); border:1px solid var(--line2); border-radius:7px; color:var(--text); padding:3px 7px; font:inherit }
+  .mem { display:grid; grid-template-columns:290px minmax(0,1fr); gap:12px; min-height:0; flex:1 }
+  .tp { display:flex; flex-direction:column; gap:2px; overflow:auto }
+  .tpi { text-align:left; padding:7px 9px; border-radius:8px; border:1px solid transparent } .tpi:hover { background:var(--surface) } .tpi.on { background:var(--raised); border-color:var(--line2) }
+  .tpi b { display:block; font-size:12.5px } .tpi small { color:var(--dim); font-size:11px } .tpi .rd { color:var(--accent); font-size:10.5px }
+  .doc { overflow:auto } .doc h2 { margin:0 0 4px; font-size:16px } .doc p, .doc li { color:#c9ccd1 } .lnk { color:var(--accent); cursor:pointer } .doc code { background:var(--field); border-radius:4px; padding:0 4px }
+  .cl-h { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .mem-note { font-size:11px; color:var(--dim); margin-top:8px }
+  .tab, .seg button, .search { white-space:nowrap } .tabs { flex-wrap:wrap } .search { display:none } .btn { white-space:nowrap }
+  .sd .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:10px 0 2px }
+
+  .filters { display:flex; gap:6px; align-items:center; padding:7px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap }
+  .filters .lbl2 { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-right:2px }
+  .fchip { border:1px solid var(--line2); border-radius:999px; padding:1px 10px; font-size:12px; color:var(--muted); display:inline-flex; gap:6px; align-items:center }
+  .fchip i { width:7px; height:7px; border-radius:2px; display:inline-block } .fchip.on { background:var(--raised); color:var(--text); border-color:color-mix(in srgb,var(--accent) 50%,transparent) }
+  .filters .sp { flex:1 }
+  #view-live.free { position:relative; overflow:auto; display:none } #view-live.free.on { display:block }
+  #view-live.free .lane-h { display:none } #view-live.free .grid { display:block }
+  #view-live.free .card { position:absolute; width:270px; cursor:default } #view-live.free .grip { cursor:grab; color:var(--accent) }
+  .exit { margin-left:auto; border:1px solid var(--line2); border-radius:7px; padding:2px 8px; font-size:11px; color:var(--muted) } .key { font:11px ui-monospace,monospace; border:1px solid var(--line2); border-radius:5px; padding:0 5px; color:var(--muted) }
+  .ws { position:fixed; inset:30px 0 0 0; background:#0d0f12; z-index:80; display:none; flex-direction:column } .ws.on { display:flex }
+  .ws .bar { display:flex; align-items:center; gap:8px; padding:9px 14px; border-bottom:1px solid var(--line) }
+  .ws .bar .tool { border:1px solid var(--line); border-radius:8px; padding:4px 10px; color:var(--muted) }
+  .ws .bar .cc { background:var(--accent); color:#06201a; font-weight:600; border-radius:8px; padding:4px 11px; display:flex; gap:8px; align-items:center }
+  .ws .bar .cc .key { color:#06201a; border-color:rgba(0,0,0,.35) }
+  .ws .body { flex:1; display:grid; grid-template-columns:260px 1fr; color:var(--dim) } .ws .body div { padding:16px } .ws .body .l { border-right:1px solid var(--line) }
+  .ws .bar .badge { background:var(--warn); color:#1a1205; font-weight:700; border-radius:999px; padding:0 7px; font-size:11px }
+  .mtabs { display:flex; align-items:center; gap:10px } .mtabs .on2 { background:var(--warn); color:#1a1205; border-radius:999px; padding:0 7px; font-size:11px; font-weight:700 }
+  .chg { display:flex; flex-direction:column; gap:8px; overflow:auto }
+  .ch { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:9px 11px; display:flex; flex-direction:column; gap:6px }
+  .ch .h { display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted) } .ch .h b { color:var(--text) } .ch .h .sp { flex:1 }
+  .df2 { font:11.5px/1.5 ui-monospace,monospace; background:#0d0f12; border-radius:7px; padding:6px 9px } .df2 .a { color:var(--accent) } .df2 .d { color:var(--bad); text-decoration:line-through }
+  .src { color:var(--dim); font-size:11px } .src u { text-decoration:none; color:var(--accent); cursor:pointer }
+  .newb { background:var(--accent); color:#06201a; border-radius:999px; font-size:10px; font-weight:700; padding:0 6px; margin-left:4px }
+
+  .quick { display:flex; gap:4px; flex-wrap:wrap; border-top:1px dashed var(--line); padding-top:6px }
+  .qb { font-size:11px; padding:1px 7px; border-radius:6px; border:1px solid var(--line); color:var(--muted); background:var(--field) }
+  .qb:hover { color:var(--text); border-color:var(--line2) } .qb.ctl { color:var(--warn) }
+  .lock.watch { color:var(--blue); border-color:color-mix(in srgb,var(--blue) 50%,transparent) }
+  .mon { display:flex; align-items:center; gap:6px; border:1px solid var(--line2); border-radius:999px; padding:2px 9px; font-size:11.5px; color:var(--muted) }
+  .mon i { width:7px; height:7px; border-radius:50%; background:var(--accent); display:inline-block } .mon.off i { background:var(--warn) }
+  .paused { display:none; align-items:center; gap:8px; padding:7px 14px; background:color-mix(in srgb,var(--warn) 12%,var(--bg)); border-bottom:1px solid color-mix(in srgb,var(--warn) 40%,transparent); color:#f1dcb4; font-size:12px }
+  .paused.on { display:flex } .paused .sp { flex:1 }
+  .move { align-self:stretch; border:1px solid var(--line2); background:var(--surface); border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; gap:5px }
+  .move .who { font-size:11px; color:var(--muted); font-weight:600 }
+  .mv { display:flex; gap:7px; align-items:baseline; font-size:12px } .mv .st { margin-top:3px } .mv small { color:var(--dim) }
+  .foot a { color:var(--accent); cursor:pointer; margin-left:auto; font-size:11px }
+  .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--raised); border:1px solid var(--line2); border-radius:10px; padding:8px 14px; z-index:90; display:none } .toast.on { display:block }
+
+  .bell { position:relative; border:1px solid var(--line2); border-radius:8px; padding:2px 8px } .bell .bn { position:absolute; top:-6px; right:-6px; background:var(--accent); color:#06201a; border-radius:999px; font-size:10px; font-weight:700; padding:0 5px }
+  .inbox { position:absolute; top:52px; right:10px; width:340px; max-height:70%; overflow:auto; background:var(--raised); border:1px solid var(--line2); border-radius:12px; padding:8px 10px; display:none; flex-direction:column; gap:6px; z-index:7; box-shadow:0 8px 30px rgba(0,0,0,.5) }
+  .inbox.on { display:flex } .inbox h5 { margin:2px 0; font-size:12px; color:var(--muted); display:flex } .inbox h5 .sp { flex:1 }
+  .tr2 { border-top:1px solid var(--line); padding-top:6px; display:flex; flex-direction:column; gap:3px; font-size:12px } .tr2 small { color:var(--dim) }
+  .urg { align-self:stretch; border:1px solid color-mix(in srgb,var(--bad) 60%,transparent); background:color-mix(in srgb,var(--bad) 8%,var(--surface)); border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; gap:6px }
+  .urg .who { font-size:11px; color:var(--bad); font-weight:700 }
+  .dcard { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:10px 11px; display:flex; flex-direction:column; gap:6px; cursor:pointer } .dcard:hover { border-color:var(--line2) }
+  .spark { display:flex; align-items:flex-end; gap:3px; height:42px } .spark i { flex:1; background:color-mix(in srgb,var(--accent) 70%,transparent); border-radius:2px 2px 0 0 } .spark.warn i { background:color-mix(in srgb,var(--warn) 70%,transparent) }
+  .big { display:grid; grid-template-columns:repeat(3,1fr); gap:10px } .stat { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:10px } .stat b { font-size:22px; display:block } .stat small { color:var(--dim) }
+  .dmodal .dlg { width:min(900px,92vw) } .chart { display:flex; align-items:flex-end; gap:6px; height:170px; padding:8px 0 }
+  .chart i { flex:1; background:color-mix(in srgb,var(--accent) 75%,transparent); border-radius:3px 3px 0 0; position:relative } .chart i.r { background:color-mix(in srgb,var(--bad) 70%,transparent) }
+.chat-h > div { min-width:0 } .chat-h small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis } .chat-h .btn, .chat-h .mon, .chat-h .bell { flex:none }
+
+  .grd { align-self:stretch; border:1px solid color-mix(in srgb,var(--bad) 55%,transparent); background:color-mix(in srgb,var(--bad) 6%,var(--surface)); border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; gap:6px }
+  .grd .who { font-size:11px; color:#ff9d9d; font-weight:700 } .grd code, .card code { background:var(--field); border-radius:4px; padding:0 4px; font-size:11.5px }
+  .card.grdc { border-color:color-mix(in srgb,var(--bad) 55%,transparent); background:color-mix(in srgb,var(--bad) 5%,var(--surface)) }
+  .card.grdc .q { border-left-color:var(--bad); color:#ffc9c9 }
+  .ar { color:var(--violet) }
+  .pop .lockrow { display:flex; gap:8px; align-items:flex-start; font-size:12px; color:var(--muted) } .pop .lockrow b { color:var(--text); font-weight:500 }
+
+  .rep { align-self:stretch; border:1px solid color-mix(in srgb,var(--violet) 45%,transparent); background:color-mix(in srgb,var(--violet) 6%,var(--surface)); border-radius:12px; padding:8px 11px; display:flex; flex-direction:column; gap:4px }
+  .rep .who { font-size:11px; color:var(--violet); font-weight:700 } .rep ul { margin:2px 0; padding-left:16px } .rep li { margin:1px 0 }
+  .kind.bob { color:var(--accent) }
+  .phones { position:fixed; inset:30px 0 0 0; background:#07080a; z-index:85; display:none; align-items:flex-start; justify-content:center; gap:40px; padding:22px; overflow:auto } .phones.on { display:flex }
+  .ph { width:380px; flex:none; display:flex; flex-direction:column; gap:8px } .ph > b { color:var(--muted); font-size:12px; text-align:center }
+  .frame { height:780px; border-radius:42px; border:10px solid #1e2126; background:var(--bg); overflow:hidden; display:flex; flex-direction:column; position:relative }
+  .sbar { height:26px; display:flex; justify-content:space-between; padding:6px 22px 0; font-size:11px; color:var(--muted) }
+  .mh { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line) } .mh .sp { flex:1 }
+  .strip { display:flex; gap:6px; padding:8px 12px; overflow:auto; border-bottom:1px solid var(--line) } .strip .chip { white-space:nowrap }
+  .chip.y { background:var(--warn); color:#1a1205; border-color:transparent; font-weight:600 } .chip.r { background:color-mix(in srgb,var(--bad) 70%,#000); color:#fff; border-color:transparent; font-weight:600 }
+  .mmsgs { flex:1; overflow:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px; font-size:13px }
+  .mmsgs .m { max-width:88% } .mmsgs .acts .btn { padding:5px 10px }
+  .mcomp { border-top:1px solid var(--line); padding:8px 10px 18px; display:flex; flex-direction:column; gap:6px }
+  .mcomp .row2 { display:flex; gap:6px; align-items:center } .mcomp input { flex:1; background:var(--field); border:1px solid var(--line2); border-radius:20px; color:var(--text); padding:9px 12px; font:inherit }
+  .round { width:38px; height:38px; border-radius:50%; display:grid; place-items:center; background:var(--raised); border:1px solid var(--line2) } .round.go { background:var(--accent); color:#06201a; border:0 }
+  .sheet { position:absolute; left:0; right:0; bottom:0; background:var(--raised); border-top:1px solid var(--line2); border-radius:18px 18px 0 0; padding:10px 12px 22px; display:none; flex-direction:column; gap:6px; max-height:70%; overflow:auto } .sheet.on { display:flex }
+  .sheet .grab { width:40px; height:4px; border-radius:2px; background:var(--line2); align-self:center; margin-bottom:4px }
+  .mrow { display:flex; gap:8px; align-items:center; padding:7px 4px; border-bottom:1px solid var(--line); font-size:12.5px } .mrow .t { flex:1; min-width:0 } .mrow .t small { display:block; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .tg { background:#0e1621; } .tg .mh { background:#17212b; border-color:#0b1118 } .tg .av { width:34px; height:34px; border-radius:50%; background:#3fcfa8; display:grid; place-items:center; color:#06201a; font-weight:700 }
+  .tgm { flex:1; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:7px; font-size:13px; background:#0e1621 }
+  .tb { max-width:84%; padding:6px 10px; border-radius:12px; background:#182533; white-space:pre-wrap } .tb.me { align-self:flex-end; background:#2b5278 } .tb small { display:block; color:#7f91a4; font-size:10.5px; text-align:right }
+  .kb { display:grid; grid-template-columns:1fr 1fr; gap:4px; max-width:84% } .kb button { background:#1f3346; color:#cfe3f7; border-radius:8px; padding:6px; font-size:12px }
+  .tgc { display:flex; gap:6px; padding:8px 10px 18px; background:#17212b; align-items:center } .tgc input { flex:1; background:#0e1621; border:0; border-radius:18px; color:var(--text); padding:9px 12px; font:inherit }
+  .tgnote { font-size:11px; color:var(--dim); text-align:center }
+  .phonebtn { border:1px solid rgba(255,255,255,.35) !important; font-weight:600 }
+
+  .pick-box { display:none; width:15px; height:15px; accent-color:var(--accent) } .selecting .pick-box { display:inline-block }
+  .card.sel { outline:2px solid var(--accent); outline-offset:1px }
+  .bulk { position:sticky; bottom:0; margin:0 -14px -12px; padding:9px 14px; background:var(--raised); border-top:1px solid var(--line2); display:none; align-items:center; gap:8px; flex-wrap:wrap; z-index:4 } .bulk.on { display:flex }
+  .bulk select { background:var(--field); border:1px solid var(--line2); border-radius:7px; color:var(--text); padding:3px 7px; font:inherit }
+  .bulk .hint { flex-basis:100% }
+
+  .asst { display:none; border-left:1px solid var(--line); flex-direction:column; min-height:0; background:#0f1114; order:2 }
+  .app.xl { grid-template-columns:230px minmax(0,1fr) 290px var(--chatw) } .app.xl .asst { display:flex } .app.xl .chat { order:3 }
+  .app.xl.chatleft { grid-template-columns:230px var(--chatw) minmax(0,1fr) 290px } .app.xl.chatleft .chat { order:1 } .app.xl.chatleft .main { order:2 } .app.xl.chatleft .asst { order:3 }
+  .app.xl .tab[data-view=asst] { display:none }
+  .asst-h { padding:10px 12px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px } .asst-h .sp { flex:1 }
+  .alist { flex:1; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:8px }
+  .ac { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:9px 10px; display:flex; flex-direction:column; gap:5px }
+  .ac .h { display:flex; align-items:center; gap:8px } .ac .h .sp { flex:1 } .ac .face { width:26px; height:26px; border-radius:8px; display:grid; place-items:center; font-size:14px; background:var(--raised) }
+  .ac .h b { font-size:13px } .ac .h small { display:block; color:var(--dim); font-size:11px; line-height:1.15 }
+  .ac .has { display:flex; gap:4px; flex-wrap:wrap } .ac .has span { font-size:10.5px; padding:0 6px; border-radius:999px; border:1px solid var(--line2); color:var(--muted) }
+  .ac .last { font-size:11.5px; color:#c9ccd1; border-left:2px solid var(--blue); padding-left:7px }
+  .ac.off { opacity:.6 } .ac .why2 { font-size:11px; color:var(--warn) }
+  .busy { width:7px; height:7px; border-radius:50%; background:var(--accent); display:inline-block } .busy.idle { background:#4a4f57 }
+  #view-asst .alist { padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)) }
+
+  .ac { cursor:pointer } .ac:hover { border-color:var(--line2) }
+  .amodal .db { grid-template-columns:minmax(0,1fr) 280px }
+  .bobq { align-self:stretch; border-left:2px solid var(--blue); background:rgba(123,140,255,.07); border-radius:0 10px 10px 0; padding:6px 9px; display:flex; flex-direction:column; gap:4px; font-size:12px }
+  .bobq .who { font-size:11px; color:#aab4ff; font-weight:600 }
+
+  .cf { display:flex; gap:6px; align-items:center; padding:6px 12px; border-bottom:1px solid var(--line); flex-wrap:wrap }
+  .cf select { background:var(--field); border:1px solid var(--line2); border-radius:7px; color:var(--text); padding:2px 6px; font:inherit; font-size:12px; max-width:150px }
+  .cf .fchip { padding:0 8px; font-size:11.5px } .cf .cnt { color:var(--dim); font-size:11px; margin-left:auto }
+  .lb { align-self:flex-start; display:flex; gap:5px; margin-bottom:-5px }
+  .lb .t { font-size:10px; padding:0 6px; border-radius:999px; border:1px solid var(--line2); color:var(--muted); line-height:15px }
+  .lb .t.i-ok { color:#ff9d9d; border-color:color-mix(in srgb,var(--bad) 55%,transparent) } .lb .t.i-urg { color:#ff9d9d; border-color:color-mix(in srgb,var(--bad) 55%,transparent) }
+  .lb .t.i-you { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 55%,transparent) } .lb .t.i-rep { color:var(--violet); border-color:color-mix(in srgb,var(--violet) 50%,transparent) }
+  .lb .t.i-done { color:#aab4ff; border-color:color-mix(in srgb,var(--blue) 50%,transparent) } .lb .t.i-fyi { color:var(--dim) }
+  .lb .t.p { color:var(--text) }
+  .lb.right { align-self:flex-end }
+  .msgs > .hid { display:none }
+</style>
+</head>
+<body>
+<div class="review"><b>Design preview</b> New: Assistants (tab here, beside the board on XL: try "XL layout") · ☐ Select or "Move all…" (bottom left) for bulk moves · morning/evening reports · 📱 phone and Telegram views. <span class="sp"></span><button id="xlbtn" class="phonebtn" title="Show the layout for very wide screens">XL layout</button><button id="phonebtn" class="phonebtn">📱 Phone and Telegram</button><button id="tick">Pause live updates</button></div>
+
+<div class="app">
+  <!-- LEFT: projects -->
+  <nav class="side">
+    <div class="brand"><span class="logo">◎</span><div><b>Control center</b><small>Ilia · all machines</small></div><button class="exit" id="exit" title="Back to your workspace">Exit <span class="key">Esc</span></button></div>
+    <button class="proj on" data-proj="all"><span class="sw" style="background:#fff"></span><span class="nm">All projects</span><span class="pill run">6</span><span class="pill you">3</span></button>
+    <button class="proj" id="sidedash"><span class="sw" style="background:var(--accent)"></span><span class="nm">▦ Dashboards</span><span class="pill">5</span></button>
+    <h4>Recent projects</h4>
+    <button class="proj" data-proj="jb"><span class="sw" style="background:#3fcfa8"></span><span class="nm">Joint Bob</span><span class="pill run">2</span><span class="pill you">1</span></button>
+    <button class="proj" data-proj="dak"><span class="sw" style="background:#f28b5b"></span><span class="nm">DAK Live</span><span class="pill run">2</span></button>
+    <button class="proj" data-proj="julian"><span class="sw" style="background:#7b8cff"></span><span class="nm">Contigos · Julian</span><span class="pill run">2</span><span class="pill you">2</span></button>
+    <button class="proj" data-proj="kms"><span class="sw" style="background:#e3c55b"></span><span class="nm">KMS trunk</span></button>
+    <button class="proj" data-proj="game"><span class="sw" style="background:#c08bff"></span><span class="nm">game-like-another-work</span></button>
+    <button class="proj" data-proj="dba"><span class="sw" style="background:#5bc0e3"></span><span class="nm">dba-agent</span></button>
+    <button class="proj" data-proj="my"><span class="sw" style="background:#9aa0a8"></span><span class="nm">my-assistant</span></button>
+    <div class="foot"><span><i class="dotg"></i>Mac · 4 running <a title="Ask Bob to move them">Move all…</a></span><span><i class="dotg"></i>Homeserver · 2 running <a title="Ask Bob to move them">Move all…</a></span></div>
+  </nav>
+
+  <!-- CENTER -->
+  <section class="main">
+    <div class="tabs">
+      <button class="tab on" data-view="live">Live agents <span class="pill run">6</span></button>
+      <button class="tab" data-view="overview">Project overview</button>
+      <button class="tab" data-view="auto">Automations <span class="pill">9</span></button>
+      <button class="tab" data-view="asst">Assistants <span class="pill">4</span></button>
+      <button class="tab" data-view="dash">Dashboards <span class="pill">5</span></button>
+      <button class="tab" data-view="memory">Bob's memory <span class="pill">14</span></button>
+      <span class="sp"></span>
+      <span class="seg" id="seg"><button class="on" data-mode="live">My agents</button><button data-mode="cluster">Clusters</button></span>
+      <span class="search">Search…</span>
+    </div>
+
+    <div class="filters" id="filters"><span class="lbl2">Project</span>
+      <button class="fchip on" data-f="all">All</button>
+      <button class="fchip" data-f="jb"><i style="background:#3fcfa8"></i>Joint Bob</button>
+      <button class="fchip" data-f="dak"><i style="background:#f28b5b"></i>DAK Live</button>
+      <button class="fchip" data-f="julian"><i style="background:#7b8cff"></i>Contigos · Julian</button>
+      <button class="fchip" data-f="kms"><i style="background:#e3c55b"></i>KMS trunk</button>
+      <button class="fchip" data-f="dba"><i style="background:#5bc0e3"></i>dba-agent</button>
+      <span class="sp"></span>
+      <span class="seg" id="layout"><button class="on" data-l="grid">Grouped</button><button data-l="free">Free</button></span>
+      <button class="btn" id="selbtn" title="Pick agents to move together">☐ Select</button><button class="btn" id="reset" title="Back to the default arrangement and colours">Reset layout</button>
+    </div>
+
+    <!-- LIVE BOARD -->
+    <div class="view on" id="view-live">
+      <div class="lane-h"><b>Needs you</b> 3 · production or destructive steps, and questions Bob could not settle</div>
+      <div class="grid">
+        <div class="card grdc" data-p="julian">
+          <div class="top"><span class="sw" style="background:#7b8cff"></span>Contigos · Julian <span class="sp"></span><span class="by bob">started by Bob</span></div>
+          <div class="ttl">Prod 5xx — read-only investigation</div>
+          <div class="q">Guardian stopped: the agent wants to run <code>aws ecs update-service --cluster julian-prod --force-new-deployment</code> to restart prod. Rule "production or destructive", 0.98.</div>
+          <div class="meta"><span>Claude · Opus</span><span>Homeserver</span><span>waiting <b class="el" data-s="65">1m</b></span><span>blocks in 10 min</span></div>
+          <div class="acts"><button class="btn warn">Allow once</button><button class="btn">Block</button></div>
+          <div class="drill"><div class="lbl">Summary so far</div>5xx started 21:02 after the 20:58 deploy. The new task can't reach Redis; the agent thinks a restart clears a stale connection pool.<div class="lbl">Bob's note</div>Production action: only you can allow it. Bob never approves Guardian reviews.</div>
+        </div>
+        <div class="card you" data-p="julian">
+          <div class="top"><span class="sw" style="background:#7b8cff"></span>Contigos · Julian <span class="sp"></span><span class="by bob">started by Bob</span></div>
+          <div class="ttl">Fix VPlans 400 "agents are not CRM users"</div>
+          <div class="q">Two fixes work: skip non-CRM agents silently, or fail the whole plan with a clear error. Which do you want in prod?</div>
+          <div class="meta"><span>Claude · Opus</span><span>Homeserver</span><span>waiting <b class="el" data-s="420">7m</b></span></div>
+          <div class="acts"><button class="btn warn">Answer</button><button class="btn">Open conversation</button></div>
+          <div class="drill"><div class="lbl">Summary so far</div>Reproduced from the CloudWatch error with a failing API test. Root cause: <code>set_random_agents</code> sends agents removed from the CRM. Both fixes pass the test; behaviour differs for users.<div class="lbl">Bob's note</div>This changes what users see, so I did not answer it for you.</div>
+        </div>
+        <div class="card you" data-p="jb">
+          <div class="top"><span class="sw" style="background:#3fcfa8"></span>Joint Bob <span class="sp"></span><span class="by">yours</span></div>
+          <div class="ttl">Replace Syncthing with internal sync — plan</div>
+          <div class="q">The plan is written. Approve it before I start building?</div>
+          <div class="meta"><span>Claude · Opus</span><span>Mac</span><span>waiting <b class="el" data-s="2280">38m</b></span></div>
+          <div class="acts"><button class="btn warn">Review plan</button><button class="btn">Open conversation</button></div>
+          <div class="drill"><div class="lbl">Summary so far</div>Plan in 6 phases: push-on-change, peer pull at startup, conflict copies, shadow rollout per project. Shadow mode runs on 3 projects first.<div class="lbl">Bob's note</div>You asked to approve plans yourself.</div>
+        </div>
+      </div>
+
+      <div class="lane-h"><b>Running</b> 4 · live line is the conversation's running summary</div>
+      <div class="grid">
+        <div class="card" data-p="jb">
+          <div class="top"><span class="sw" style="background:#3fcfa8"></span>Joint Bob <span class="sp"></span><span class="by bob">started by Bob</span></div>
+          <div class="ttl">Mobile menu: quick actions</div>
+          <div class="live"><span class="pulse"></span><span class="stream" data-lines="Running test/ui/ui-mobile-menu.test.ts…|3 of 4 UI checks pass; fixing the Auto respond item overflowing at 360 px|Re-running the mobile menu test after the width fix|All 4 UI checks pass; checking the desktop toolbar is unchanged">Running test/ui/ui-mobile-menu.test.ts…</span></div>
+          <div class="meta"><span>Claude · Sonnet</span><span>Mac</span><span>running <b class="el" data-s="754">12m</b></span><span class="ar">auto respond by Bob 3/10</span></div>
+          <div class="drill"><div class="lbl">Summary</div>Menu now leads with Mark as done, New note, New conversation, Add secret, Auto respond. Tools and Costs moved out.<div class="lbl">Recent steps</div><ol><li>Edited <code>public/app/mobile-menu.js</code></li><li>Bob answered "keep Activity in favourites? → yes, you asked for it on 1 Nov"</li><li>Running UI test</li></ol><div class="acts"><button class="btn pri">Open conversation</button><button class="btn">Ask Bob about it</button><button class="btn">Stop</button></div></div>
+        </div>
+        <div class="card" data-p="dak">
+          <div class="top"><span class="sw" style="background:#f28b5b"></span>DAK Live <span class="sp"></span><span class="by bob">started by Bob</span></div>
+          <div class="ttl">Community Plus billing — read-only investigation</div>
+          <div class="live"><span class="pulse"></span><span class="stream" data-lines="Reading the Stripe webhook handler on GitHub main…|Found the subscription check reads a mocked price ID in dev|Comparing dev and prod Stripe config (read-only)">Reading the Stripe webhook handler on GitHub main…</span></div>
+          <div class="meta"><span>Claude · Opus</span><span>Mac</span><span>running <b class="el" data-s="1510">25m</b></span><span>read-only</span></div>
+          <div class="drill"><div class="lbl">Brief Bob wrote</div>Investigate only. Do not change code, push, merge or deploy. Source of truth is GitHub main. Slice 7 is being worked on elsewhere; don't touch it.<div class="acts"><button class="btn pri">Open conversation</button><button class="btn">Stop</button></div></div>
+        </div>
+        <div class="card" data-p="dak">
+          <div class="top"><span class="sw" style="background:#f28b5b"></span>DAK Live <span class="sp"></span><span class="by">yours</span></div>
+          <div class="ttl">Slice 7 — explore map loading</div>
+          <div class="live"><span class="pulse"></span><span class="stream" data-lines="Starting frontend on 3000 and backend relay…|Map tiles load; fixing the empty cluster list on first open">Starting frontend on 3000 and backend relay…</span></div>
+          <div class="meta"><span>Pi · Bedrock</span><span>Mac</span><span>running <b class="el" data-s="3900">1h 5m</b></span></div>
+          <div class="drill"><div class="lbl">Summary</div>AI-DLC construction stage, unit 2 of 3.<div class="acts"><button class="btn pri">Open conversation</button></div></div>
+        </div>
+        <div class="card" data-p="julian">
+          <div class="top"><span class="sw" style="background:#7b8cff"></span>Contigos · Julian <span class="sp"></span><span class="by" style="color:var(--violet)">scheduled · hourly</span></div>
+          <div class="ttl">Contigos ntfy + logs error check</div>
+          <div class="live"><span class="pulse"></span><span class="stream" data-lines="Scanning ntfy messages from the last hour…|No new errors in ntfy; checking CloudWatch log groups">Scanning ntfy messages from the last hour…</span></div>
+          <div class="meta"><span>Pi · Haiku</span><span>Homeserver</span><span>running <b class="el" data-s="95">1m</b></span></div>
+          <div class="drill"><div class="acts"><button class="btn pri">Open run</button><button class="btn">Edit schedule</button></div></div>
+        </div>
+      </div>
+
+      <div class="lane-h"><b>Done · ready for review</b> 1</div>
+      <div class="grid">
+        <div class="card done" data-p="jb">
+          <div class="top"><span class="sw" style="background:#3fcfa8"></span>Joint Bob <span class="sp"></span><span class="by bob">started by Bob</span></div>
+          <div class="ttl">Mark-for-review counter not going down</div>
+          <div class="live"><span class="pulse"></span><span>Fixed: opening a conversation now clears its review mark on every open page. 2 tests added.</span></div>
+          <div class="meta"><span>Claude · Sonnet</span><span>Homeserver</span><span>took <b>18m</b></span></div>
+          <div class="acts"><button class="btn pri">Review changes</button><button class="btn">Mark as done</button></div>
+        </div>
+      </div>
+      <div class="bulk" id="bulk"><b id="bulkn">0 selected</b><span>Move to</span><select id="bulkto"><option>Homeserver</option><option>Mac</option><option>Contigos EC2</option></select><button class="btn warn" id="bulknow">Stop and move now</button><button class="btn" id="bulklater">Move after current turn</button><button class="btn" id="bulkcancel">Cancel</button>
+        <span class="hint">Stop and move now: stops each running turn, moves the conversation, then sends it "Continue where you stopped: you were moved from <span id="bulkfrom">the Mac</span> to <span id="bulkto2">the Homeserver</span>. Check what was half done before repeating anything." Bob confirms once for the whole batch.</span></div>
+    </div>
+
+    <!-- PROJECT OVERVIEW -->
+    <div class="view" id="view-overview">
+      <div class="ov-head">
+        <div><h2 id="ov-name">Joint Bob</h2><p>2 running · 1 needs you · 3 automations · on Mac and Homeserver</p></div>
+        <span class="sp"></span>
+        <button class="btn">Ask Bob about this project</button><button class="btn pri">New task here</button>
+      </div>
+      <div class="ov">
+        <div class="panel">
+          <h3>Conversations <span class="sp"></span><span class="hint">short headlines Bob also reads</span></h3>
+          <div class="row"><span class="st you"></span><span class="t">Replace Syncthing with internal sync — plan waiting for approval</span><span class="w">38m</span></div>
+          <div class="row"><span class="st run"></span><span class="t">Mobile menu: quick actions — UI tests running</span><span class="w">now</span></div>
+          <div class="row"><span class="st run"></span><span class="t">Control center — design and mock</span><span class="w">now</span></div>
+          <div class="row"><span class="st rev"></span><span class="t">Review counter not going down — fixed, review</span><span class="w">1h</span></div>
+          <div class="row"><span class="st idle"></span><span class="t">.mcp.json sync carries node-only keys — proposal</span><span class="w">yesterday</span></div>
+          <div class="row"><span class="st idle"></span><span class="t">Settings page scrolls sideways on phone — fixed</span><span class="w">2 Nov</span></div>
+          <div class="row"><span class="st idle"></span><span class="t">Snufkin logo options — 4 drafts</span><span class="w">1 Nov</span></div>
+          <div class="pager">1–7 of 64 <button class="btn">‹</button><button class="btn">›</button></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="panel">
+            <h3>What changed recently</h3>
+            <div class="row"><span class="t">2.212.0 released — pool choices per scope</span><span class="w">today</span></div>
+            <div class="row"><span class="t">Knowledge cleanup keeps hand-written rules</span><span class="w">today</span></div>
+            <div class="row"><span class="t">Uncommitted: Telegram voice + speech-to-text (18 files)</span><span class="w">now</span></div>
+          </div>
+          <div class="panel">
+            <h3>Automations <span class="sp"></span><button class="btn">+ New</button></h3>
+            <div class="row"><span class="kind cron">schedule</span><span class="t">Nightly release check</span><span class="w">02:00 · ok</span></div>
+            <div class="row"><span class="kind hook">webhook</span><span class="t">GitHub issues → triage</span><span class="w">3 today</span></div>
+            <div class="row"><span class="kind cron">schedule</span><span class="t">Weekly dependency audit</span><span class="w">paused</span></div>
+          </div>
+          <div class="panel">
+            <h3>Project knowledge</h3>
+            <div class="row"><span class="t">deploy · 4 rules</span></div>
+            <div class="row"><span class="t">shared-working-tree · 3 rules</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AUTOMATIONS -->
+    <div class="view" id="view-auto">
+      <div class="ov-head"><div><h2>Automations</h2><p>Scheduled tasks and webhooks in every project. Bob can create and change these from the chat too.</p></div><span class="sp"></span><button class="btn">+ Webhook</button><button class="btn pri">+ Scheduled task</button></div>
+      <div class="panel" style="padding:4px 6px">
+        <table>
+          <thead><tr><th>On</th><th>Name</th><th>Type</th><th>Project</th><th>When / from</th><th>Last run</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><span class="tog"></span></td><td>Morning report<span class="sub">Every project: what finished overnight, what waits for me, failed runs, incoming, today's plan</span></td><td><span class="kind bob">Bob</span></td><td>All projects</td><td>Daily 08:00 · chat + Telegram</td><td><span class="ok">ok · today 08:00</span></td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog"></span></td><td>Evening report<span class="sub">What got done today, what's still running, decisions waiting, cost by project</span></td><td><span class="kind bob">Bob</span></td><td>All projects</td><td>Daily 19:00 · chat + Telegram</td><td>tonight</td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog"></span></td><td>Contigos ntfy + logs error check<span class="sub">Check errors in the past hour, open a fix in a worktree</span></td><td><span class="kind cron">schedule</span></td><td>Contigos · Julian</td><td>Every hour</td><td><span class="ok">running now</span></td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog"></span></td><td>Nightly release check<span class="sub">Run the release gate, report only</span></td><td><span class="kind cron">schedule</span></td><td>Joint Bob</td><td>Daily 02:00</td><td><span class="ok">ok · 6h ago</span></td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog"></span></td><td>GitHub issues → triage<span class="sub">dba-[ISSUE TITLE]</span></td><td><span class="kind hook">webhook</span></td><td>Joint Bob</td><td>github.com/iliagerman/joint_bob</td><td><span class="ok">ok · 40m ago</span></td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog"></span></td><td>Prod errors → fix PR<span class="sub">CloudWatch alarm payload</span></td><td><span class="kind hook">webhook</span></td><td>Contigos · Julian</td><td>AWS SNS</td><td><span class="bad">failed · 2h ago</span></td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog off"></span></td><td>Weekly dependency audit</td><td><span class="kind cron">schedule</span></td><td>Joint Bob</td><td>Mon 08:00</td><td>paused</td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog"></span></td><td>DB slow query report</td><td><span class="kind cron">schedule</span></td><td>dba-agent</td><td>Daily 07:00</td><td><span class="ok">ok · 9h ago</span></td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+            <tr><td><span class="tog"></span></td><td>Stripe test events<span class="sub">Read-only, report to me</span></td><td><span class="kind hook">webhook</span></td><td>DAK Live</td><td>Stripe</td><td>never</td><td><button class="btn">Edit</button> <button class="btn">Delete</button></td></tr>
+          </tbody>
+        </table>
+        <div class="pager">1–7 of 9 <button class="btn">‹</button><button class="btn">›</button></div>
+      </div>
+    </div>
+
+    <!-- ASSISTANTS (tab on smaller screens) -->
+    <div class="view" id="view-asst">
+      <div class="ov-head"><div><h2>Assistants</h2><p>On very wide screens this list sits beside the board. Here it is its own tab.</p></div><span class="sp"></span><button class="btn pri">+ New assistant</button></div>
+      <div id="asstview"></div>
+    </div>
+
+    <!-- DASHBOARDS -->
+    <div class="view" id="view-dash">
+      <div class="ov-head"><div><h2>Dashboards</h2><p>For projects and for you. Ask Bob to build or change one; click a card to see it. Data refreshes by script, and Bob says when a refresh uses AI.</p></div><span class="sp"></span><button class="btn pri" id="newdash">+ Ask Bob for a dashboard</button></div>
+      <div class="lane-h"><b>Projects</b> · 3</div>
+      <div class="grid">
+        <div class="dcard" data-d="Bugs and errors per day · Contigos · Julian"><div class="top" style="display:flex;gap:6px;font-size:11px;color:var(--muted)"><span class="sw" style="background:#7b8cff;width:7px;height:7px;border-radius:2px;margin-top:4px"></span>Contigos · Julian<span style="flex:1"></span><span class="by bob">made by Bob</span></div><div class="ttl" style="font-weight:600">Bugs and errors per day</div><div class="spark warn"><i style="height:30%"></i><i style="height:55%"></i><i style="height:40%"></i><i style="height:80%"></i><i style="height:50%"></i><i style="height:35%"></i><i style="height:20%"></i></div><div class="meta"><span>refreshed 12m ago</span><span>script</span></div></div>
+        <div class="dcard" data-d="Agents and cost this week · Joint Bob"><div class="top" style="display:flex;gap:6px;font-size:11px;color:var(--muted)"><span class="sw" style="background:#3fcfa8;width:7px;height:7px;border-radius:2px;margin-top:4px"></span>Joint Bob<span style="flex:1"></span><span class="by">yours</span></div><div class="ttl" style="font-weight:600">Agents and cost this week</div><div class="spark"><i style="height:40%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:70%"></i><i style="height:90%"></i><i style="height:55%"></i><i style="height:65%"></i></div><div class="meta"><span>refreshed 1h ago</span><span>script</span></div></div>
+        <div class="dcard" data-d="Slice progress · DAK Live"><div class="top" style="display:flex;gap:6px;font-size:11px;color:var(--muted)"><span class="sw" style="background:#f28b5b;width:7px;height:7px;border-radius:2px;margin-top:4px"></span>DAK Live<span style="flex:1"></span><span class="by bob">made by Bob</span></div><div class="ttl" style="font-weight:600">Slice progress</div><div class="spark"><i style="height:100%"></i><i style="height:100%"></i><i style="height:100%"></i><i style="height:70%"></i><i style="height:30%"></i><i style="height:10%"></i></div><div class="meta"><span>refreshed 3h ago</span><span>AI refresh</span></div></div>
+      </div>
+      <div class="lane-h"><b>For me</b> · 2 · not tied to a project</div>
+      <div class="grid">
+        <div class="dcard" data-d="My day · agents, reviews, spend"><div class="top" style="display:flex;gap:6px;font-size:11px;color:var(--muted)">Workspace<span style="flex:1"></span><span class="by bob">made by Bob</span></div><div class="ttl" style="font-weight:600">My day</div><div class="meta"><span>6 running</span><span>2 need me</span><span>3 to review</span></div><div class="meta"><span>refreshed live</span></div></div>
+        <div class="dcard" data-d="Cost by project · this month"><div class="top" style="display:flex;gap:6px;font-size:11px;color:var(--muted)">Workspace<span style="flex:1"></span><span class="by bob">made by Bob</span></div><div class="ttl" style="font-weight:600">Cost by project, this month</div><div class="spark"><i style="height:90%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:20%"></i><i style="height:12%"></i></div><div class="meta"><span>refreshed 20m ago</span><span>script</span></div></div>
+      </div>
+    </div>
+
+    <!-- CLUSTERS -->
+    <div class="view" id="view-cluster">
+      <div class="cl-h"><b style="font-size:15px">Cluster</b><span class="seg"><button class="on">Sela team</button><button>Contigos</button><button>Family</button></span><span class="hint">3 people · 4 machines · only what each shares with you</span></div>
+      <div class="lane-h"><b>Matan</b> · Matan's Mac · 2 running</div>
+      <div class="grid">
+        <div class="card ro" data-p="dak"><div class="top"><span class="sw" style="background:#f28b5b"></span>DAK Live <span class="sp"></span><span class="by">Matan</span></div><div class="ttl">Slice 8 — creator payouts</div><div class="live"><span class="pulse"></span><span>Writing the payout reconciliation job…</span></div><div class="meta"><span>Claude · Opus</span><span>running <b>41m</b></span></div><div class="drill"><div class="lbl">Summary</div>Slice 8 unit 1 of 3: Stripe Connect payouts, test fixtures pending.</div></div>
+        <div class="card ro" data-p="dak"><div class="top"><span class="sw" style="background:#f28b5b"></span>DAK Live <span class="sp"></span><span class="by">Matan</span></div><div class="ttl">Community Plus billing — dev Terraform plan</div><div class="live"><span class="pulse"></span><span>Reading the AWS dev backend state…</span></div><div class="meta"><span>Claude · Sonnet</span><span>running <b>9m</b></span></div><div class="drill"><div class="lbl">Summary</div>Manual plan only, nothing applied.</div></div>
+      </div>
+      <div class="lane-h"><b>Ido</b> · Ido's Mac · 1 running</div>
+      <div class="grid">
+        <div class="card ro" data-p="kms"><div class="top"><span class="sw" style="background:#e3c55b"></span>KMS trunk <span class="sp"></span><span class="by">Ido</span></div><div class="ttl">Design studio: table component</div><div class="live"><span class="pulse"></span><span>Comparing kit 2.4 and 2.6 table props…</span></div><div class="meta"><span>Claude · Sonnet</span><span>running <b>22m</b></span></div><div class="drill"><div class="lbl">Summary</div>UI kit audit for the table.</div></div>
+      </div>
+      <p class="hint" style="margin:0">Click any card to dive in. Other people's agents open read-only. Bob can summarise them and tell you what they're doing, but never answers for them.</p>
+    </div>
+
+    <!-- MEMORY -->
+    <div class="view" id="view-memory">
+      <div class="ov-head"><div><h2>Bob's memory</h2><p>One file per topic, linked to each other. Bob sees the list of topics and one line each, and opens a topic when it looks relevant. Edit anything.</p></div><span class="sp"></span><span class="search" style="width:240px">Search topics…</span><button class="btn pri">+ Topic</button></div>
+      <div class="mtabs"><span class="seg" id="mseg"><button class="on" data-m="topics">Topics</button><button data-m="changes">What Bob changed <span class="on2">4</span></button></span><label class="hint"><input type="checkbox" id="ask"> Ask me before Bob saves anything</label></div>
+      <div class="chg" id="chg" style="display:none">
+        <div class="ch"><div class="h"><b>how-ilia-works</b><span>edited <span class="newb">new</span></span><span class="sp"></span><span>12 min ago</span></div><div class="df2"><span class="d">- Plans first.</span><br><span class="a">+ Plans first and approves plans himself; builds only after approval.</span></div><div class="src">Learned from your message "plan, then I approve" in <u>Control center — design and mock</u> · why: you corrected Bob twice</div><div class="acts"><button class="btn pri">Keep</button><button class="btn">Edit</button><button class="btn">Revert</button></div></div>
+        <div class="ch"><div class="h"><b>automations-conventions</b><span>new topic <span class="newb">new</span></span><span class="sp"></span><span>1h ago</span></div><div class="df2"><span class="a">+ Daily reports run on the homeserver at 07:00.</span><br><span class="a">+ Hourly checks look back one hour only.</span></div><div class="src">From <u>chat with Bob</u> · why: you set up the slow query report</div><div class="acts"><button class="btn pri">Keep</button><button class="btn">Edit</button><button class="btn">Revert</button></div></div>
+        <div class="ch"><div class="h"><b>mobile-ui</b><span>edited</span><span class="sp"></span><span>yesterday</span></div><div class="df2"><span class="a">+ Tools and Costs are out of the mobile menu.</span></div><div class="src">From <u>Mobile menu: quick actions</u> · kept</div></div>
+        <div class="ch"><div class="h"><b>dak-live-slices</b><span>edited</span><span class="sp"></span><span>2 days ago</span></div><div class="df2"><span class="d">- Slice 7 is Matan's.</span><br><span class="a">+ Slice 7 is on Ilia's Mac, Slice 8 is Matan's.</span></div><div class="src">From your correction in <u>Slice 7 — explore map loading</u> · reverted once, then kept</div></div>
+        <p class="hint">Every change keeps its history: who or what taught Bob, when, and the earlier text. Nothing is deleted without you.</p>
+      </div>
+      <div class="mem" id="memtopics">
+        <div class="tp">
+          <button class="tpi on" data-t="prefs"><b>how-ilia-works</b><small>Plans before building, wants to approve plans, no unrequested worktrees</small></button>
+          <button class="tpi" data-t="gate"><b>release-gate</b><small>Pushes need the iliagerman token; first push is blocked once</small> <span class="rd">read for your last task</span></button>
+          <button class="tpi" data-t="dak"><b>dak-live-slices</b><small>Slice 7 is Ilia's, Slice 8 is Matan's; investigations are read-only</small></button>
+          <button class="tpi" data-t="julian"><b>julian-prod-fixes</b><small>Fail-first API test, just recipes only, no unit tests</small></button>
+          <button class="tpi" data-t="mobile"><b>mobile-ui</b><small>Menu favourites: mark done, note, new conversation, secret, auto respond</small> <span class="rd">read for your last task</span></button>
+          <button class="tpi" data-t="x"><b>homeserver-ops</b><small>Cleanup crons, deploy retries, no push deploys</small></button>
+          <div class="pager">1–6 of 14 <button class="btn">‹</button><button class="btn">›</button></div>
+        </div>
+        <div class="panel doc" id="doc"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ASSISTANTS RAIL (XL screens) -->
+  <aside class="asst" id="asstrail">
+    <div class="asst-h"><b>Assistants</b><span class="pill">4</span><span class="sp"></span><button class="btn">+ New</button></div>
+    <div class="alist" id="alist">
+        <div class="ac" data-a="personal"><div class="h"><span class="face">🗓</span><div><b>Personal assistant</b><small>Mac · <i class="busy idle"></i> idle</small></div><span class="sp"></span><span class="tog" title="Bob may ask"></span></div>
+          <div class="has"><span>Google calendar</span><span>Gmail</span><span>WhatsApp login</span><span>Telegram</span></div>
+          <div class="last">Bob asked "what's on tomorrow?" · 3 s · 10 min ago</div></div>
+        <div class="ac" data-a="marketing"><div class="h"><span class="face">📣</span><div><b>Marketing agent</b><small>Homeserver · <i class="busy"></i> answering Bob</small></div><span class="sp"></span><span class="tog"></span></div>
+          <div class="has"><span>LinkedIn login</span><span>Brand guide files</span><span>Canva MCP</span><span>Landing page skill</span></div>
+          <div class="last">Bob is asking "is the 2.212 launch post ready?"</div></div>
+        <div class="ac" data-a="work"><div class="h"><span class="face">💼</span><div><b>Work assistant</b><small>Mac · <i class="busy idle"></i> idle</small></div><span class="sp"></span><span class="tog"></span></div>
+          <div class="has"><span>Work calendar</span><span>KMS Jira MCP</span></div>
+          <div class="last">Last asked yesterday · booked "Sync with Noa"</div></div>
+        <div class="ac off" data-a="shopping"><div class="h"><span class="face">🛒</span><div><b>Shopping assistant</b><small>Homeserver · idle</small></div><span class="sp"></span><span class="tog off"></span></div>
+          <div class="has"><span>Amazon login</span></div>
+          <div class="why2">Can't be asked: its project is shared with Matan, so answers could reach him.</div></div>
+        <p class="hint" style="margin:0">Your own assistants on every machine of your relay cluster. Just ask Bob: he asks them when your message needs what they have. Click one to open its chat; they answer as you, with their own logins and tools. Other people's assistants only through what they publish.</p>
+      </div>
+  </aside>
+
+  <!-- RIGHT: CHAT WITH BOB -->
+  <aside class="chat">
+    <div class="rz" id="rz" title="Drag to resize"></div>
+    <div class="chat-h"><span class="bot">◉</span><div><b>Bob</b><small>Acts as you in every project</small></div><span class="sp"></span><button class="bell" id="bell" title="Incoming triggers that can wait">🔔<span class="bn">3</span></button><button class="mon" id="mon" title="Pause or restore Bob watching and answering your agents"><i></i><span>Monitoring</span></button><button class="btn" id="side" title="Move chat to the other side">⇄</button><button class="btn">History</button></div>
+    <div class="inbox" id="inbox"><h5><b>Incoming · can wait</b><span class="sp"></span><button class="btn">Dismiss all</button></h5>
+      <div class="tr2"><b>GitHub issue #482 · Joint Bob</b><span>"Sync stops after repeated failures" opened by matan</span><small>webhook · 14 min ago · decision model: not urgent (0.93)</small><div class="acts"><button class="btn">Open</button><button class="btn pri">Ask Bob to triage</button><button class="btn">Dismiss</button></div></div>
+      <div class="tr2"><b>Stripe test event · DAK Live</b><span>invoice.payment_failed in test mode</span><small>webhook · 1h ago · not urgent (0.97)</small><div class="acts"><button class="btn">Open</button><button class="btn">Dismiss</button></div></div>
+      <div class="tr2"><b>GitHub PR merged · Contigos · Julian</b><span>"Fix agent filter" merged to main by ido</span><small>webhook · 2h ago · decision model 0.62 &lt; 0.90, so Bob checked the PR: not urgent</small><div class="acts"><button class="btn">Open</button><button class="btn">Dismiss</button></div></div>
+      <small class="hint">Everything the decision model rates urgent shows in the chat instead. Below 90% confidence the agent rates it.</small></div>
+    <div class="paused" id="paused">⏸ Bob is paused. Agents keep running; nobody answers for them, and questions wait for you on the board.<span class="sp"></span><button class="btn warn" id="resume">Restore</button></div>
+    <div class="cf" id="cf"><select id="cfp"><option value="">All projects</option><option value="jb">Joint Bob</option><option value="dak">DAK Live</option><option value="julian">Contigos · Julian</option><option value="dba">dba-agent</option><option value="all">General</option></select>
+      <button class="fchip on" data-i="">All</button><button class="fchip" data-i="imp">Needs me</button><button class="fchip" data-i="rep">Reports</button><button class="fchip" data-i="fyi">FYI</button><span class="cnt" id="cfn"></span></div>
+    <div class="msgs" id="msgs">
+      <div class="day">Today</div>
+      <div class="rep"><span class="who">MORNING REPORT · 08:00 · scheduled for Bob · also sent to Telegram</span>
+        <ul><li><b>Joint Bob</b>: review counter fixed overnight, ready to review. Syncthing plan waits for your approval.</li>
+        <li><b>Contigos · Julian</b>: 1 question (VPlans fix choice). Hourly error check: 0 new errors in 9 runs.</li>
+        <li><b>DAK Live</b>: Slice 7 still running (1h). Matan pushed 4 commits to Slice 8.</li>
+        <li><b>Incoming</b>: 3 can wait (GitHub #482, Stripe test, merged PR).</li>
+        <li><b>Spend</b> yesterday: $18.40, mostly Joint Bob.</li></ul>
+        <div class="acts"><button class="btn">Answer the Julian question</button><button class="btn">Review the plan</button></div></div>
+      <div class="m u">also send me an evening report at 7pm, same projects, with cost by project</div>
+      <div class="via"><span class="d"></span><b>Automations</b> · scheduled for Bob · daily 19:00 → chat + Telegram <u class="why-t">Show</u><span class="why">Created "Evening report" owned by Bob, covering all projects. It runs on Bob's node and posts here and to Telegram.</span></div>
+
+      <div class="m u">what's on my calendar tomorrow, and is the marketing post for 2.212 ready?</div>
+      <div class="via"><span class="d"></span>Asked <b>Personal assistant</b> · Google calendar · 3 s <u class="why-t">Show</u><span class="why">Bob → Personal assistant: "What's on Ilia's calendar tomorrow? Titles and times." Answer: "09:30 dentist, 13:00 lunch with Dana, 17:00 kids pickup."</span></div>
+      <div class="via"><span class="d"></span>Asked <b>Marketing agent</b> · LinkedIn, brand guide · 6 s <u class="why-t">Show</u><span class="why">Bob → Marketing agent: "Is the LinkedIn post for release 2.212 ready? Status and anything blocking." Answer: "Draft ready, needs the new screenshot of pool choices; scheduled for Thursday 10:00 if approved."</span></div>
+      <div class="m a">Tomorrow: dentist 09:30, lunch with Dana 13:00, kids pickup 17:00.
+The 2.212 LinkedIn post is drafted and set for Thursday 10:00. Marketing needs a new screenshot of pool choices first. Want me to start a Joint Bob task to capture it?</div>
+      <div class="m u">what's running in dak live?</div>
+      <div class="via"><span class="d"></span><b>DAK Live</b> · short, answered here <u class="why-t">Why</u><span class="why">Decision model 0.97 ≥ 0.90, so no agent was needed. Picked DAK Live out of 8 recent projects. Short: a question about current state, answered from summaries. Memory read: dak-live-slices.</span></div>
+      <div class="m a">Two conversations are running in DAK Live:<ul><li><b>Slice 7 explore map</b> (yours, 1h 5m) is fixing the empty cluster list.</li><li><b>Community Plus billing</b> (I started it, 25m) is read-only. It found that dev reads a mocked Stripe price ID.</li></ul>Nothing is waiting for you there.</div>
+
+      <div class="m u">the mobile menu needs quick access to mark as done, new note, new conversation, add secret, auto respond</div>
+      <div class="via"><span class="d"></span><b>Joint Bob</b> · long task → new conversation on Mac <u class="why-t">Why</u><span class="why">Decision model 0.92: project Joint Bob, long task. Memory read: mobile-ui, how-ilia-works. Started on Claude, same as me, with your usual brief. Bob turned on auto respond for it (UI tweaks with tests, routine questions expected) with your standing instructions; Bob is told when auto respond stops.</span></div>
+      <div class="m a">Started <u style="color:var(--accent);text-decoration:none">Mobile menu: quick actions</u> in Joint Bob. I'll tell you when it's ready to review, or if it needs you.</div>
+
+      <div class="m u">why does the sync keep stopping?</div>
+      <div class="via"><span class="d" style="background:var(--warn)"></span>Decision model 0.48 &lt; 0.90, so <b>Claude · Opus</b> decided <u class="why-t">Why</u><span class="why">Opus read the recent Joint Bob and Julian headlines and was still split (0.55 / 0.35), so it asks you rather than guess.</span></div>
+      <div class="pick"><span>Which project do you mean?</span><div class="chips"><button class="chip">Joint Bob <small>0.48</small></button><button class="chip">Contigos · Julian <small>0.31</small></button><button class="chip">Something else…</button></div><span class="hint">Asked only when both the decision model and Opus are unsure.</span></div>
+
+      <div class="esc"><span class="who">Needs you · Contigos · Julian · Fix VPlans 400</span><span>Two fixes work: skip non-CRM agents silently, or fail the whole plan with a clear error. Which do you want in prod?</span><div class="acts"><button class="btn warn">Skip silently</button><button class="btn warn">Fail with error</button><button class="btn">Reply…</button><button class="btn">Open</button></div></div>
+
+      <div class="report"><span class="who">Done · Joint Bob · Review counter</span><span>Fixed: opening a conversation now clears its review mark on every open page. 2 tests added, all pass. I checked the diff: 3 files.</span><div class="acts"><button class="btn pri">Review changes</button><button class="btn">Open conversation</button></div></div>
+
+      <div class="m u">pause the weekly dependency audit and add a daily 7am slow query report in dba-agent</div>
+      <div class="via"><span class="d"></span><b>Automations</b> · 2 changes <u class="why-t">Show</u><span class="why">Paused "Weekly dependency audit" (Joint Bob). Created "DB slow query report" (dba-agent, daily 07:00, Homeserver).</span></div>
+      <div class="urg"><span class="who">URGENT · webhook · AWS alarm → Contigos · Julian</span><span>Prod backend 5xx rate is 14% for 5 minutes (alarm julian-prod-5xx). Rated urgent by the decision model (0.95).</span><div class="acts"><button class="btn warn">Investigate (read-only)</button><button class="btn">Open the alarm</button><button class="btn">Snooze 1h</button></div></div>
+      <div class="via"><span class="d"></span><b>You chose Investigate</b> · started "Prod 5xx — read-only investigation" on Claude, same as me</div>
+      <div class="grd"><span class="who">NEEDS YOUR OK · Guardian · Contigos · Julian · Prod 5xx</span><span>The agent wants to force a new prod deployment: <code>aws ecs update-service --cluster julian-prod --force-new-deployment</code>. Rule "production or destructive" (decision model, 0.98).</span><span class="hint">Bob never approves these. Nobody answering in 10 minutes blocks it.</span><div class="acts"><button class="btn warn">Allow once</button><button class="btn">Block</button><button class="btn">Open</button></div></div>
+      <div class="via"><span class="d" style="background:var(--violet)"></span><b>Auto respond ended</b> · Joint Bob · Review counter · stop instruction held <u class="why-t">What Bob did</u><span class="why">Auto respond stopped because "the agent says the work is done". Bob read the last message, checked the tests pass, and moved the card to Done · ready for review instead of answering.</span></div>
+      <div class="m u">build me a dashboard of bugs per day for julian, and one for me with what needs my attention and spend by project</div>
+      <div class="via"><span class="d"></span><b>Dashboards</b> · 2 created <u class="why-t">Show</u><span class="why">Project dashboard "Bugs and errors per day" in Contigos · Julian (data script; refresh on demand). Personal dashboard "My day" in your workspace. Neither refreshes by AI.</span></div>
+      <div class="m a">Done. Both are under Dashboards. "Bugs and errors per day" reads the issue tracker and CloudWatch with a script, so refreshing it costs nothing extra.<div class="acts" style="margin-top:6px"><button class="btn pri" data-open="dash">Open dashboards</button></div></div>
+      <div class="m u">move all my running jobs from the mac to the homeserver, I'm closing the laptop</div>
+      <div class="via"><span class="d"></span><b>Move jobs</b> · Mac → Homeserver · decision model 0.96 <u class="why-t">Why</u><span class="why">Read as a request to move conversations, not a task. Listed the 4 running on the Mac and checked each one against the homeserver.</span></div>
+      <div class="move"><span class="who">Move 4 running jobs to Homeserver?</span>
+        <div class="mv"><span class="st run"></span><span>Mobile menu: quick actions <small>· moves when its current turn ends (about 2 min)</small></span></div>
+        <div class="mv"><span class="st run"></span><span>Community Plus billing <small>· moves when its current turn ends</small></span></div>
+        <div class="mv"><span class="st run"></span><span>Replace Syncthing — plan <small>· waiting for you, so it moves now</small></span></div>
+        <div class="mv"><span class="st you"></span><span>Slice 7 — explore map <small>· can't move: Pi on Bedrock isn't set up on the Homeserver. Stop it, or leave it?</small></span></div>
+        <div class="acts"><button class="btn pri">Move 3</button><button class="btn warn">Move all 4 now: stop, move, continue</button><button class="btn">Cancel</button></div>
+      </div>
+      <div class="m a">Done. The audit is paused, and the slow query report runs daily at 07:00 on the homeserver. Both are under Automations.</div>
+      <div class="via"><span class="d" style="background:var(--violet)"></span>Learned · saved to <b>automations-conventions</b> <u class="why-t">Show</u><span class="why">"Daily reports run on the homeserver, 07:00." Added to the topic. You can edit or remove it under Bob's memory.</span></div>
+    </div>
+    <div class="compose">
+      <div class="pop" id="pop"><b>Bob's own agent</b><label><span>Harness</span><select><option>Claude</option><option>Pi</option><option>Kiro</option></select></label><label><span>Model</span><select><option>Opus</option><option>Sonnet</option><option>Haiku</option></select></label><label><span>Effort</span><select><option>low</option><option selected>medium</option><option>high</option></select></label><label><span>Decision model</span><select><option>TypeSafe</option><option>Laya</option></select></label><label><span>Min. confidence</span><input value="90" style="max-width:60px">%</label><div class="lockrow">✈️ <span><b>Telegram: @ilia_bob_bot · connected · answers only you.</b> No groups, no one else. <u style="color:var(--accent);text-decoration:none">Manage</u></span></div>
+      <div class="lockrow">🔒 <span><b>Production or destructive steps always ask you.</b> Guardian rule, checked by the decision model, on for Bob and every agent it starts. Can't be turned off here.</span></div><label><span>Auto respond</span><select><option selected>Bob decides per conversation</option><option>Bob always answers itself</option><option>Never use auto respond</option></select></label><span class="hint">Below this, the agent above decides. Jobs Bob starts use this harness unless you say otherwise ("do it with Pi on Bedrock").</span></div>
+      <div class="scope">Project: <button class="chip">Auto</button><button class="chip" id="agentchip">Claude · Opus · medium ▾</button><span class="hint">decision ≥ 90%</span></div>
+      <div class="box"><textarea placeholder="Ask about any project, or give Bob a task…"></textarea><button class="send">Send</button></div>
+    </div>
+  </aside>
+</div>
+
+<div class="phones" id="phones">
+  <div class="ph"><b>Joint Bob on the phone · chat first</b><div class="frame">
+    <div class="sbar"><span>09:41</span><span>●●● 5G</span></div>
+    <div class="mh"><span class="bot" style="width:28px;height:28px;border-radius:9px;background:color-mix(in srgb,var(--accent) 25%,var(--surface));display:grid;place-items:center">◉</span><div><b>Bob</b><small style="display:block;color:var(--muted);font-size:11px">● Monitoring · 2 machines</small></div><span class="sp"></span><button class="bell">🔔<span class="bn">3</span></button><button class="btn">⋯</button></div>
+    <div class="strip"><button class="chip r" data-sheet>1 needs your OK</button><button class="chip y" data-sheet>2 need you</button><button class="chip" data-sheet>6 running</button><button class="chip" data-sheet>1 to review</button><button class="chip">▦ Dashboards</button></div>
+    <div class="mmsgs">
+      <div class="rep"><span class="who">MORNING REPORT · 08:00</span><span>Joint Bob: 1 fix to review, 1 plan to approve. Julian: 1 question, no new errors. DAK Live: Slice 7 running.</span><div class="acts"><button class="btn">Full report</button></div></div>
+      <div class="grd"><span class="who">NEEDS YOUR OK · Julian · Prod 5xx</span><span>Force a new prod deployment (<code>ecs update-service --force-new-deployment</code>).</span><div class="acts"><button class="btn warn">Allow once</button><button class="btn">Block</button></div></div>
+      <div class="m u">🎤 0:06 · "what's waiting in dak live?"</div>
+      <div class="m a">Nothing waits for you in DAK Live. Slice 7 has been running 1h 5m and is fixing the empty cluster list.</div>
+      <div class="m u">start a read-only check of why julian prod restarts</div>
+      <div class="via"><span class="d"></span><b>Contigos · Julian</b> · long → new conversation</div>
+    </div>
+    <div class="mcomp"><div class="row2"><button class="chip">Auto ▾</button><button class="chip">Claude · Opus ▾</button></div><div class="row2"><input placeholder="Message Bob…"><button class="round">🎤</button><button class="round go">↑</button></div></div>
+    <div class="sheet" id="sheet"><span class="grab"></span><b>Agents</b>
+      <div class="mrow"><span class="st" style="background:var(--bad)"></span><span class="t">Prod 5xx — investigation<small>Julian · needs your OK · 1m</small></span><button class="btn warn">OK?</button></div>
+      <div class="mrow"><span class="st you"></span><span class="t">Fix VPlans 400<small>Julian · question for you · 7m</small></span><button class="btn">Answer</button></div>
+      <div class="mrow"><span class="st you"></span><span class="t">Replace Syncthing — plan<small>Joint Bob · approve plan · 38m</small></span><button class="btn">Review</button></div>
+      <div class="mrow"><span class="st run"></span><span class="t">Mobile menu: quick actions<small>Running UI tests · auto respond by Bob 3/10</small></span><button class="btn">Watch</button></div>
+      <div class="mrow"><span class="st run"></span><span class="t">Community Plus billing<small>Reading the Stripe webhook handler…</small></span><button class="btn">Watch</button></div>
+      <div class="mrow"><span class="st rev"></span><span class="t">Review counter fixed<small>Joint Bob · ready for review</small></span><button class="btn">Review</button></div>
+    </div>
+  </div><span class="tgnote">Tap a chip for the agents sheet. Tap again to close.</span></div>
+
+  <div class="ph"><b>Telegram · Bob's own bot · answers only you</b><div class="frame tg">
+    <div class="sbar"><span>09:41</span><span>●●● 5G</span></div>
+    <div class="mh"><span class="av">B</span><div><b>Bob</b><small style="display:block;color:#7f91a4;font-size:11px">bot</small></div><span class="sp"></span></div>
+    <div class="tgm">
+      <div class="tb">☀️ Morning report · 08:00
+• Joint Bob: review counter fixed, Syncthing plan waits for you
+• Julian: 1 question, 0 new errors
+• DAK Live: Slice 7 running 1h
+• 3 incoming can wait<small>08:00</small></div>
+      <div class="tb">🚨 Urgent · Julian prod 5xx at 14% for 5 min (AWS alarm)<small>09:12</small></div>
+      <div class="kb"><button>Investigate (read-only)</button><button>Snooze 1h</button></div>
+      <div class="tb me">🎤 0:07<small>09:13 ✓✓</small></div>
+      <div class="tb">I heard: "move everything off the Mac to the homeserver".
+3 can move: Mobile menu, Community Plus, Syncthing plan. Slice 7 can't (Pi on Bedrock isn't set up there).<small>09:13</small></div>
+      <div class="kb"><button>Move 3</button><button>Stop and move all now</button><button style="grid-column:span 2">Cancel</button></div>
+      <div class="tb">🔒 Needs your OK: the Julian agent wants to force a new prod deployment (<code>ecs update-service --force-new-deployment</code>). Guardian rule "production or destructive", 0.98.<small>09:15</small></div>
+      <div class="kb"><button>Allow once</button><button>Block</button><button style="grid-column:span 2">Open in Joint Bob</button></div>
+    </div>
+    <div class="tgc"><span>📎</span><input placeholder="Message"><span>🎤</span></div>
+  </div><span class="tgnote">Anyone else who messages the bot gets no answer, and groups are left at once.</span></div>
+</div>
+<div class="ws" id="ws">
+  <div class="bar"><b>Joint Bob</b><span class="tool">Projects</span><span class="tool">Canvas</span><span class="tool">Assistants</span><span class="tool">Settings</span><span style="flex:1"></span><span class="badge" title="Agents waiting for you">2</span><button class="cc" id="enter">◎ Control center <span class="key">⌘ .</span></button></div>
+  <div class="body"><div class="l">Your normal workspace: project list, conversations, the chat. (Design preview: the control center is one button or <span class="key">⌘ .</span> away, and <span class="key">Esc</span> brings you back. The red-yellow badge shows agents waiting for you even here. On a phone it is a shortcut on the app icon and a menu entry.)</div><div>Selected conversation</div></div>
+</div>
+<div class="modal dmodal" id="dmodal"><div class="dlg">
+  <div class="dh"><b id="d-title"></b><span class="sp"></span><button class="btn">Refresh</button><button class="btn">Ask Bob to change it</button><button class="btn" id="d-close">Close</button></div>
+  <div style="padding:14px;overflow:auto;display:flex;flex-direction:column;gap:12px">
+    <div class="big"><div class="stat"><b>3</b><small>bugs today</small></div><div class="stat"><b>41</b><small>errors today</small></div><div class="stat"><b style="color:var(--accent)">−38%</b><small>vs last week</small></div></div>
+    <div class="panel"><h3>Errors per day · last 14 days</h3><div class="chart"><i style="height:40%"></i><i style="height:55%"></i><i class="r" style="height:92%"></i><i style="height:60%"></i><i style="height:48%"></i><i style="height:44%"></i><i style="height:52%"></i><i style="height:38%"></i><i style="height:35%"></i><i style="height:30%"></i><i style="height:33%"></i><i style="height:26%"></i><i style="height:24%"></i><i style="height:20%"></i></div><span class="hint">The 3rd-day spike is the "not CRM users" bug; the fix landed on day 9 and errors have kept falling.</span></div>
+  </div>
+</div></div>
+<div class="modal amodal" id="amodal"><div class="dlg">
+  <div class="dh"><span class="face" id="a-face" style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--raised)"></span><div><b id="a-name"></b><small id="a-where" style="display:block;color:var(--dim);font-size:11px"></small></div><span class="sp"></span><span class="hint">Bob may ask</span><span class="tog" id="a-tog"></span><button class="btn">Settings</button><button class="btn" id="a-close">Close</button></div>
+  <div class="db"><div class="tr" id="a-chat"></div><div class="sd" id="a-side"></div></div>
+  <div class="df"><textarea id="a-box" placeholder="Message this assistant directly…"></textarea><button class="send">Send</button></div>
+  <div class="dfoot">This is the assistant's own chat. What Bob asked it shows in blue; you can talk to it here directly.</div>
+</div></div>
+<div class="modal" id="modal"><div class="dlg">
+  <div class="dh"><b id="m-title"></b><span class="sp"></span><span class="lock watch" id="m-lock">● Watching · Bob keeps driving</span><button class="btn" id="m-story">Story</button><button class="btn" id="m-ov">Overview</button><button class="btn warn" id="m-ctl">Take control</button><button class="btn" id="m-close">Close</button></div>
+  <div class="db"><div class="tr" id="m-tr"></div><div class="sd" id="m-side"></div></div>
+  <div class="df"><textarea id="m-box" placeholder="Reply to the agent yourself…"></textarea><button class="send">Send</button></div>
+  <div class="dfoot" id="m-foot">When you close this, Bob goes back to watching the agent.</div>
+</div></div>
+<script>
+  // Design-preview behaviour only: tabs, project filter, card drill-down, ticking timers, streaming live lines.
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const names = { jb:"Joint Bob", dak:"DAK Live", julian:"Contigos · Julian", kms:"KMS trunk", game:"game-like-another-work", dba:"dba-agent", my:"my-assistant" };
+  var show = function (view) {
+    $$(".tab").forEach(t => t.classList.toggle("on", t.dataset.view === view));
+    $$(".view").forEach(v => v.classList.toggle("on", v.id === "view-" + view));
+  }
+  $$(".tab").forEach(t => t.onclick = () => show(t.dataset.view));
+  $$(".proj").forEach(p => p.onclick = () => {
+    $$(".proj").forEach(x => x.classList.toggle("on", x === p));
+    const id = p.dataset.proj;
+    $$("#view-live .card").forEach(c => c.style.display = id === "all" || c.dataset.p === id ? "" : "none");
+    if (id === "all") { show("live"); return; }
+    document.getElementById("ov-name").textContent = names[id];
+    show("overview");
+  });
+  $$(".why-t").forEach(w => w.onclick = () => w.parentElement.classList.toggle("open"));
+
+  // --- v2 behaviour ---
+  const origShow = show;
+  show = function (view) { origShow(view); $$("#seg button").forEach(b => b.classList.toggle("on", b.dataset.mode === (view === "cluster" ? "cluster" : "live"))); };
+  $$("#seg button").forEach(b => b.onclick = () => show(b.dataset.mode));
+  const colors = ["", "#3fcfa8", "#f28b5b", "#7b8cff", "#e3c55b", "#c08bff", "#ef6b6b"];
+  $$("#view-live .card").forEach(c => {
+    const top = c.querySelector(".top"); c.draggable = true;
+    const g = Object.assign(document.createElement("span"), { className: "grip", textContent: "⠿", title: "Drag to move" });
+    const sw = Object.assign(document.createElement("input"), { type: "color", className: "swatch", title: "Pick a colour for this card", value: "#3a3f46" });
+    top.prepend(g); top.append(sw);
+    sw.onclick = e => e.stopPropagation();
+    sw.oninput = () => { c.style.setProperty("--cc", sw.value); c.style.setProperty("--tint", "color-mix(in srgb, " + sw.value + " 18%, var(--surface))"); c.style.borderColor = sw.value; };
+    c.ondragstart = () => c.classList.add("drag"); c.ondragend = () => c.classList.remove("drag");
+    c.ondragover = e => { e.preventDefault(); const d = document.querySelector(".card.drag"); if (d && d !== c && d.parentElement === c.parentElement) c.parentElement.insertBefore(d, c); };
+  });
+  const modal = document.getElementById("modal");
+  let ctl = false, cur = null;
+  function setMode(take) {
+    ctl = take; const ro = cur.classList.contains("ro");
+    const lock = document.getElementById("m-lock");
+    lock.textContent = ro ? "● Read-only · another person's agent" : take ? "● You're in control · Bob is paused here until you close" : "● Watching · Bob keeps driving";
+    lock.className = "lock " + (ro ? "ro" : take ? "" : "watch");
+    const b = document.getElementById("m-ctl"); b.style.display = ro ? "none" : ""; b.textContent = take ? "Give back to Bob" : "Take control"; b.className = take ? "btn" : "btn warn";
+    const box = document.getElementById("m-box"); box.disabled = !take; box.placeholder = take ? "Reply to the agent yourself…" : ro ? "Read-only" : "Take control to reply yourself";
+    document.getElementById("m-foot").textContent = ro ? "Bob can summarise this agent for you but never answers for it." : take ? "When you close this, Bob goes back to watching the agent." : "Watching doesn't stop Bob. Take control to reply yourself.";
+  }
+  function dive(c, take) {
+    cur = c;
+    const title = c.querySelector(".ttl").textContent;
+    document.getElementById("m-title").textContent = title;
+    const live = c.querySelector(".live span:last-child, .q");
+    const by = c.querySelector(".by").textContent;
+    document.getElementById("m-tr").innerHTML = '<span class="tl">' + (by === "started by Bob" ? "Brief Bob wrote" : "Brief") + '</span><div class="m u">' + title + '. Investigate and report; follow the project rules.</div><span class="tl">Agent</span><div class="m a">Reading the code and the related tests first…</div><div class="m a">' + (live ? live.textContent : "") + '</div>';
+    const drill = c.querySelector(".drill");
+    document.getElementById("m-side").innerHTML = (drill ? drill.innerHTML : "") + '<div class="lbl">Where</div>' + [...c.querySelectorAll(".meta span")].map(x => x.textContent).join(" · ");
+    setMode(!!take && !c.classList.contains("ro"));
+    modal.classList.add("on");
+  }
+  document.getElementById("m-ctl").onclick = () => setMode(!ctl);
+  const toastEl = Object.assign(document.createElement("div"), { className: "toast" }); document.body.append(toastEl);
+  function toast(t) { toastEl.textContent = t; toastEl.classList.add("on"); clearTimeout(toastEl.t); toastEl.t = setTimeout(() => toastEl.classList.remove("on"), 2600); }
+  const storyMsg = () => toast("Writing the change story for this conversation. It opens here when ready.");
+  const ovMsg = () => toast("Making the Activity overview (the two-host movie). It plays here when ready.");
+  document.getElementById("m-story").onclick = storyMsg; document.getElementById("m-ov").onclick = ovMsg;
+  $$(".card").forEach(c => {
+    const q = document.createElement("div"); q.className = "quick";
+    const ro = c.classList.contains("ro");
+    q.innerHTML = '<button class="qb" data-a="watch">👁 Watch</button>' + (ro ? "" : '<button class="qb ctl" data-a="take">✋ Take control</button>') + '<button class="qb" data-a="dash">▦ Dashboard</button><button class="qb" data-a="story">Story</button><button class="qb" data-a="ov">Overview</button>';
+    c.append(q);
+    q.onclick = e => { const a = e.target.closest(".qb"); if (!a) return; e.stopPropagation(); if (a.dataset.a === "watch") dive(c, false); if (a.dataset.a === "take") dive(c, true); if (a.dataset.a === "dash") { document.getElementById("d-title").textContent = "Dashboard · " + c.querySelector(".top").textContent.replace(/\s+/g, " ").trim().split(" started")[0]; document.getElementById("dmodal").classList.add("on"); } if (a.dataset.a === "story") storyMsg(); if (a.dataset.a === "ov") ovMsg(); };
+  });
+  // monitor pause / restore
+  const mon = document.getElementById("mon"), paused = document.getElementById("paused");
+  function setMon(off) { mon.classList.toggle("off", off); mon.querySelector("span").textContent = off ? "Paused" : "Monitoring"; paused.classList.toggle("on", off); }
+  mon.onclick = () => setMon(!mon.classList.contains("off"));
+  document.getElementById("resume").onclick = () => setMon(false);
+  $$(".card").forEach(c => { c.onclick = e => { if (!e.target.closest(".btn,.swatch,.grip,.qb")) dive(c, false); }; });
+  document.getElementById("m-close").onclick = () => modal.classList.remove("on");
+  modal.onclick = e => { if (e.target === modal) modal.classList.remove("on"); };
+  const app = document.querySelector(".app");
+  document.getElementById("side").onclick = () => app.classList.toggle("chatleft");
+  const rz = document.getElementById("rz");
+  rz.onmousedown = e => {
+    rz.classList.add("drag");
+    const mv = ev => { const left = app.classList.contains("chatleft"); const x = left ? ev.clientX - 230 : innerWidth - ev.clientX; app.style.setProperty("--chatw", Math.max(300, Math.min(820, x)) + "px"); };
+    const up = () => { rz.classList.remove("drag"); removeEventListener("mousemove", mv); removeEventListener("mouseup", up); };
+    addEventListener("mousemove", mv); addEventListener("mouseup", up); e.preventDefault();
+  };
+  document.getElementById("agentchip").onclick = () => document.getElementById("pop").classList.toggle("on");
+  const docs = {
+    prefs: "<h2>how-ilia-works</h2><p>Plans before building and approves plans himself. Never create worktrees unless asked. Wants the decision model first for speed. Prefers short headlines over long summaries.</p><p><b>Related:</b> <span class='lnk'>release-gate</span> · <span class='lnk'>mobile-ui</span></p><p class='mem-note'>Learned from 14 interactions · last updated today</p>",
+    gate: "<h2>release-gate</h2><p>Pushes use the iliagerman token for that one command. The release gate blocks the first push once; push again. Never force-push main.</p><ul><li>Check <code>git rev-list --left-right --count HEAD...origin/main</code> first.</li></ul><p><b>Related:</b> <span class='lnk'>how-ilia-works</span> · <span class='lnk'>homeserver-ops</span></p><p class='mem-note'>Bob opened this for your last task and added one line to the brief.</p>",
+    dak: "<h2>dak-live-slices</h2><p>Slice 4 is Ilia's, Slice 7 is on Ilia's Mac, Slice 8 is Matan's. Investigations are read-only: no code, push, merge or deploy. GitHub main is the source of truth.</p><p><b>Related:</b> <span class='lnk'>how-ilia-works</span></p>",
+    julian: "<h2>julian-prod-fixes</h2><p>Fail-first backend API or integration test, <code>just</code> recipes only, no unit tests. Production evidence goes into the brief (CloudWatch group, time, request id).</p>",
+    mobile: "<h2>mobile-ui</h2><p>Menu favourites: mark as done, new note, new conversation, add secret, auto respond, activity. Tools and Costs are out of the mobile menu. Settings must never scroll sideways.</p><p><b>Related:</b> <span class='lnk'>how-ilia-works</span></p>",
+    x: "<h2>homeserver-ops</h2><p>Hourly pruning of pre-deploy backups, daily Docker prune. Pushes from the homeserver do not deploy.</p>"
+  };
+  const doc = document.getElementById("doc"); doc.innerHTML = docs.prefs;
+  $$(".tpi").forEach(t => t.onclick = () => { $$(".tpi").forEach(x => x.classList.toggle("on", x === t)); doc.innerHTML = docs[t.dataset.t]; });
+
+
+  // --- v3 behaviour ---
+  const pid = { "Joint Bob": "jb", "DAK Live": "dak", "Contigos · Julian": "julian", "KMS trunk": "kms", "dba-agent": "dba" };
+  $$("#view-auto tbody tr").forEach(r => { r.dataset.p = pid[r.children[3].textContent.trim()] || ""; });
+  const topicProj = { gate: "jb", mobile: "jb", dak: "dak", julian: "julian" };
+  $$(".tpi").forEach(t => { if (topicProj[t.dataset.t]) t.dataset.p = topicProj[t.dataset.t]; });
+  let filter = new Set();
+  function applyFilter() {
+    $$("#view-live .card, #view-cluster .card").forEach(c => { c.style.display = !filter.size || filter.has(c.dataset.p) ? "" : "none"; });
+    $$("#view-auto tbody tr").forEach(r => { r.style.display = !filter.size || filter.has(r.dataset.p) ? "" : "none"; });
+    $$(".tpi").forEach(t => { t.style.display = !filter.size || !t.dataset.p || filter.has(t.dataset.p) ? "" : "none"; });
+    $$(".fchip").forEach(f => f.classList.toggle("on", f.dataset.f === "all" ? !filter.size : filter.has(f.dataset.f)));
+    $$(".proj").forEach(x => x.classList.toggle("on", x.dataset.proj === "all" ? !filter.size : filter.size === 1 && filter.has(x.dataset.proj)));
+  }
+  $$(".fchip").forEach(f => f.onclick = () => { if (f.dataset.f === "all") filter.clear(); else if (filter.has(f.dataset.f)) filter.delete(f.dataset.f); else filter.add(f.dataset.f); applyFilter(); });
+  $$(".proj").forEach(x => x.addEventListener("click", () => { filter.clear(); if (x.dataset.proj !== "all") filter.add(x.dataset.proj); applyFilter(); }));
+  // free layout
+  const board = document.getElementById("view-live");
+  function toFree() {
+    const base = board.getBoundingClientRect();
+    const spots = $$("#view-live .card").map(c => { const r = c.getBoundingClientRect(); return [c, r.left - base.left + board.scrollLeft, r.top - base.top + board.scrollTop]; });
+    board.classList.add("free");
+    spots.forEach(([c, x, y]) => { c.draggable = false; c.style.left = x + "px"; c.style.top = y + "px"; });
+  }
+  function toGrouped() { board.classList.remove("free"); $$("#view-live .card").forEach(c => { c.style.left = c.style.top = ""; c.draggable = true; }); }
+  $$("#layout button").forEach(b => b.onclick = () => { $$("#layout button").forEach(x => x.classList.toggle("on", x === b)); if (b.dataset.l === "free") toFree(); else toGrouped(); });
+  $$("#view-live .card .grip").forEach(g => g.addEventListener("mousedown", e => {
+    if (!board.classList.contains("free")) return;
+    const c = g.closest(".card"), sx = e.clientX - c.offsetLeft, sy = e.clientY - c.offsetTop;
+    const mv = ev => { c.style.left = Math.max(0, ev.clientX - sx) + "px"; c.style.top = Math.max(0, ev.clientY - sy) + "px"; };
+    const up = () => { removeEventListener("mousemove", mv); removeEventListener("mouseup", up); };
+    addEventListener("mousemove", mv); addEventListener("mouseup", up); e.preventDefault(); e.stopPropagation();
+  }));
+  document.getElementById("reset").onclick = () => {
+    toGrouped(); $$("#layout button").forEach(x => x.classList.toggle("on", x.dataset.l === "grid"));
+    $$("#view-live .card").forEach(c => { c.style.removeProperty("--cc"); c.style.removeProperty("--tint"); c.style.borderColor = ""; c.querySelector(".swatch").value = "#3a3f46"; }); filter.clear(); applyFilter();
+  };
+  // quick in and out
+  const ws = document.getElementById("ws");
+  const toggleCC = () => ws.classList.toggle("on");
+  document.getElementById("exit").onclick = toggleCC;
+  document.getElementById("enter").onclick = toggleCC;
+  addEventListener("keydown", e => { if (e.key === "Escape" && !modal.classList.contains("on")) ws.classList.add("on"); else if ((e.metaKey || e.ctrlKey) && e.key === ".") { e.preventDefault(); toggleCC(); } });
+  // memory sub-tabs
+  $$("#mseg button").forEach(b => b.onclick = () => { $$("#mseg button").forEach(x => x.classList.toggle("on", x === b)); document.getElementById("chg").style.display = b.dataset.m === "changes" ? "" : "none"; document.getElementById("memtopics").style.display = b.dataset.m === "topics" ? "" : "none"; });
+
+
+  // --- v5 behaviour ---
+  $$("#dash .dcard, #view-dash .dcard").forEach(c => c.onclick = () => { document.getElementById("d-title").textContent = c.dataset.d; document.getElementById("dmodal").classList.add("on"); });
+  document.getElementById("d-close").onclick = () => document.getElementById("dmodal").classList.remove("on");
+  document.getElementById("dmodal").onclick = e => { if (e.target.id === "dmodal") e.target.classList.remove("on"); };
+  document.getElementById("newdash").onclick = () => toast("Tell Bob what you want to see, for a project or for you. He builds it and it appears here.");
+  $$("[data-open=dash]").forEach(b => b.onclick = () => show("dash"));
+  document.getElementById("sidedash").onclick = () => show("dash");
+  document.getElementById("bell").onclick = () => document.getElementById("inbox").classList.toggle("on");
+
+
+  // --- v8 behaviour ---
+  document.getElementById("phonebtn").onclick = () => document.getElementById("phones").classList.toggle("on");
+  $$("[data-sheet]").forEach(b => b.onclick = () => document.getElementById("sheet").classList.toggle("on"));
+
+
+  // --- v9 behaviour: bulk, aggressive moves ---
+  const bulk = document.getElementById("bulk");
+  $$("#view-live .card").forEach(c => {
+    const box = Object.assign(document.createElement("input"), { type: "checkbox", className: "pick-box", title: "Select" });
+    c.querySelector(".top").prepend(box);
+    box.onclick = e => { e.stopPropagation(); c.classList.toggle("sel", box.checked); countSel(); };
+  });
+  function countSel() { const n = $$("#view-live .card.sel").length; document.getElementById("bulkn").textContent = n + " selected"; bulk.classList.toggle("on", board.classList.contains("selecting")); }
+  function selecting(on) { board.classList.toggle("selecting", on); if (!on) $$("#view-live .card").forEach(c => { c.classList.remove("sel"); c.querySelector(".pick-box").checked = false; }); countSel(); }
+  document.getElementById("selbtn").onclick = () => { show("live"); selecting(!board.classList.contains("selecting")); };
+  document.getElementById("bulkcancel").onclick = () => selecting(false);
+  $$(".foot a").forEach((a, i) => a.onclick = () => {
+    const from = i === 0 ? "Mac" : "Homeserver", to = i === 0 ? "Homeserver" : "Mac";
+    show("live"); selecting(true);
+    $$("#view-live .card").forEach(c => { const on = c.querySelector(".meta").textContent.includes(from) && !c.classList.contains("done"); c.classList.toggle("sel", on); c.querySelector(".pick-box").checked = on; });
+    document.getElementById("bulkto").value = to; document.getElementById("bulkfrom").textContent = "the " + from; document.getElementById("bulkto2").textContent = "the " + to; countSel();
+  });
+  document.getElementById("bulkto").onchange = e => { document.getElementById("bulkto2").textContent = "the " + e.target.value; };
+  document.getElementById("bulknow").onclick = () => { const n = $$("#view-live .card.sel").length; toast("Stopping " + n + " turns, moving them to " + document.getElementById("bulkto").value + ", then telling each to continue."); selecting(false); };
+  document.getElementById("bulklater").onclick = () => { const n = $$("#view-live .card.sel").length; toast(n + " conversations will move when their current turns end."); selecting(false); };
+
+
+  // --- v10 behaviour: assistants rail on XL, tab elsewhere ---
+  document.getElementById("asstview").innerHTML = document.getElementById("alist").outerHTML.replace('id="alist"', '');
+  const xlq = matchMedia("(min-width: 1700px)");
+  let xlForced = false;
+  function applyXl() { const on = xlForced || xlq.matches; app.classList.toggle("xl", on); if (on && document.getElementById("view-asst").classList.contains("on")) show("live"); document.getElementById("xlbtn").textContent = on ? "Normal layout" : "XL layout"; }
+  xlq.addEventListener("change", applyXl);
+  document.getElementById("xlbtn").onclick = () => { xlForced = !app.classList.contains("xl"); applyXl(); };
+  applyXl();
+
+
+  // --- v11 behaviour: click an assistant to open its chat ---
+  const asstData = {
+    personal: { face: "🗓", name: "Personal assistant", where: "Mac · idle", chat: '<div class="m u">remind me to call the bank on Thursday</div><div class="m a">Added for Thursday 10:00.</div><div class="bobq"><span class="who">Bob asked · 10 min ago · 3 s</span><span>What\'s on Ilia\'s calendar tomorrow? Titles and times.</span><span>→ 09:30 dentist, 13:00 lunch with Dana, 17:00 kids pickup.</span></div>', side: '<div class="lbl">Has</div>Google calendar · Gmail · WhatsApp login · Telegram<div class="lbl">Asked by Bob</div>3 times today, all read-only<div class="lbl">Memory</div>12 notes' },
+    marketing: { face: "📣", name: "Marketing agent", where: "Homeserver · answering Bob now", chat: '<div class="m u">draft the LinkedIn post for 2.212 around pool choices</div><div class="m a">Draft ready. I need a fresh screenshot of the pool choices screen before scheduling.</div><div class="bobq"><span class="who">Bob is asking · now</span><span>Is the LinkedIn post for release 2.212 ready? Status and anything blocking.</span><span class="hint">answering…</span></div>', side: '<div class="lbl">Has</div>LinkedIn login · Brand guide files · Canva MCP · Landing page skill<div class="lbl">Asked by Bob</div>1 time today<div class="lbl">Memory</div>Brand voice, posting times' },
+    work: { face: "💼", name: "Work assistant", where: "Mac · idle", chat: '<div class="bobq"><span class="who">Bob asked · yesterday · 5 s</span><span>Book 30 min with Noa on Thursday afternoon.</span><span>→ Booked "Sync with Noa", Thu 14:00–14:30.</span></div>', side: '<div class="lbl">Has</div>Work calendar · KMS Jira MCP<div class="lbl">Asked by Bob</div>yesterday, 1 booking' },
+    shopping: { face: "🛒", name: "Shopping assistant", where: "Homeserver · idle · can't be asked by Bob", chat: '<div class="m u">track the price of the 27" monitor</div><div class="m a">Tracking. It\'s at ₪1,290 today.</div>', side: '<div class="lbl">Has</div>Amazon login<div class="lbl">Why Bob can\'t ask</div>Its project is shared with Matan, so its answers could reach him.' }
+  };
+  const amodal = document.getElementById("amodal");
+  function openAsst(key) {
+    const d = asstData[key];
+    document.getElementById("a-face").textContent = d.face; document.getElementById("a-name").textContent = d.name; document.getElementById("a-where").textContent = d.where;
+    document.getElementById("a-chat").innerHTML = d.chat; document.getElementById("a-side").innerHTML = d.side;
+    document.getElementById("a-tog").className = key === "shopping" ? "tog off" : "tog";
+    amodal.classList.add("on");
+  }
+  document.addEventListener("click", e => {
+    const ac = e.target.closest(".ac[data-a]");
+    if (!ac || e.target.closest(".tog")) return;
+    openAsst(ac.dataset.a);
+  });
+  document.getElementById("a-close").onclick = () => amodal.classList.remove("on");
+  amodal.onclick = e => { if (e.target === amodal) amodal.classList.remove("on"); };
+
+
+  // --- v12 behaviour: label and filter the chat ---
+  (function () {
+    const msgs = document.getElementById("msgs");
+    const projOf = t => /MORNING REPORT|EVENING REPORT|calendar tomorrow|evening report at/i.test(t) ? "all" : /dba|slow query/i.test(t) ? "dba" : /DAK|Slice|Stripe|Community Plus/i.test(t) ? "dak" : /Julian|Contigos|VPlans|5xx|CRM/i.test(t) ? "julian" : /Joint Bob|mobile menu|review counter|Syncthing|sync|menu/i.test(t) ? "jb" : "all";
+    const names = { jb: "Joint Bob", dak: "DAK Live", julian: "Contigos · Julian", dba: "dba-agent", all: "General" };
+    const impOf = el => el.classList.contains("grd") ? ["ok", "Needs OK"] : el.classList.contains("urg") ? ["urg", "Urgent"] : el.classList.contains("esc") ? ["you", "Needs you"] : el.classList.contains("rep") ? ["rep", "Report"] : el.classList.contains("report") ? ["done", "Done"] : null;
+    const rank = { ok: 5, urg: 4, you: 3, rep: 2, done: 2, fyi: 0 };
+    const groups = []; let cur = null;
+    [...msgs.children].forEach(el => {
+      if (el.classList.contains("day") || el.classList.contains("lb")) return;
+      const starts = el.classList.contains("u") || impOf(el);
+      if (!cur || starts) { cur = { els: [], imp: ["fyi", "FYI"] }; groups.push(cur); }
+      cur.els.push(el); const i = impOf(el); if (i && rank[i[0]] >= rank[cur.imp[0]]) cur.imp = i;
+    });
+    groups.forEach(g => {
+      const text = g.els.map(e => e.textContent).join(" ");
+      g.proj = el0 => projOf(text);
+      g.p = projOf(text);
+      const first = g.els[0];
+      const lb = document.createElement("div"); lb.className = "lb" + (first.classList.contains("u") ? " right" : "");
+      lb.innerHTML = '<span class="t p">' + names[g.p] + '</span><span class="t i-' + g.imp[0] + '">' + g.imp[1] + '</span>';
+      msgs.insertBefore(lb, first); g.els.unshift(lb);
+    });
+    const fp = document.getElementById("cfp"); let fi = "";
+    function apply() {
+      let shown = 0;
+      groups.forEach(g => {
+        const okP = !fp.value || g.p === fp.value || (g.p === "all" && fp.value !== "" && false);
+        const k = g.imp[0]; const okI = !fi || (fi === "imp" && ["ok", "urg", "you"].includes(k)) || (fi === "rep" && ["rep", "done"].includes(k)) || (fi === "fyi" && k === "fyi");
+        const vis = okP && okI; if (vis) shown++; g.els.forEach(e => e.classList.toggle("hid", !vis));
+      });
+      document.getElementById("cfn").textContent = shown + " of " + groups.length;
+      $$("#cf .fchip").forEach(c => c.classList.toggle("on", c.dataset.i === fi));
+    }
+    fp.onchange = apply;
+    $$("#cf .fchip").forEach(c => c.onclick = () => { fi = c.dataset.i; apply(); });
+    apply();
+  })();
+
+  let live = true;
+  document.getElementById("tick").onclick = e => { live = !live; e.target.textContent = live ? "Pause live updates" : "Resume live updates"; };
+  function fmt(s) { const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h}h ${m}m` : m ? `${m}m` : `${s}s`; }
+  setInterval(() => { if (!live) return; $$(".el").forEach(el => { el.dataset.s = +el.dataset.s + 1; el.textContent = fmt(+el.dataset.s); }); }, 1000);
+  setInterval(() => {
+    if (!live) return;
+    $$(".stream").forEach(s => { const lines = s.dataset.lines.split("|"); s.dataset.i = ((+s.dataset.i || 0) + 1) % lines.length; s.textContent = lines[s.dataset.i]; });
+  }, 3500);
+</script>
+</body>
+</html>

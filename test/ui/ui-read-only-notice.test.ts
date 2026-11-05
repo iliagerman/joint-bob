@@ -35,7 +35,7 @@ async function signInAndOpenProject(page: Page, url: string, username: string, p
 async function offeredWriteActions(page: Page, title: string): Promise<string[]> {
   const row = page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: title }) }).first();
   await row.getByTestId("session-menu-button").click();
-  await page.getByTestId("session-add-to-canvas-button").waitFor();
+  await page.locator("#rowMenu").waitFor({ state: "visible" });
   const offered: string[] = [];
   for (const testid of WRITE_ACTIONS) if (await page.locator("#rowMenu").getByTestId(testid).count()) offered.push(testid);
   await page.keyboard.press("Escape");

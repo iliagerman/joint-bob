@@ -58,7 +58,6 @@ export function focusTaskCard(taskId) {
 }
 
 export async function loadTasks() {
-  if (state.canvasPaneMode) return;
   const projectId = state.activeProjectId;
   if (!projectId) {
     state.tasks = [];

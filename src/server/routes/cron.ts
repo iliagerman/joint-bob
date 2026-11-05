@@ -35,7 +35,8 @@ const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete"), id: z.string().uuid(), projectId: z.string().min(1).optional() }).strict(),
   z.object({ action: z.literal("history"), id: z.string().uuid(), projectId: z.string().min(1).optional() }).strict(),
 ]);
-type Command = z.infer<typeof commandSchema>;
+export type CronCommand = z.infer<typeof commandSchema>;
+type Command = CronCommand;
 
 async function routeCommand(nodeId: string, command: Command, timeoutMs = 15000): Promise<unknown> {
   if (nodeId === (await getClusterNode()).id) return manageCron(command);
@@ -153,26 +154,33 @@ app.post("/api/cluster/cron", async (request, response, next) => {
     response.json(await manageCron(command));
   } catch (error) { next(error); }
 });
+/**
+ * A person's scheduled-task command once it is parsed: they must be able to see its project, the creator is their
+ * account, and the owner node (this one or a peer) runs it. The control center's automations table calls this too.
+ */
+export async function runCronCommand(nodeId: string, command: Command): Promise<unknown> {
+  // A person must be able to see the command's project here. A command this node runs
+  // itself is checked against the task; one for another node must name its project.
+  const named = "projectId" in command ? command.projectId : "input" in command ? command.input.projectId : undefined;
+  const local = nodeId === (await getClusterNode()).id;
+  const stored = !named && local && "id" in command ? cronStore().get(command.id) : undefined;
+  const projectId = named ?? stored?.projectId;
+  if (!projectId || !await getProject(projectId)) throw new NotFoundError("Scheduled task not found");
+  if (command.action === "profiles") command.accountId = actingAccount()?.accountId ?? null;
+  if (command.action === "create" || command.action === "update") {
+    command.input.creatorAccountId = actingAccount()?.accountId ?? null;
+    if (local && command.input.providerProfileId) {
+      if (!command.input.creatorAccountId) throw new Error("Sign in to select a profile");
+      accessibleProviderProfile(command.input.creatorAccountId, command.input.providerProfileId, "automation");
+    }
+  }
+  return routeCommand(nodeId, command);
+}
 app.post("/api/cron", async (request, response, next) => {
   try {
     const payload = z.object({ nodeId: z.string().uuid(), command: commandSchema }).strict().parse(request.body);
     if (payload.command.action === "install") { sendError(response, 403, "Task installation is reserved for owner transfer"); return; }
-    // A person must be able to see the command's project here. A command this node runs
-    // itself is checked against the task; one for another node must name its project.
-    const named = "projectId" in payload.command ? payload.command.projectId : "input" in payload.command ? payload.command.input.projectId : undefined;
-    const local = payload.nodeId === (await getClusterNode()).id;
-    const stored = !named && local && "id" in payload.command ? cronStore().get(payload.command.id) : undefined;
-    const projectId = named ?? stored?.projectId;
-    if (!projectId || !await getProject(projectId)) { sendError(response, 404, "Scheduled task not found"); return; }
-    if (payload.command.action === "profiles") payload.command.accountId = actingAccount()?.accountId ?? null;
-    if (payload.command.action === "create" || payload.command.action === "update") {
-      payload.command.input.creatorAccountId = actingAccount()?.accountId ?? null;
-      if (local && payload.command.input.providerProfileId) {
-        if (!payload.command.input.creatorAccountId) throw new Error("Sign in to select a profile");
-        accessibleProviderProfile(payload.command.input.creatorAccountId, payload.command.input.providerProfileId, "automation");
-      }
-    }
-    response.json(await routeCommand(payload.nodeId, payload.command));
+    response.json(await runCronCommand(payload.nodeId, payload.command));
   } catch (error) { next(error); }
 });
 app.get("/api/auto-respond/defaults", (_request, response) => {

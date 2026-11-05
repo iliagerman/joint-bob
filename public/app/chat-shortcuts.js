@@ -6,7 +6,6 @@ export const CHAT_SHORTCUT_CONTROLS = {
   terminal: "openTerminalButton",
   browser: "openBrowserButton",
   notify: "notifyButton",
-  addToCanvas: "addToCanvasButton",
   rename: "renameSessionButton",
   scheduledTasks: "chatCronButton",
   backgroundTasks: "backgroundTasksButton",

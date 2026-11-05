@@ -366,12 +366,6 @@ function sessionMenuItems(session, sessionActive) {
   const readOnly = runnerRefused || session.readOnly === true || sessionTicketTask(session)?.status === "done";
   return [
     {
-      label: "Add to canvas",
-      icon: "canvas",
-      testid: "session-add-to-canvas-button",
-      onSelect: () => addSessionToCanvas(session),
-    },
-    {
       label: "Budget…",
       icon: "sliders",
       testid: "session-budget-button",
@@ -485,20 +479,6 @@ function syncChatDoneButton() {
     ? `${label} — put it back in the active list`
     : `${label} — hide it from the list until you ask for done conversations`;
   elements.chatDoneButton.disabled = !session;
-}
-
-/**
- * Puts an already-open conversation on the canvas from the conversation list or the
- * chat menu, then shows the canvas so the user lands on what they just added.
- */
-export function addSessionToCanvas(session) {
-  try {
-    state.canvasController.addSessionPane(state.activeProjectId, session);
-  } catch (error) {
-    toast(error.message);
-    return;
-  }
-  setMobileView("canvas");
 }
 
 async function forkSessionFromRow(session) {

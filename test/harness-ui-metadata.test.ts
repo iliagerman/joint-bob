@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canvasPaneEngine } from "../public/canvas-layout.js";
 import { harnessIdFromPath, harnessLabel, sessionHasHarnessIdentity } from "../public/harness-metadata.js";
 
 const harnesses = [
@@ -17,7 +16,6 @@ test("harness metadata resolves every supported session path without native defa
   assert.equal(harnessIdFromPath(harnesses, "/legacy/transcript.jsonl"), "pi");
   assert.equal(harnessLabel(harnesses, "future"), "Future Agent");
   assert.equal(harnessLabel(harnesses, "late-adapter"), "late-adapter");
-  assert.equal(canvasPaneEngine({ sessionPath: "draft:kiro:abc" }, harnesses), "kiro");
   assert.throws(() => harnessIdFromPath(harnesses.filter(({ newSessionPath }) => newSessionPath !== "new"), "/legacy/transcript.jsonl"), /resolve harness/);
 });
 

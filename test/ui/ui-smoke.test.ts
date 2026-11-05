@@ -1,6 +1,6 @@
 // Browser sanity suite: drives a real Chrome against a seeded dev node and walks
 // the journey a person walks — sign in, pick a project, open a conversation, open
-// the canvas picker. It exists to catch breakage that source-text assertions
+// the control center. It exists to catch breakage that source-text assertions
 // cannot see: a login that never persists its session, a panel that renders
 // nothing, or rows collapsed to an unreadable height.
 //
@@ -44,7 +44,7 @@ before(async () => {
 
   browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({
-    // Wide enough for the desktop layout: the canvas is hidden below 1024px.
+    // Wide enough for the desktop layout: the control center is hidden below 1024px.
     viewport: { width: 1440, height: 900 },
     reducedMotion: "reduce",
     // The app ships a service worker. Blocking it keeps a cached shell from a
@@ -139,7 +139,7 @@ test("both side panels have independent collapse and expand shortcuts", async ()
 });
 
 test("other toolbar actions advertise their shortcuts", async () => {
-  for (const id of ["project-create-button", "session-create-button", "session-create-claude-button", "canvas-finder-button", "canvas-page-add-button"]) {
+  for (const id of ["project-create-button", "session-create-button", "session-create-claude-button"]) {
     assert.equal(await page.getByTestId(id).locator(".shortcut-hint").count(), 1, `${id} needs a shortcut badge`);
   }
 });
@@ -227,14 +227,14 @@ test("settings sub-tabs, shortcut search, and the account panel stay focused", a
 
   // Shortcuts: the search box fuzzy-filters the command rows.
   await page.getByTestId("settings-tab-shortcuts").click();
-  await page.getByTestId("canvas-keymap-search-input").fill("page jump");
-  const splitRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "split the screen" }).first();
-  const pageRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "jump to page 1" });
-  await pageRow.waitFor();
-  assert.equal(await splitRow.isVisible(), false, "non-matching commands hide");
-  assert.equal(await pageRow.isVisible(), true, "matching commands stay");
+  await page.getByTestId("canvas-keymap-search-input").fill("explain");
+  const costsRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "costs and subscriptions" }).first();
+  const explainRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "explain what this conversation did" });
+  await explainRow.waitFor();
+  assert.equal(await costsRow.isVisible(), false, "non-matching commands hide");
+  assert.equal(await explainRow.isVisible(), true, "matching commands stay");
   await page.getByTestId("canvas-keymap-search-input").fill("");
-  assert.equal(await splitRow.isVisible(), true, "clearing the search brings rows back");
+  assert.equal(await costsRow.isVisible(), true, "clearing the search brings rows back");
 
   // Cluster: a lone node explains clusters and offers to create or join one.
   await page.getByTestId("settings-tab-cluster").click();
@@ -286,30 +286,6 @@ test("the updates tab shows this node's version and keeps controls honest on a c
   assert.ok(await page.getByTestId("updates-auto-input").isDisabled(), "the automatic toggle is disabled outside an installed deployment");
   assert.ok(await page.getByTestId("updates-node-list").locator(".updates-node").first().isVisible(), "this node renders a row");
   await page.getByTestId("settings-cancel-button").click();
-});
-
-test("Settings loads persisted conversation shortcuts before canvas activation", async () => {
-  const sessionId = "settings-before-canvas";
-  const session = await signIn(environment, node);
-  const assigned = await api(node, session, "PUT", "/canvas/shortcuts/1", { projectId: node.projects[0].id, engine: "pi", sessionId });
-  assert.equal(assigned.status, 200);
-  try {
-    await page.getByTestId("settings-open-button").click();
-    await page.getByTestId("settings-tab-shortcuts").click();
-    const row = page.getByTestId("settings-conversation-shortcut-row");
-    await row.waitFor();
-    assert.match(await row.innerText(), /1.*settings-before-canvas/s, "the persisted shortcut is listed without opening canvas");
-    // The conversation holds the key 1 under the default base chord, so a command
-    // recorded on that same chord must be refused.
-    await page.getByTestId("canvas-keymap-spotlight-input").click();
-    await page.keyboard.press("Meta+Shift+1");
-    await page.getByTestId("canvas-keymap-save-button").click();
-    await page.getByTestId("canvas-keymap-status").filter({ hasText: /already belongs to a conversation/ }).waitFor();
-  } finally {
-    if (await page.getByTestId("settings-dialog").isVisible()) await page.getByTestId("settings-cancel-button").click();
-    const cleared = await api(node, session, "DELETE", "/canvas/shortcuts/1");
-    assert.equal(cleared.status, 200);
-  }
 });
 
 test("project resource path fields save and reload", async () => {
@@ -532,300 +508,6 @@ test("a phone reloads conversations missed while its watch socket was disconnect
   }
 });
 
-test("the canvas picker lists conversations at a readable height", async () => {
-  await page.getByTestId("projects-open-canvas-button").click();
-  await page.getByTestId("canvas-add-button").click();
-  await page.locator(".canvas-session-option").first().waitFor({ timeout: 20_000 });
-
-  // The project with the most conversations, because the rows only used to
-  // collapse once the list overflowed its own maximum height.
-  await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
-  await page.waitForFunction(() => document.querySelector("#canvasPickerStatus")?.textContent === "");
-  await page.locator(".canvas-session-option", { hasText: "Thread-Based Agent Builder" }).waitFor({ timeout: 20_000 });
-
-  assert.deepEqual(await page.locator(".canvas-session-option .list-shortcut-index").allTextContents(),
-    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], "picker options carry digit badges");
-
-  const badge = await page.locator(".canvas-session-option .list-shortcut-index").first().boundingBox();
-  const title = await page.locator(".canvas-session-option strong").first().boundingBox();
-  assert.ok(badge && title && badge.x + badge.width < title.x, "digit badge has its own lane before the title");
-
-  // Two frames, so the measurements below read settled layout.
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-
-  const overflowing = await page.evaluate(() => {
-    const list = document.querySelector(".canvas-session-options");
-    return list ? list.scrollHeight > list.clientHeight + 1 : false;
-  });
-  assert.ok(overflowing, "the list overflows its maximum height, which is the state that used to collapse the rows");
-
-  const rows = await page.evaluate(() => [...document.querySelectorAll(".canvas-session-option")].map((option) => ({
-    title: option.querySelector("strong")?.textContent ?? "",
-    height: Math.round(option.getBoundingClientRect().height),
-    subtitle: option.querySelector("span")?.textContent ?? "",
-    subtitleHeight: Math.round(option.querySelector("span")?.getBoundingClientRect().height ?? 0),
-    lineHeight: Math.round(parseFloat(getComputedStyle(option.querySelector("span") ?? option).lineHeight)),
-  })));
-
-  assert.ok(rows.length >= 3, `picker lists conversations (got ${rows.length})`);
-  for (const row of rows) {
-    // 44px is the row's minimum height. A row stuck at the minimum is the
-    // regression this test exists for: the preview text is clipped mid-line.
-    assert.ok(row.height > 44, `row "${row.title}" is taller than its 44px floor (got ${row.height})`);
-    assert.ok(
-      row.subtitleHeight >= row.lineHeight,
-      `row "${row.title}" shows at least one full preview line (got ${row.subtitleHeight} for a ${row.lineHeight}px line)`,
-    );
-  }
-
-  // The seeded long preview is the one that has to wrap to two lines.
-  const wrapping = rows.find((row) => row.subtitle.length > 120);
-  assert.ok(wrapping, "a long preview is present to test wrapping");
-  assert.ok(
-    wrapping.subtitleHeight >= wrapping.lineHeight * 2,
-    `a long preview wraps to two lines (got ${wrapping.subtitleHeight} for a ${wrapping.lineHeight}px line)`,
-  );
-});
-
-test("zero selects the tenth canvas picker option", async () => {
-  await page.getByTestId("canvas-picker-cancel-button").click();
-  await page.getByTestId("canvas-add-button").click();
-  const options = page.locator(".canvas-session-option");
-  const title = await options.nth(9).locator("strong").textContent();
-  await page.keyboard.press("0");
-  await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "hidden" });
-  const pane = page.locator(".canvas-pane", { hasText: title! });
-  await pane.waitFor();
-  await pane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
-  await page.keyboard.press("Control+Alt+KeyW");
-  await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
-  await page.keyboard.press("y");
-  await pane.waitFor({ state: "detached" });
-  await page.getByTestId("canvas-add-button").click();
-});
-
-test("canvas splits nest recursively and resize by handle", async () => {
-  await page.getByTestId("canvas-picker-cancel-button").click();
-
-  const addConversation = async (title: string, position: "right" | "below") => {
-    await page.getByTestId("canvas-add-button").click();
-    await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
-    await page.selectOption("#canvasSplitPosition", position);
-    const option = page.locator(".canvas-session-option", { hasText: title });
-    await option.waitFor({ timeout: 20_000 });
-    await option.click();
-  };
-
-  await addConversation("Thread-Based Agent Builder", "right");
-  await addConversation("Mobile Multi-Agent Threads", "right");
-  await addConversation("Flow Runner Tool Evaluation", "below");
-  await page.locator(".canvas-pane").nth(2).waitFor({ timeout: 20_000 });
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-
-  const panes = page.locator(".canvas-pane");
-  const rootBox = await page.getByTestId("canvas-root").boundingBox();
-  const left = await panes.nth(0).boundingBox();
-  const topRight = await panes.nth(1).boundingBox();
-  const bottomRight = await panes.nth(2).boundingBox();
-  assert.ok(rootBox && left && topRight && bottomRight);
-  // The left pane keeps the full canvas height while the right panes stack independently.
-  // The root keeps 10px of padding around the grid.
-  assert.ok(left.y - rootBox.y < 16 && rootBox.y + rootBox.height - (left.y + left.height) < 16,
-    "the left pane spans the full canvas height");
-  assert.ok(topRight.y - rootBox.y < 16, "the top-right pane starts at the top");
-  assert.ok(bottomRight.y > topRight.y + topRight.height - 2, "the right panes stack vertically");
-  // Padding (20px) plus each pane's inline margins (8px apiece) sit between the
-  // root box and the panes.
-  assert.ok(Math.abs(left.width + topRight.width - (rootBox.width - 36)) < 12,
-    `the left and right panes share the full width (got ${left.width}+${topRight.width} of ${rootBox.width})`);
-
-  const widthHandle = page.locator(".canvas-resize-row").first();
-  assert.equal(await widthHandle.getAttribute("role"), "separator");
-  assert.equal(await widthHandle.getAttribute("aria-orientation"), "vertical");
-  const widthBox = await widthHandle.boundingBox();
-  assert.ok(widthBox);
-  // Grab the vertical handle above the perpendicular split, where the two
-  // handles' hit strips do not overlap.
-  const widthGrab = { x: widthBox.x + widthBox.width / 2, y: widthBox.y + widthBox.height * 0.3 };
-  await page.mouse.move(widthGrab.x, widthGrab.y);
-  await page.mouse.down();
-  await page.mouse.move(widthGrab.x + 80, widthGrab.y);
-  await page.mouse.up();
-  const afterWidth = await panes.nth(0).boundingBox();
-  assert.ok(afterWidth && afterWidth.width > left.width + 40,
-    `the left pane grows (from ${left.width}px to ${afterWidth?.width}px)`);
-
-  const heightHandle = page.locator(".canvas-resize-column").first();
-  assert.equal(await heightHandle.getAttribute("role"), "separator");
-  assert.equal(await heightHandle.getAttribute("aria-orientation"), "horizontal");
-  const heightBox = await heightHandle.boundingBox();
-  assert.ok(heightBox);
-  await page.mouse.move(heightBox.x + heightBox.width / 2, heightBox.y + heightBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(heightBox.x + heightBox.width / 2, heightBox.y + heightBox.height / 2 + 80);
-  await page.mouse.up();
-  const afterTop = await panes.nth(1).boundingBox();
-  assert.ok(afterTop && afterTop.height > topRight.height + 40,
-    `the upper right pane grows (from ${topRight.height}px to ${afterTop?.height}px)`);
-
-  // Keyboard resize commits the same geometry without a pointer.
-  await heightHandle.focus();
-  for (let press = 0; press < 6; press += 1) await page.keyboard.press("ArrowDown");
-  const keyed = await panes.nth(1).boundingBox();
-  assert.ok(keyed && keyed.height > afterTop.height + 20,
-    `arrow keys nudge the split (from ${afterTop?.height}px to ${keyed?.height}px)`);
-});
-
-
-test("split chords open the picker from the active canvas pane and really split the screen", async () => {
-  const activePane = page.locator(".canvas-pane", { hasText: "Mobile Multi-Agent Threads" });
-  const focusPaneComposer = () => activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
-  const panesBefore = await page.locator(".canvas-pane").count();
-
-  // The split chord reaches the canvas even with the caret inside a pane,
-  // whose iframe swallows keystrokes from the canvas document.
-  await focusPaneComposer();
-  await page.keyboard.press("Control+Alt+Backslash");
-  await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
-  assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "right");
-  await page.getByTestId("canvas-picker-cancel-button").click();
-
-  // Control+Option+Minus splits below, and choosing a conversation completes it.
-  await focusPaneComposer();
-  await page.keyboard.press("Control+Alt+Minus");
-  await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
-  assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "below");
-  await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
-  const option = page.locator(".canvas-session-option", { hasText: "Short one" });
-  await option.waitFor({ timeout: 20_000 });
-  const search = page.locator("#canvasSessionSearch");
-  await search.fill("Short");
-  await search.press("1");
-  assert.equal(await search.inputValue(), "Short1", "digits in search stay text");
-  await search.fill("Short one");
-  assert.equal(await option.locator(".list-shortcut-index").textContent(), "1", "filtered results renumber");
-  await option.focus();
-  await page.keyboard.press("1");
-  const addedPane = page.locator(".canvas-pane", { hasText: "Short one" });
-  await addedPane.locator("iframe").contentFrame().locator("#messageInput:not(:disabled)").waitFor({ timeout: 20_000 });
-  assert.equal(await page.locator(".canvas-pane").count(), panesBefore + 1, "the split chord put a new pane on the screen");
-  assert.ok((await page.locator(".canvas-resize").count()) >= 1, "the split chord left a resize handle between the panes");
-
-  // The close chord asks first, and only Y closes the pane.
-  await focusPaneComposer();
-  await page.keyboard.press("Control+Alt+KeyW");
-  await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
-  await page.keyboard.press("n");
-  await page.getByTestId("confirm-dialog").waitFor({ state: "hidden" });
-  assert.equal(await activePane.count(), 1, "N keeps the active pane open");
-
-  await focusPaneComposer();
-  await page.keyboard.press("Control+Alt+KeyW");
-  await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
-  await page.keyboard.press("y");
-  await activePane.waitFor({ state: "detached" });
-});
-
-test("the canvas filters and arranges conversations by project", async () => {
-  await page.getByTestId("canvas-add-button").click();
-  await page.selectOption("#canvasProjectSelect", { label: "Infra Scripts" });
-  await page.selectOption("#canvasSplitPosition", "below");
-  const option = page.locator(".canvas-session-option", { hasText: "Terraform state locking" });
-  await option.waitFor({ timeout: 20_000 });
-  await option.click();
-  await page.locator(".canvas-pane", { hasText: "Infra Scripts" }).waitFor({ timeout: 20_000 });
-
-  const projectFilter = page.getByTestId("canvas-project-filter");
-  await projectFilter.selectOption({ label: "Infra Scripts" });
-  assert.equal(await page.locator(".canvas-pane:visible").count(), 1, "the project filter hides every other project's panes");
-  assert.match(await page.locator(".canvas-pane:visible").innerText(), /Infra Scripts/);
-
-  await projectFilter.selectOption("");
-  const arrange = page.getByTestId("canvas-arrange-select");
-  assert.deepEqual(await arrange.locator("option").allTextContents(), ["Arrange", "Project", "Recent activity", "Date added"]);
-  await arrange.selectOption("project");
-  const visualProjects = () => [...document.querySelectorAll(".canvas-pane:not([hidden])")]
-    .sort((left, right) => {
-      const leftBox = left.getBoundingClientRect();
-      const rightBox = right.getBoundingClientRect();
-      return leftBox.top - rightBox.top || leftBox.left - rightBox.left;
-    })
-    .map((pane) => pane.querySelector(".canvas-pane-title")?.textContent || "");
-  await page.waitForFunction(() => [...document.querySelectorAll(".canvas-pane:not([hidden])")]
-    .sort((left, right) => {
-      const leftBox = left.getBoundingClientRect();
-      const rightBox = right.getBoundingClientRect();
-      return leftBox.top - rightBox.top || leftBox.left - rightBox.left;
-    })[0]?.querySelector(".canvas-pane-title")?.textContent?.startsWith("Infra Scripts"));
-  const projects = await page.evaluate(visualProjects);
-  assert.match(projects[0], /^Infra Scripts/, `project arrangement starts with Infra Scripts (got ${projects.join(", ")})`);
-  await page.getByTestId("canvas-back-button").evaluate((button) => button.click());
-});
-test("canvas pages hold independent layouts and keep their frames", async () => {
-  // The arrange journey leaves the canvas; come back to it first.
-  await page.locator("#openCanvasButton").click();
-  await page.getByTestId("canvas-root").waitFor({ state: "visible", timeout: 5_000 });
-  const tabs = page.locator('[data-testid="canvas-page-tab"]');
-  const visiblePanes = page.locator(".canvas-pane:visible");
-
-  await page.getByTestId("canvas-page-add-button").click();
-  await page.waitForFunction(() => {
-    const created = document.querySelectorAll('[data-testid="canvas-page-tab"]')[1];
-    return created?.textContent === "Page 2" && created.getAttribute("aria-selected") === "true";
-  }, null, { timeout: 5_000 });
-  assert.equal(await visiblePanes.count(), 0, "a fresh page hides every other page's panes");
-  assert.ok(await page.locator(".canvas-empty").isVisible(), "an empty page explains itself");
-
-  await page.getByTestId("canvas-add-button").click();
-  await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
-  const option = page.locator(".canvas-session-option", { hasText: "Makor deployment information" });
-  await option.waitFor({ timeout: 20_000 });
-  await option.click();
-  await visiblePanes.first().waitFor({ timeout: 20_000 });
-  assert.equal(await visiblePanes.count(), 1, "the new pane lands on the active page");
-  const frameHandle = await page.locator(".canvas-pane:visible iframe").first().elementHandle();
-  assert.ok(frameHandle);
-  const frameBox = await frameHandle.boundingBox();
-  const frameSrc = await frameHandle.evaluate((element) => (element as HTMLIFrameElement).src);
-  assert.ok(frameBox && frameSrc);
-
-  await tabs.nth(0).click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[0]
-    ?.getAttribute("aria-selected") === "true", null, { timeout: 5_000 });
-  assert.ok((await visiblePanes.count()) >= 1, "page one still shows its own panes");
-  assert.equal(await frameHandle.boundingBox(), null, "the other page's frame is hidden, not removed");
-
-  await tabs.nth(1).click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[1]
-    ?.getAttribute("aria-selected") === "true", null, { timeout: 5_000 });
-  const backBox = await frameHandle.boundingBox();
-  assert.ok(backBox, "switching back restores the pane");
-  assert.equal(await frameHandle.evaluate((element) => (element as HTMLIFrameElement).src), frameSrc,
-    "switching pages never reloads a pane");
-  assert.ok(Math.abs(backBox.width - frameBox.width) < 2 && Math.abs(backBox.height - frameBox.height) < 2,
-    "the pane keeps its exact geometry");
-
-  // Reordering moves the tab with its page.
-  await page.getByTestId("canvas-page-move-left-button").click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[0]
-    ?.textContent === "Page 2", null, { timeout: 5_000 });
-
-  // Deleting the active page keeps the conversations on the remaining page: switch
-  // to the other page first, delete it, and the tracked pane must come back intact.
-  await tabs.nth(1).click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[1]
-    ?.getAttribute("aria-selected") === "true", null, { timeout: 5_000 });
-  await page.getByTestId("canvas-page-delete-button").click();
-  await page.getByTestId("confirm-accept-button").click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]').length === 1,
-    null, { timeout: 5_000 });
-  await page.locator(".canvas-pane:visible iframe").first().waitFor({ timeout: 5_000 });
-  const finalBox = await frameHandle.boundingBox();
-  assert.ok(finalBox, "the surviving pane stays attached after the other page is deleted");
-  assert.ok(Math.abs(finalBox.width - frameBox.width) < 2 && Math.abs(finalBox.height - frameBox.height) < 2,
-    "the surviving pane keeps its exact geometry");
-});
-
 test("file action buttons stay aligned with and without a browser link", async () => {
   await page.goto(node.url, { waitUntil: "domcontentloaded" });
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
@@ -871,7 +553,7 @@ test("file action buttons stay aligned with and without a browser link", async (
 });
 
 test("a markdown file opens as raw source and previews beside it", async () => {
-  // A fresh load, because the previous test left the canvas picker open. The dialog is
+  // A fresh load, because an earlier test may have left a dialog open. The dialog is
   // then reached the way a person reaches it: a file mentioned in a conversation.
   await page.goto(node.url, { waitUntil: "domcontentloaded" });
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
@@ -1099,7 +781,7 @@ test("a top toast stays above the mobile composer", async () => {
 // leaving the count until the next background refresh shows a number that is already wrong.
 test("opening a conversation that is waiting for review updates the badge at once", async () => {
   // Establish the review baseline, then close every app socket before writing the reply.
-  // A hidden canvas frame may otherwise open the same conversation and consume its review.
+  // A hidden frame may otherwise open the same conversation and consume its review.
   const baselineLoaded = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/reviews/pending" && response.ok());
   await page.goto(node.url, { waitUntil: "domcontentloaded" });
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
@@ -1166,10 +848,10 @@ test("opening a conversation that is waiting for review updates the badge at onc
   await projectReviewBadge.waitFor({ state: 'hidden' });
 });
 
-// The canvas is a whole second surface. Reaching it and getting back has to be one key
+// The control center is a whole second surface. Reaching it and getting back has to be one key
 // from anywhere in the app, including from inside a conversation, and it has to return the
 // user to the view they left rather than dumping them in the conversation list.
-test("the canvas shortcut switches to the canvas and back to the view it was opened from", async () => {
+test("the control center shortcut switches to it and back to the view it was opened from", async () => {
   const currentView = () => page.evaluate(() => [...document.body.classList].find((name) => name.startsWith("view-")) ?? "");
   await page.goto(node.url, { waitUntil: "domcontentloaded" });
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
@@ -1180,11 +862,11 @@ test("the canvas shortcut switches to the canvas and back to the view it was ope
   assert.equal(opened, "view-chat", "the conversation is the view the shortcut is pressed from");
 
   await page.keyboard.press("Control+Alt+KeyV");
-  await page.locator("#canvasPanel").waitFor({ state: "visible", timeout: 20_000 });
-  assert.equal(await currentView(), "view-canvas", "one key reaches the canvas from a conversation");
+  await page.locator("#controlCenterPanel").waitFor({ state: "visible", timeout: 20_000 });
+  assert.equal(await currentView(), "view-control", "one key reaches the control center from a conversation");
 
   await page.keyboard.press("Control+Alt+KeyV");
-  await page.locator("#canvasPanel").waitFor({ state: "hidden", timeout: 20_000 });
+  await page.locator("#controlCenterPanel").waitFor({ state: "hidden", timeout: 20_000 });
   assert.equal(await currentView(), opened, "the same key puts the user back where they were");
 });
 
@@ -1249,9 +931,8 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
 
   const spotlight = page.getByTestId("canvas-keymap-spotlight-input");
-  const paneSearch = page.getByTestId("canvas-keymap-pane-search-input");
+  const paneSearch = page.getByTestId("canvas-keymap-quick-note-input");
   assert.equal(await spotlight.inputValue(), `${expectedModifiers.ctrlAlt}P`, "the tab shows the chord that is in force");
-  assert.equal(await page.getByTestId("canvas-keymap-base-input").inputValue(), `${expectedModifiers.metaShift}`, "the conversation-key chord has its own recorder");
   assert.ok(await page.getByTestId("canvas-keymap-leader").isVisible(), "the fixed shortcuts are listed too");
 
   // Holding modifiers with the key records one chord, exactly as held.
@@ -1328,10 +1009,10 @@ test("the search bar navigates the whole workspace", async () => {
   assert.equal(await page.locator("#settingsForm").getAttribute("data-tab"), "shortcuts");
   await page.getByTestId("settings-cancel-button").click();
 
-  for (const [query, view] of [["projects window", "projects"], ["conversations window", "sessions"], ["messages window", "chat"], ["canvas window", "canvas"]]) {
+  for (const [query, view, option] of [["projects window", "projects", "projects window"], ["conversations window", "sessions", "conversations window"], ["messages window", "chat", "messages window"], ["control center", "control", "control center"]]) {
     await page.keyboard.press("Control+Alt+KeyP");
     await spotlightInput.fill(query);
-    await page.getByRole("option", { name: new RegExp(`^Go to ${query.split(" ")[0]} window$`, "i") }).click();
+    await page.getByRole("option", { name: new RegExp(`^Go to ${option}$`, "i") }).click();
     await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
     assert.ok(await page.locator("body").evaluate((body, name) => body.classList.contains(`view-${name}`), view), `${query} opens the ${view} view`);
   }

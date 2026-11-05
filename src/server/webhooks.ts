@@ -30,6 +30,7 @@ import { queueConversationPrompt, type PromptAttachment, type PromptQueueSetting
 import { broadcastToProject } from "./realtime.js";
 import { runPersonalAssistantAutomationTurn } from "./routes/personal-assistants.js";
 import { telegramChatId, telegramText } from "../webhook-telegram.js";
+import { announceWebhookCall } from "../control-center/triggers-observe.js";
 
 /** What one chat-socket prompt may carry, as for a browser message (src/server/schemas.ts). */
 const SOCKET_IMAGES = 4;
@@ -207,6 +208,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
 
 /** Accepts a call for delivery; the outcome lands in the webhook's call history. */
 export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): void {
+  announceWebhookCall(webhook, call);
   const requestId = randomUUID();
   call = { ...call, requestId };
   void (async () => {

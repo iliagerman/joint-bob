@@ -1,0 +1,85 @@
+/* Control center: Assistants. The tab, the column from 1700 px, the cards, and an assistant's chat over the board. */
+.control-view.control-asst { padding: 12px 14px; gap: 10px; min-width: 0; }
+.control-asst-heading { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 12px; }
+.control-asst-heading > div { flex: 1 1 260px; min-width: 0; }
+.control-asst-heading h2 { margin: 0 0 2px; font-size: 15px; }
+.control-asst-heading .control-hint { max-width: 70ch; }
+.control-asst-link { text-decoration: none; color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+.control-asst-link:hover { border-color: var(--accent); }
+.control-asst-list { flex: 1; min-height: 150px; min-width: 0; overflow: hidden; }
+.control-asst-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; align-content: start; }
+.control-asst-grid.single { grid-template-columns: minmax(0, 1fr); }
+.control-asst-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding-top: 2px; }
+.control-asst-pager[hidden] { display: none; }
+
+/* A card has a fixed height so a page holds a known number of them. */
+.control-asst-card { height: 128px; box-sizing: border-box; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; min-width: 0; overflow: hidden; }
+.control-asst-card:hover, .control-asst-card:focus-visible { border-color: var(--line-strong); }
+.control-asst-card.off { opacity: .72; }
+.control-asst-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.control-asst-face { flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font-size: 13px; font-weight: 600; background: var(--field); color: var(--text); }
+.control-asst-name { min-width: 0; display: flex; flex-direction: column; }
+.control-asst-name b { font-size: 13px; white-space: nowrap; overflow: hidden; display: flex; align-items: center; gap: 6px; }
+.control-asst-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.control-asst-name b .control-badge { flex: none; }
+.control-asst-name small { color: var(--muted); font-size: 11px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.control-asst-dot { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: #4a4f57; vertical-align: baseline; }
+.control-asst-dot.busy { background: #f2b44b; }
+.control-asst-dot.answering-bob { background: var(--accent); animation: control-pulse 1.4s infinite; }
+@media (prefers-reduced-motion: reduce) { .control-asst-dot.answering-bob { animation: none; } }
+.control-asst-switch { -webkit-appearance: none; appearance: none; flex: none; position: relative; width: 28px; height: 16px; padding: 0; border: 0; border-radius: 999px; background: #3a3f46; cursor: pointer; }
+.control-asst-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #9aa0a8; transition: left .12s; }
+.control-asst-switch[aria-checked="true"] { background: var(--accent); }
+.control-asst-switch[aria-checked="true"]::after { left: 14px; background: #06201a; }
+.control-asst-switch:disabled { cursor: not-allowed; opacity: .6; }
+.control-asst-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.control-asst-has { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; max-height: 22px; overflow: hidden; }
+.control-asst-has span { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.control-asst-has span.none { border-style: dashed; }
+.control-asst-side .control-asst-has { max-height: none; }
+.control-asst-last { font-size: 11.5px; line-height: 1.3; color: var(--text); border-left: 2px solid #7b8cff; padding-left: 7px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.control-asst-last.warn { color: #f2b44b; border-left-color: #f2b44b; }
+
+/* From 1700 px the list is a column between the board and Bob's chat, and the tab is not needed. */
+.control-asst-rail { display: none; flex: 0 0 300px; min-width: 0; min-height: 0; flex-direction: column; gap: 8px; padding: 10px; border-left: 1px solid var(--line); }
+.control-main.chat-left .control-asst-rail { border-left: 0; border-right: 1px solid var(--line); }
+.control-asst-rail-head { display: flex; align-items: center; gap: 8px; }
+.control-asst-hint { flex: none; }
+.control-asst-rail.folded { flex-basis: 44px; padding: 10px 6px; align-items: center; }
+.control-asst-rail.folded .control-asst-list, .control-asst-rail.folded .control-asst-pager, .control-asst-rail.folded .control-asst-hint, .control-asst-rail.folded .control-asst-rail-head b, .control-asst-rail.folded .control-asst-rail-head .control-spacer { display: none; }
+.control-asst-rail.folded .control-asst-rail-head { flex-direction: column; }
+@media (min-width: 1700px) {
+  .control-asst-rail { display: flex; }
+  .control-tab[data-view="assistants"] { display: none; }
+}
+
+/* An assistant's chat. */
+.control-asst-dialog .control-asst-viewer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 10px; width: min(1100px, calc(100vw - 24px)); height: min(760px, calc(100dvh - 24px)); max-width: none; max-height: none; margin: auto; padding: 12px 16px 14px; overflow: hidden; background: var(--panel); }
+.control-asst-chat-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.control-asst-chat-head .control-asst-name b { font-size: 15px; }
+.control-asst-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; min-height: 0; }
+.control-asst-timeline { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+.control-asst-msg { max-width: 88%; padding: 7px 11px; border-radius: 12px; background: var(--field); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.control-asst-msg.user { align-self: flex-end; white-space: pre-wrap; background: color-mix(in srgb, var(--accent) 14%, var(--field)); }
+.control-asst-msg.assistant { align-self: flex-start; }
+.control-asst-msg p { margin: 0 0 6px; }
+.control-asst-msg p:last-child { margin-bottom: 0; }
+.control-asst-working { align-self: flex-start; color: var(--muted); font-size: 12px; }
+.control-asst-error { margin: 0; color: #ff9d9d; font-size: 12px; }
+/* What Bob asked is marked as Bob's. */
+.control-asst-bobq { align-self: stretch; border-left: 2px solid #7b8cff; background: color-mix(in srgb, #7b8cff 8%, transparent); border-radius: 0 10px 10px 0; padding: 6px 9px; font-size: 12px; }
+.control-asst-bobq-who { font-size: 11px; color: color-mix(in srgb, #7b8cff 70%, var(--text)); font-weight: 600; cursor: pointer; }
+.control-asst-bobq-q, .control-asst-bobq-a { margin-top: 4px; overflow-wrap: anywhere; }
+.control-asst-bobq-q { white-space: pre-wrap; }
+.control-asst-bobq-a.failed { color: #ff9d9d; }
+.control-asst-bobq:not([open]) .control-asst-bobq-q { display: none; }
+.control-asst-side { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid var(--line); padding-left: 12px; font-size: 12px; }
+.control-asst-side-section { display: flex; flex-direction: column; gap: 4px; }
+.control-asst-side-section p { margin: 0; }
+.control-asst-lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.control-asst-ask-row { display: flex; justify-content: space-between; gap: 8px; text-align: left; border: 0; border-top: 1px solid var(--line); background: none; color: var(--text); font: inherit; font-size: 12px; padding: 4px 0; cursor: pointer; }
+.control-asst-ask-row small { color: var(--muted); flex: none; }
+.control-asst-ask-row:hover { color: color-mix(in srgb, #7b8cff 70%, var(--text)); }
+.control-asst-form[hidden] { display: none; }
+.control-asst-note { margin: 0; }
+@media (max-width: 900px) { .control-asst-body { grid-template-columns: minmax(0, 1fr); } .control-asst-side { display: none; } }

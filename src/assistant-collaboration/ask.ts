@@ -13,7 +13,7 @@ import { settled, warnOnChange } from "../server/quiet-log.js";
 import type { runPersonalAssistantAutomationTurn } from "../server/routes/personal-assistants.js";
 import { projectPrivateToOwner } from "../store.js";
 import { runningPromptRequestId } from "./bridge-tools.js";
-import { askableHelpers, ownerAssistants, sharedAskerReason, sharedHelperReason } from "./directory.js";
+import { askableHelpers, ownerAssistants, sharedAskerReason, sharedHelperReason, type HelperView } from "./directory.js";
 import { finishAsk, getAsk, insertAsk, runningAsksOn, type AskRecord } from "./store.js";
 import { postToTwin } from "./twin-sync.js";
 
@@ -97,8 +97,13 @@ export async function startAsk(input: { accountId: string; asker: PersonalAssist
   const helper = (await askableHelpers(input.asker)).find(view => view.id === input.helperId);
   if (!helper) throw new AskRefusal("No assistant has that id. Call list_assistants for the ones you may ask.");
   if (!helper.available) throw new AskRefusal(helper.reason!);
+  return startAskOn(helper, { accountId: input.accountId, askerId: input.asker.id, askerName: input.asker.name, askerTurnRequestId: input.askerTurnRequestId, message: input.message, purpose: input.purpose });
+}
+
+/** Records the ask and starts the helper's turn. The caller has checked, now, that this asker may ask this helper (switch and privacy); Bob's asks come here with their own checks. */
+export async function startAskOn(helper: Pick<HelperView, "id" | "name" | "nodeId">, input: { accountId: string; askerId: string; askerName: string; askerTurnRequestId: string | null; message: string; purpose: string }): Promise<AskRecord> {
   const id = randomUUID();
-  await insertAsk({ id, accountId: input.accountId, askerId: input.asker.id, askerName: input.asker.name, askerTurnRequestId: input.askerTurnRequestId, helperId: helper.id, helperName: helper.name, helperNodeId: helper.nodeId, purpose: input.purpose, question: input.message, startedAt: new Date().toISOString() });
+  await insertAsk({ id, accountId: input.accountId, askerId: input.askerId, askerName: input.askerName, askerTurnRequestId: input.askerTurnRequestId, helperId: helper.id, helperName: helper.name, helperNodeId: helper.nodeId, purpose: input.purpose, question: input.message, startedAt: new Date().toISOString() });
   if (helper.nodeId === (await getClusterNode()).id) runHelperTurn(id, input.accountId, helper.id, input.message);
   else await sendAsk((await getAsk(id))!);
   return (await getAsk(id))!;

@@ -60,7 +60,7 @@ function hideForNavigation() {
   closeViewer();
 }
 new MutationObserver(() => {
-  if (viewer && (document.body.classList.contains("view-board") || document.body.classList.contains("view-canvas"))) hideForNavigation();
+  if (viewer && (document.body.classList.contains("view-board") || document.body.classList.contains("view-control"))) hideForNavigation();
 }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 window.addEventListener("pagehide", closeViewer);
 

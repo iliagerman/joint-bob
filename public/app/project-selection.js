@@ -103,10 +103,6 @@ export async function loadProjects() {
     openListedSession(activeSession);
     return;
   }
-  if (state.canvasPaneMode && state.activeSessionPath?.startsWith("draft:")) {
-    await startCanvasPaneConversation();
-    return;
-  }
   if (state.activeSessionPath) {
     state.activeSessionPath = null;
     state.activeSessionId = null;
@@ -114,33 +110,6 @@ export async function loadProjects() {
   }
 
   setMobileView("sessions");
-}
-
-/**
- * A canvas pane can be opened on a conversation that does not exist yet: the canvas
- * hands it the draft path and the id to create it under, and the pane starts it here
- * on the local node. Once the agent writes its transcript the pane resolves to the
- * listed session by that id and this path is never used again.
- */
-async function startCanvasPaneConversation() {
-  const harnessId = state.activeSessionPath.split(":")[1];
-  if (!state.harnesses.length) await loadHarnesses();
-  const harness = state.harnesses.find((candidate) => candidate.id === harnessId);
-  if (!harness) {
-    showChatEmptyState("Agent unavailable", `This node has no agent named ${harnessId}.`);
-    return;
-  }
-  if (!state.sessionNodes.length) await loadSessionNodes(state.activeProjectId);
-  const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId && candidate.online && candidate.mapped)
-    || state.sessionNodes.find((candidate) => candidate.local);
-  if (!node) {
-    showChatEmptyState("No node available", "No online node has this project mapped.");
-    return;
-  }
-  state.activeNodeId = node.id;
-  const title = `New ${harness.label} conversation`;
-  addOptimisticSession(state.activeSessionId, harness.newSessionPath, title, null);
-  openSession(harness.newSessionPath, title);
 }
 
 export async function selectProject(projectId, shouldRender = true, preserveSession = false) {
@@ -216,10 +185,8 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
     durationMs: Math.round(ready - started), requestMs: Math.round(renderStarted - requestStarted),
     renderMs: Math.round(ready - renderStarted), conversations: body.sessions.length,
   });
-  if (!state.canvasPaneMode) {
-    ensureWatchSocket();
-    subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
-    loadTasks().catch((error) => console.warn(error));
-    loadWorktrees().catch((error) => console.warn(error));
-  }
+  ensureWatchSocket();
+  subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
+  loadTasks().catch((error) => console.warn(error));
+  loadWorktrees().catch((error) => console.warn(error));
 }

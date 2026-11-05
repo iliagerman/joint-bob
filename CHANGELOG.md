@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added the control center in place of the canvas, on the same toolbar button and shortcut: one board of every running conversation and every finished one waiting for review, across all projects, with each conversation's running summary, project filters, a color picker per card, a free layout with reset, and Esc or Exit to leave.
+- Added Bob, the control center's assistant: it uses the decision model to work out what you asked and which project it is about, starts confident tasks as conversations in that project (marked started by Bob), lets its own agent decide below your confidence threshold, and labels its chat by project and importance so you can filter it.
+- Added to the control center: watching a conversation over the board or taking control to reply yourself, a project overview, Bob's memory as topic files you can review, edit and revert, scheduled tasks, webhooks and morning and evening reports that Bob can list, change, pause and create from chat, dashboards, moving running jobs to another machine, incoming webhook calls with a bell, your other assistants and your cluster's agents, a phone view, and a Telegram bot for text messages that answers only you.
+- Added a Guardian rule that makes production and destructive steps ask you first; Bob's settings show whether it is on for this machine and turn it on in one click, and its questions appear on the board and in Bob's chat with Allow once and Block.
+- Removed the canvas: its panes, pages, split layouts, conversation shortcuts, the Add to canvas actions and the saved canvas layout. A saved canvas view opens the control center. The app-wide keyboard shortcuts stay, minus the pane and page commands.
+
 ## 2.212.10 — 2026-11-05
 
 - Fixed the clear conversation control in Activity Chat, which was hidden inside its settings panel; it now sits beside the chat as Clear conversation.

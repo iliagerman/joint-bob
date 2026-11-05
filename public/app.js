@@ -1,23 +1,18 @@
 // App entry point. The feature modules under ./app register their DOM listeners
-// when they load; this file wires the boot sequence and the canvas pane mode.
-import {
-  canvasKeyFromCode, chordFromEvent, chordId, conversationChord, DEFAULT_CANVAS_KEYMAP,
-  isCanvasHelpShortcut, isSwitcherKey, isSwitcherNavigationCode, shortcutFinalMatches, shortcutPrefix, switcherHeld,
-} from "./canvas-layout.js";
-import { createConversationCanvas } from "./canvas.js";
-import { api, savePreferences } from "./app/api.js";
+// when they load; this file wires the boot sequence and the keyboard shortcuts.
+import { isCanvasHelpShortcut } from "./keymap.js";
+import { api } from "./app/api.js";
 import { installConversationSwitcher } from "./app/conversation-switcher.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
 import { openSettings } from "./app/settings.js";
 import { openScheduledTasks } from "./app/cron.js";
 import { openAssistantWebhook } from "./app/webhooks.js";
-import { runChatShortcut } from "./app/chat-shortcuts.js";
-import { syncShortcutHints } from "./app/shortcut-hints.js";
+import { installShortcuts } from "./app/shortcuts.js";
 import { focusTopmostInput } from "./app/focus-input.js";
 import { openSpotlight } from "./app/spotlight.js";
 import { openPendingReviews } from "./app/reviews.js";
 import { elements } from "./app/elements.js";
-import { setMobileView, toggleCanvasView, togglePanel } from "./app/layout.js";
+import { toggleControlView, togglePanel } from "./app/layout.js";
 import { openRecentSessions } from "./app/recents.js";
 import { openRunningConversationsDialog } from "./app/running.js";
 import { startNewHarnessConversation, startGlobalConversation } from "./app/new-session.js";
@@ -32,6 +27,18 @@ import "./app/dialog-layout.js";
 import "./app/elements.js";
 import "./app/project-files.js";
 import "./app/dashboards.js";
+import "./app/control-chat.js";
+import "./app/control-lease.js";
+import "./app/control-overview.js";
+import "./app/control-automations.js";
+import "./app/control-dashboards.js";
+import "./app/control-memory.js";
+import "./app/control-triggers.js";
+import "./app/control-assistants.js";
+import "./app/control-moves.js";
+import "./app/control-phone.js";
+import "./app/control-clusters.js";
+import "./app/control-telegram.js";
 import "./app/project-explorer.js";
 import "./app/git-review.js";
 import "./app/activity-overview.js";
@@ -121,155 +128,35 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-if (state.canvasPaneMode) {
-  document.body.classList.add("canvas-pane-mode");
-  // A pane has no canvas of its own, so this action belongs to the top-level app only.
-  elements.addToCanvasButton.hidden = true;
-  // A pane is an iframe, so a canvas shortcut typed in here never reaches the canvas
-  // document. The canvas owns the chords and the binding table and tells this pane
-  // which ones it claims; every other combination still belongs to the conversation.
-  const claimedChords = new Set();
-  const claimedSequences = new Map();
-  let pendingSequence = null;
-  const clearPendingSequence = () => {
-    if (pendingSequence?.timer) clearTimeout(pendingSequence.timer);
-    pendingSequence = null;
-  };
-  const forwardShortcut = (event) => {
-    event.preventDefault();
-    parent.postMessage({
-      type: "canvasShortcut", code: event.code,
-      metaKey: event.metaKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey,
-    }, location.origin);
-  };
-  // The switcher belongs to the top-level app, which is the only window that sees the chord
-  // let go. Its keys are forwarded while the chord is held, and this listener runs before
-  // the shortcut handler below so a forwarded key never also fires a canvas shortcut.
-  let switcherHeldHere = false;
-  const forwardSwitcherKey = (kind, event) => parent.postMessage({
-    type: "conversationSwitcherKey", kind,
-    key: { code: event.code, metaKey: event.metaKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey },
-  }, location.origin);
-  window.addEventListener("keydown", (event) => {
-    if (!isSwitcherKey(event) && !(switcherHeldHere && isSwitcherNavigationCode(event.code))) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    switcherHeldHere = true;
-    forwardSwitcherKey("down", event);
-  });
-  window.addEventListener("keyup", (event) => {
-    if (!switcherHeldHere) return;
-    if (!switcherHeld(event)) switcherHeldHere = false;
-    forwardSwitcherKey("up", event);
-  });
-  window.addEventListener("keydown", (event) => {
-    if (isCanvasHelpShortcut(event)) {
-      event.preventDefault();
-      parent.postMessage({ type: "canvasHelpShortcut" }, location.origin);
-      return;
-    }
-    if (pendingSequence) {
-      const finalKey = canvasKeyFromCode(event.code);
-      if (finalKey) {
-        const pending = pendingSequence;
-        clearPendingSequence();
-        const shortcut = claimedSequences.get(pending.id)?.get(finalKey);
-        if (shortcut && shortcutFinalMatches(shortcut, event)) { forwardShortcut(event); return; }
-      }
-    }
-    const chord = chordFromEvent(event);
-    if (!chord) return;
-    const id = chordId(chord);
-    if (claimedChords.has(id)) { forwardShortcut(event); return; }
-    if (!claimedSequences.has(id)) return;
-    pendingSequence = { id, timer: setTimeout(clearPendingSequence, 1500) };
-    forwardShortcut(event);
-  });
-  window.addEventListener("message", (event) => {
-    // Only the canvas that framed this pane may set its chords or move its cursor.
-    if (event.origin !== location.origin || event.source !== parent) return;
-    if (event.data?.type === "canvasChatCommand") runChatShortcut(event.data.command);
-    if (event.data?.type === "canvasShortcutBindings") {
-      state.canvasKeymap = event.data.keymap;
-      syncShortcutHints();
-      claimedChords.clear();
-      claimedSequences.clear();
-      clearPendingSequence();
-      const base = Array.isArray(event.data.base) ? event.data.base : DEFAULT_CANVAS_KEYMAP.base;
-      for (const shortcut of event.data.chords || []) {
-        const prefix = shortcutPrefix(shortcut);
-        if (!prefix) { claimedChords.add(chordId(shortcut)); continue; }
-        const id = chordId(prefix);
-        const endings = claimedSequences.get(id) || new Map();
-        endings.set(shortcut[shortcut.length - 1], shortcut);
-        claimedSequences.set(id, endings);
-      }
-      for (const binding of event.data.bindings || []) claimedChords.add(chordId(conversationChord({ base }, binding)));
-    }
-    if (event.data?.type === "canvasFocusComposer") document.querySelector("#messageInput")?.focus();
-  });
-  // The canvas needs to know which pane the user last touched, so "jump back" and
-  // "bring forward" act on the conversation they are actually working in.
-  const reportActive = () => parent.postMessage({ type: "canvasPaneActive" }, location.origin);
-  window.addEventListener("focus", reportActive);
-  window.addEventListener("pointerdown", reportActive, true);
-  parent.postMessage({ type: "canvasPaneReady" }, location.origin);
-}
-if (!state.canvasPaneMode) {
-  // Before the canvas, so a switcher key it handles never reaches the canvas shortcuts.
-  installConversationSwitcher();
-  state.canvasController = createConversationCanvas({
-    api,
-    getProjects: () => state.projects,
-    saveLayout: (next) => {
-      state.canvasLayout = next;
-      // Serialize saves: rapid resizes must persist in order, newest last.
-      state.canvasLayoutSave = (state.canvasLayoutSave ?? Promise.resolve())
-        .catch(() => {})
-        .then(() => savePreferences({ canvasLayout: next }))
-        .catch((error) => toast(`Could not save the canvas layout: ${error.message}`, 8000));
-    },
-    toggleView: toggleCanvasView,
-    appCommands: {
-      toggleProjects: () => togglePanel("projects"),
-      toggleChats: () => togglePanel("chats"),
-      newProject: () => elements.newProjectButton.click(),
-      newPiChat: () => { void startNewHarnessConversation("pi").catch((error) => toast(error.message)); },
-      newClaudeChat: () => { void startNewHarnessConversation("claude").catch((error) => toast(error.message)); },
-      newKiroChat: () => { void startNewHarnessConversation("kiro").catch((error) => toast(error.message)); },
-      quickNote: () => { void openQuickNote().catch((error) => toast(error.message)); },
-      toggleNotes: toggleQuickNotes,
-      costs: () => {
-        const blocking = [...document.querySelectorAll("dialog[open]")].some((item) => item.id !== "usageDialog");
-        if (!blocking) openUsageDashboard();
-      },
-    },
-    openShortcutSettings: () => { void openSettings("shortcuts"); },
-    openSpotlight,
-    openPendingReviews,
-    openRecentSessions,
-    openRunningConversations: () => { void openRunningConversationsDialog().catch((error) => toast(error.message)); },
-    openSettings: () => { void openSettings().catch((error) => toast(error.message)); },
-    focusInput: focusTopmostInput,
-    confirmAction,
-    showMessage: (message) => toast(message, 8000),
-  });
-}
+// Before the shortcuts, so a switcher key it handles never reaches them.
+installConversationSwitcher();
+installShortcuts({
+  toggleView: toggleControlView,
+  spotlight: openSpotlight,
+  pendingReviews: openPendingReviews,
+  recents: openRecentSessions,
+  runningConversations: () => { void openRunningConversationsDialog().catch((error) => toast(error.message)); },
+  settings: () => { void openSettings().catch((error) => toast(error.message)); },
+  focusInput: focusTopmostInput,
+  toggleProjects: () => togglePanel("projects"),
+  toggleChats: () => togglePanel("chats"),
+  newProject: () => elements.newProjectButton.click(),
+  newPiChat: () => { void startNewHarnessConversation("pi").catch((error) => toast(error.message)); },
+  newClaudeChat: () => { void startNewHarnessConversation("claude").catch((error) => toast(error.message)); },
+  newKiroChat: () => { void startNewHarnessConversation("kiro").catch((error) => toast(error.message)); },
+  quickNote: () => { void openQuickNote().catch((error) => toast(error.message)); },
+  toggleNotes: toggleQuickNotes,
+  costs: () => {
+    const blocking = [...document.querySelectorAll("dialog[open]")].some((item) => item.id !== "usageDialog");
+    if (!blocking) openUsageDashboard();
+  },
+});
 /** One fixed chord opens the shortcuts panel, so the configurable keys are always
- *  findable. A pane forwards its own copy of this chord through the canvas. */
-if (!state.canvasPaneMode) {
-  document.addEventListener("keydown", (event) => {
-    if (!isCanvasHelpShortcut(event)) return;
-    event.preventDefault();
-    void openSettings("shortcuts");
-  });
-}
-
-const desktopViewportQuery = matchMedia("(min-width: 1024px)");
-desktopViewportQuery.addEventListener("change", (event) => {
-  if (!event.matches && document.body.classList.contains("view-canvas")) {
-    setMobileView(state.activeProjectId ? "sessions" : "projects");
-  }
+ *  findable. */
+document.addEventListener("keydown", (event) => {
+  if (!isCanvasHelpShortcut(event)) return;
+  event.preventDefault();
+  void openSettings("shortcuts");
 });
 
 setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");

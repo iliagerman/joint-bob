@@ -70,6 +70,8 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   "canvas.shortcut": "twins",
   // The AGENTS.md every project's agents read, kept the same on the owner's machines.
   "instructions.global": "twins",
+  // Bob's memory topics: the person's own machines.
+  "control.memory": "twins",
   // Subscription profile names and choices: the administrator's twins, never a visited node.
   "provider.profile": "twins-only",
   "provider.selection": "twins-only",
@@ -83,7 +85,7 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
 /** Event types an older node doesn't know. It rejects a whole batch over one unknown type,
     so these go only to peers that have accepted this node's account snapshot, which only an
     upgraded node can. The periodic full scan offers them again once a peer upgrades. */
-const NEWER_EVENT_TYPES = new Set(["conversation.author", "provider.pool", "provider.poolSelection"]);
+const NEWER_EVENT_TYPES = new Set(["conversation.author", "provider.pool", "provider.poolSelection", "control.memory"]);
 
 function peerUnderstands(db: DatabaseSync, peer: string, entityType: string): boolean {
   if (!NEWER_EVENT_TYPES.has(entityType)) return true;

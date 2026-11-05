@@ -1,4 +1,4 @@
-import { chordMatches, shortcutPrefix } from "../canvas-layout.js";
+import { chordMatches, shortcutPrefix } from "../keymap.js";
 import { sessionHasHarnessIdentity } from "../harness-metadata.js";
 import { api, savePin } from "./api.js";
 import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
@@ -288,10 +288,8 @@ elements.recentSessionsSearchInput.addEventListener("keydown", (event) => {
 });
 attachDigitShortcuts(elements.recentSessionsDialog, () => recentSessionShortcuts, (entry) => openRecentSession(entry).catch((error) => toast(error.message)));
 /** The recorded recents chord reaches the list from any view, including
- * mid-conversation. A canvas pane stays out of the way: it forwards the keystroke to
- * the canvas, which opens the list once for the whole workspace. */
+ * mid-conversation. */
 document.addEventListener("keydown", (event) => {
-  if (state.canvasPaneMode) return;
   const chord = state.canvasKeymap?.commands?.recents;
   if (!Array.isArray(chord) || shortcutPrefix(chord) || !chordMatches(chord, event)) return;
   event.preventDefault();

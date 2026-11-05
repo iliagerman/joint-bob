@@ -69,3 +69,13 @@ export async function runningAsksOn(nodeId: string, startedBefore: string): Prom
 export async function asksServedBy(helperId: string, limit = 50): Promise<AskRecord[]> {
   return (await database()).prepare(`SELECT ${COLUMNS} FROM assistant_asks WHERE helper_id=? ORDER BY started_at DESC LIMIT ?`).all(helperId, limit) as unknown as AskRecord[];
 }
+
+/** Bob (the control center's agent) has no assistant turn: its asks carry this in place of one, and this name as the asker. */
+export const BOB_ASK_TURN_PREFIX = "bob:";
+export const BOB_ASKER_NAME = "Bob";
+
+/** Asks Bob made for an account, newest first. A twin that served one keeps no turn id, so it is told apart by the asker's name. */
+export async function bobAsks(accountId: string, limit: number): Promise<AskRecord[]> {
+  return (await database()).prepare(`SELECT ${COLUMNS} FROM assistant_asks WHERE account_id=? AND (instr(asker_turn_request_id, ?)=1 OR (asker_turn_request_id IS NULL AND asker_name=?)) ORDER BY started_at DESC LIMIT ?`)
+    .all(accountId, BOB_ASK_TURN_PREFIX, BOB_ASKER_NAME, limit) as unknown as AskRecord[];
+}

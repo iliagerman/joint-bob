@@ -2,7 +2,7 @@ import { savePreferencesInBackground } from "./api.js";
 import { conversationTask } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { projectMatchesClusters, sessionMatchesClusters } from "./cluster-filters.js";
-import { addSessionToCanvas } from "./session-list.js";
+import { activateControlCenter } from "./control-center.js";
 import { formatDate, toast } from "./shell.js";
 import { state } from "./state.js";
 import { focusTaskCard, renderBoardView } from "./tasks.js";
@@ -44,42 +44,31 @@ export function togglePanel(panel) {
   setPanelCollapsed(panel, !document.body.classList.contains(`${panel}-collapsed`));
 }
 
-const MOBILE_VIEWS = ["projects", "sessions", "board", "chat", "canvas"];
+const MOBILE_VIEWS = ["projects", "sessions", "board", "chat", "control"];
 
 function currentMobileView() {
   return MOBILE_VIEWS.find((name) => document.body.classList.contains(`view-${name}`)) ?? "projects";
 }
 
 /**
- * The app-wide canvas key. It opens the canvas from anywhere and puts the user back in the
- * view they left, so one key moves in both directions rather than only out of the canvas.
+ * The app-wide control center key. It opens the control center from anywhere and puts the user
+ * back in the view they left, so one key moves in both directions.
  */
-export function toggleCanvasView() {
-  if (state.canvasPaneMode) return;
-  if (currentMobileView() === "canvas") {
-    setMobileView(state.viewBeforeCanvas || (state.activeProjectId ? "sessions" : "projects"));
+export function toggleControlView() {
+  if (currentMobileView() === "control") {
+    setMobileView(state.viewBeforeControl || (state.activeProjectId ? "sessions" : "projects"));
     return;
   }
-  setMobileView("canvas");
+  setMobileView("control");
 }
 
 export function setMobileView(view, updateHistory = true) {
-  // A pane frame hosts exactly one conversation; it never navigates elsewhere.
-  if (state.canvasPaneMode) {
-    document.body.classList.remove("view-projects", "view-sessions", "view-board", "view-chat", "view-canvas");
-    document.body.classList.add("view-chat");
-    return;
-  }
-  // Canvas is a desktop surface; a narrow viewport (or a stale persisted view)
-  // falls back to the conversation list, or the project list without one.
-  if (view === "canvas" && matchMedia("(max-width: 1023px)").matches) {
-    view = state.activeProjectId ? "sessions" : "projects";
-  }
+  if (state.keepControlView && view !== "control") return;
   const currentView = history.state?.mobileView;
-  if (view === "canvas" && currentMobileView() !== "canvas") state.viewBeforeCanvas = currentMobileView();
+  if (view === "control" && currentMobileView() !== "control") state.viewBeforeControl = currentMobileView();
   if (state.preferencesLoaded) savePreferencesInBackground({ mobileView: view });
 
-  document.body.classList.remove("view-projects", "view-sessions", "view-board", "view-chat", "view-canvas");
+  document.body.classList.remove("view-projects", "view-sessions", "view-board", "view-chat", "view-control");
   document.body.classList.add(`view-${view}`);
   for (const [name, navButton] of [
     ["projects", elements.navProjectsButton],
@@ -89,8 +78,7 @@ export function setMobileView(view, updateHistory = true) {
   ]) {
     navButton.classList.toggle("active", name === view);
   }
-  if (view === "canvas") state.canvasController?.activate().catch((error) => toast(error.message, 8000));
-  else state.canvasController?.deactivate();
+  if (view === "control") activateControlCenter().catch((error) => toast(error.message, 8000));
   if (updateHistory && currentView !== view) history.pushState({ ...history.state, mobileView: view }, "");
   window.dispatchEvent(new CustomEvent("app-view-changed"));
 }
@@ -189,16 +177,16 @@ elements.openBoardButton.addEventListener("click", () => {
   renderBoardView();
   setMobileView("board");
 });
-elements.openCanvasButton.addEventListener("click", () => setMobileView("canvas"));
-elements.canvasAddButton.addEventListener("click", () => state.canvasController?.openPicker());
-elements.canvasBackButton.addEventListener("click", () => setMobileView("sessions"));
-elements.addToCanvasButton.addEventListener("click", () => {
-  const session = state.sessions.find((candidate) => state.activeSessionId
-    ? candidate.id === state.activeSessionId
-    : candidate.path === state.activeSessionPath);
-  if (!session) return;
-  elements.chatMoreMenu.removeAttribute("open");
-  addSessionToCanvas(session);
+elements.openControlCenterButton.addEventListener("click", () => setMobileView("control"));
+function leaveControlCenter() {
+  setMobileView(state.viewBeforeControl || (state.activeProjectId ? "sessions" : "projects"));
+}
+elements.controlCenterCloseButton.addEventListener("click", leaveControlCenter);
+// Esc is the quick way out; it leaves typing in a field and open dialogs alone.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || currentMobileView() !== "control" || event.defaultPrevented) return;
+  if (document.querySelector("dialog[open]") || event.target.closest?.("input, textarea, select")) return;
+  leaveControlCenter();
 });
 elements.collapseProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", true));
 

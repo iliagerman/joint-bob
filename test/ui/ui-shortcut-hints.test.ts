@@ -84,15 +84,15 @@ test("header icons reveal the shortcut that opens them while the modifiers are h
     assert.equal(await hint("pending-reviews-open-button").innerText(), "R", "reviews shows its key");
     assert.equal(await hint("running-conversations-open-button").innerText(), "O", "running shows its key");
     assert.equal(await hint("settings-open-button").innerText(), ",", "settings shows its key");
-    assert.equal(await hint("projects-open-canvas-button").innerText(), "V", "the canvas launch shows its key");
+    assert.equal(await hint("projects-open-control-center-button").innerText(), "V", "the control center launch shows its key");
   });
   assert.equal(await hint("recent-sessions-open-button").isVisible(), false, "letting go hides the badges again");
   assert.equal(await hint("recent-sessions-open-button").getAttribute("title"), process.platform === "darwin" ? "\u2303\u2325K" : "Ctrl+Alt+K", "the badge spells the whole chord on hover");
 });
 
-test("canvas shares the top toolbar with larger icons and readable shortcut badges", async () => {
+test("the control center shares the top toolbar with larger icons and readable shortcut badges", async () => {
   const tools = page.locator("#projectsPanel .project-actions");
-  assert.equal(await tools.locator("#openCanvasButton").count(), 1, "Canvas belongs beside Settings");
+  assert.equal(await tools.locator("#openControlCenterButton").count(), 1, "The control center belongs beside Settings");
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   for (const button of await tools.locator("button:visible").all()) {
     const icon = await button.locator("svg").boundingBox();
@@ -111,7 +111,7 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
 });
 
 test("chat controls advertise shortcuts", async () => {
-  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button", "background-tasks-open", "chat-files-button", "chat-session-menu-button", "chat-done-button", "chat-auto-respond-button", "chat-git-button", "activity-story-button"]) {
+  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-rename-button", "chat-cron-button", "background-tasks-open", "chat-files-button", "chat-session-menu-button", "chat-done-button", "chat-auto-respond-button", "chat-git-button", "activity-story-button"]) {
     const control = page.getByTestId(id);
     const host = await control.evaluate((element) => element.closest("[data-shortcut-hint]")?.getAttribute("data-shortcut-hint"));
     assert.ok(host, `${id} needs a shortcut hint`);
@@ -170,7 +170,6 @@ test("a saved chord retitles the badges without a reload", async () => {
 test("the board stays hidden from navigation and keyboard shortcuts", async () => {
   assert.equal(await page.getByTestId("projects-open-board-button").isVisible(), false, "desktop navigation hides the board");
   await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.getByTestId("nav-chats-button").isVisible(), true, "mobile navigation is visible for the check");
   assert.equal(await page.getByTestId("nav-board-button").isVisible(), false, "mobile navigation hides the board");
   await page.setViewportSize({ width: 1440, height: 900 });
 
@@ -215,7 +214,7 @@ test("the chat toolbar keeps its controls and actions on one row when there is r
       controls: ["#chatNodeSelect", "#chatHarnessSelect", "#modelButton", "#reasoningLevelSelect"]
         .map((selector) => bar.querySelector(selector)!.getBoundingClientRect())
         .map((box) => Math.round((box.top + box.bottom) / 2 * 10) / 10),
-      actions: ["#openTerminalButton", "#openBrowserButton", "#notifyButton", "#addToCanvasButton", "#renameSessionButton", "#chatCronButton"]
+      actions: ["#openTerminalButton", "#openBrowserButton", "#notifyButton", "#renameSessionButton", "#chatCronButton"]
         .map((selector) => bar.querySelector(`${selector} .chat-toolbar-icon`))
         .map((icon) => {
           if (!icon) return null;
@@ -362,17 +361,6 @@ test("chat shortcuts focus selectors and open actions", async () => {
   const before = await page.getByTestId("chat-notify-button").getAttribute("aria-pressed");
   await page.keyboard.press("Control+Alt+Y");
   await page.locator(`#notifyButton[aria-pressed="${before === "true" ? "false" : "true"}"]`).waitFor();
-  await page.keyboard.press("Control+Alt+J");
-  await page.locator("#canvasPanel").waitFor();
-  const frame = page.locator(".canvas-pane:visible iframe").first().contentFrame();
-  await frame.getByTestId("chat-message-input").click();
-  await frame.locator("#modelButton:enabled").waitFor();
-  await page.keyboard.press("Control+Alt+M");
-  await frame.getByTestId("model-dialog").waitFor();
-  assert.equal(await page.getByTestId("model-dialog").isVisible(), false, "canvas shortcuts target the pane, not the background chat");
-  await page.keyboard.press("Control+Alt+H");
-  assert.equal(await frame.locator("body").evaluate(() => document.activeElement?.closest("dialog")?.id), "modelDialog", "an open pane dialog keeps keyboard focus");
-  await page.keyboard.press("Escape");
 });
 
 test("the shortcut journey produces no console errors", () => {

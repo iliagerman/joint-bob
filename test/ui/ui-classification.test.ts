@@ -96,21 +96,6 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
       await badge.waitFor();
       assert.equal(await badge.textContent(), label);
     }
-    await page.keyboard.press("Control+Alt+KeyV");
-    await page.getByTestId("canvas-add-button").click();
-    await page.getByTestId("canvas-classification-select").selectOption("Support");
-    const classified = page.waitForResponse((response) => response.url().endsWith("/sessions/classification") && response.ok());
-    await page.getByTestId("canvas-start-conversation-pi").click();
-    const saved = await classified;
-    const payload = saved.request().postDataJSON();
-    assert.equal(payload.classification, "Support");
-    await waitInPage(page, async ({ projectId, sessionId }) => {
-      const response = await fetch(`/api/projects/${projectId}/sessions`);
-      const { sessions } = await response.json();
-      return sessions.some((session: { id: string; classification?: string }) => session.id === sessionId && session.classification === "Support");
-    }, { projectId: node.projects[0].id, sessionId: payload.sessionId });
-    await page.locator("#canvasPanel").click({ position: { x: 4, y: 4 } });
-    await page.keyboard.press("Control+Alt+KeyV");
     await page.getByTestId("session-create-button").click();
     await page.setViewportSize({ width: 390, height: 844 });
     await assertHorizontalStepper(page);

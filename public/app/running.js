@@ -98,6 +98,7 @@ async function refreshRunningSnapshots() {
     runningProjects = body.projects;
     renderRunningBadges();
     renderProjects();
+    window.dispatchEvent(new CustomEvent("running-refreshed"));
     if (elements.runningConversationsDialog.open) renderRunningConversationsDialog();
   }
 }

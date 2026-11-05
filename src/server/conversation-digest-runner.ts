@@ -19,7 +19,7 @@ import { loadConversationMessages } from "./conversation-turns.js";
 import { runGitReview } from "./git-review-run.js";
 import { harnessSessions, onConversationMessage, type SharedHarnessSession } from "./harness-sessions.js";
 import { iconHarnessId } from "./label-icon.js";
-import { send } from "./realtime.js";
+import { broadcastToAllClients, send } from "./realtime.js";
 
 export class DigestError extends Error {
   constructor(readonly status: number, message: string) {
@@ -179,6 +179,8 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
   if (!reply.summary) throw new DigestError(502, "The agent returned an empty summary; try again");
   const digest: ConversationDigest = { summary: reply.summary, messages: said.length, turns: turnCount(said), updatedAt: new Date().toISOString(), model };
   saveDigest(project.id, conversationId, digest);
+  // The control center's cards show this summary as their live line.
+  broadcastToAllClients({ type: "controlCenterChanged" });
   recordKnowledge(project, conversationId, knowledge, reply);
   return digest;
 }

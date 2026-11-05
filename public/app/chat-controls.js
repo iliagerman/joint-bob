@@ -36,8 +36,6 @@ export function setComposerEnabled(enabled) {
   elements.modelButton.disabled = !allowed;
   // In Bob auto the classifier owns the reasoning level, so the picker follows the lock.
   elements.reasoningLevelSelect.disabled = !allowed || auto;
-  // Putting a conversation on the canvas reads it; a lock must not hide the action.
-  elements.addToCanvasButton.disabled = !enabled;
   if (!allowed) hideCommandAutocomplete();
 }
 

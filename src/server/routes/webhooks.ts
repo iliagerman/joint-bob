@@ -263,7 +263,8 @@ const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete"), id: z.string().uuid() }).strict(),
   ...webhookResourceCommandSchema.options,
 ]);
-type Command = z.infer<typeof commandSchema>;
+export type WebhookCommand = z.infer<typeof commandSchema>;
+type Command = WebhookCommand;
 
 /** Always executes locally. A twin may manage a webhook, but never stores a copy of it. */
 function isWebhookResourceCommand(command: Command): command is WebhookResourceCommand {
@@ -386,11 +387,19 @@ async function twinOwners() {
   return (await listRuntimePeers()).filter(peer => isTrustedTwin(db, local.id, peer.id));
 }
 
-async function route(request: Request, command: Command): Promise<unknown> {
+/** This machine and the twins that may own webhooks, as the Webhooks settings and the control center's automations list them. */
+export async function webhookOwners(): Promise<Array<{ id: string; name: string; local: boolean }>> {
+  const local = await getClusterNode();
+  return [{ id: local.id, name: local.name, local: true }, ...(await twinOwners()).map(({ id, name }) => ({ id, name, local: false }))];
+}
+
+const route = (request: Request, command: Command): Promise<unknown> => runWebhookCommand(z.string().uuid().optional().parse(request.query.nodeId), command);
+
+/** A webhook command for the person it runs as, on this machine or the twin that owns the webhook. */
+export async function runWebhookCommand(nodeId: string | undefined, command: Command): Promise<unknown> {
   if (command.action === "profiles") command.accountId = actingAccount()?.accountId ?? null;
   if (command.action === "create" || command.action === "update") command.input.creatorAccountId = actingAccount()?.accountId ?? null;
   if (isWebhookResourceCommand(command)) command.creatorAccountId = actingAccount()?.accountId ?? null;
-  const nodeId = z.string().uuid().optional().parse(request.query.nodeId);
   const local = await getClusterNode();
   if (!nodeId || nodeId === local.id) return manage(command);
   const peer = (await twinOwners()).find(peer => peer.id === nodeId);
@@ -419,8 +428,7 @@ app.post("/api/cluster/v2/webhooks", handle(async (request, response) => {
 }));
 
 app.get("/api/webhooks/owners", handle(async (_request, response) => {
-  const local = await getClusterNode();
-  response.json({ owners: [{ id: local.id, name: local.name, local: true }, ...(await twinOwners()).map(({ id, name }) => ({ id, name, local: false }))] });
+  response.json({ owners: await webhookOwners() });
 }));
 app.get("/api/webhooks/profiles", handle(async (request, response) => {
   response.json(await route(request, { action: "profiles" }));

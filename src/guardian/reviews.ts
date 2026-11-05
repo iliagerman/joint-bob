@@ -83,6 +83,11 @@ export function cancelGuardianReviews(projectId: string, conversationId: string)
   for (const { review, settle } of [...pending.values()]) if (review.projectId === projectId && review.conversationId === conversationId) settle("block");
 }
 
+/** Every open review on this machine, for the control center. */
+export function allPendingGuardianReviews(): GuardianReview[] {
+  return [...pending.values()].map(({ review }) => review);
+}
+
 export function pendingGuardianReviews(projectId: string, conversationId: string): GuardianReview[] {
   return [...pending.values()].map(({ review }) => review).filter((review) => review.projectId === projectId && review.conversationId === conversationId);
 }

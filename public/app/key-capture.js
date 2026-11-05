@@ -1,4 +1,4 @@
-import { CANVAS_MODIFIERS, canvasKeyFromCode, chordFromEvent, chordLabel, normalizeChord } from "../canvas-layout.js";
+import { CANVAS_MODIFIERS, canvasKeyFromCode, chordFromEvent, chordLabel, normalizeChord } from "../keymap.js";
 
 const modifierTokenForCode = (code) => ({ ControlLeft: "ctrl", ControlRight: "ctrl", MetaLeft: "meta", MetaRight: "meta", AltLeft: "alt", AltRight: "alt", ShiftLeft: "shift", ShiftRight: "shift" })[code] || null;
 

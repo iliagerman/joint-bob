@@ -1,4 +1,4 @@
-import { DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout } from "../canvas-layout.js";
+import { DEFAULT_CANVAS_KEYMAP } from "../keymap.js";
 
 /** Mutable app-wide values shared by several modules. */
 export const shared = {
@@ -12,9 +12,6 @@ export const shared = {
 
 const bootParams = new URLSearchParams(location.search);
 export const state = {
-  // A canvas pane runs inside the canvas parent's iframe: one conversation, no
-  // navigation, and no preference writes that would fight the parent app.
-  canvasPaneMode: bootParams.get("canvasPane") === "1",
   byTheWayToken: bootParams.get("byTheWayToken"),
   // Follow mode: the pane tracks the newest message while the reader sits at
   // the bottom, and releases the moment they scroll away. It resumes when they
@@ -25,13 +22,13 @@ export const state = {
   initialAction: bootParams.get("action"),
   initialSessionId: bootParams.get("sessionId"),
   initialNodeId: bootParams.get("nodeId"),
-  canvasLayout: emptyCanvasLayout(),
   canvasKeymap: DEFAULT_CANVAS_KEYMAP,
-  canvasController: null,
-  canvasLayoutSave: null,
-  // The view the canvas was opened from, so the toggle key puts the user back where
+  // The view the control center was opened from, so the toggle key puts the user back where
   // they were rather than always in the conversation list.
-  viewBeforeCanvas: null,
+  viewBeforeControl: null,
+  // True while a conversation opens over the control center: choosing its project and the conversation do not leave the board.
+  keepControlView: false,
+  controlCenter: { colors: {}, positions: {}, layout: "grouped", filter: [], chatSide: "right", chatWidth: 400 },
   projects: [],
   sessions: [],
   quickNotes: [],

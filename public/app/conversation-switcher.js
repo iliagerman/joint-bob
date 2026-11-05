@@ -3,7 +3,7 @@
 // top-level app. A chat pane is its own document and forwards its switcher keys up here,
 // including the release that ends the hold, because only this window sees that release.
 
-import { isSwitcherKey, isSwitcherNavigationCode, switcherChord, switcherHeld, switcherStep } from "../canvas-layout.js";
+import { isSwitcherKey, isSwitcherNavigationCode, switcherChord, switcherHeld, switcherStep } from "../keymap.js";
 import { api } from "./api.js";
 import { sessionDisplayState } from "./layout.js";
 import { lastOpenedConversations, openRecentSession, sessionMatchesRecent } from "./recents.js";

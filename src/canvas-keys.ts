@@ -7,7 +7,7 @@
  * typing, and "/" and "\" travel as a URL path segment on the way to the shortcut
  * routes. A full shortcut chord can still use them - see CANVAS_CHORD_KEY_TOKENS.
  *
- * `public/canvas-layout.js` holds the browser's copy of these lists;
+ * `public/keymap.js` holds the browser's copy of these lists;
  * `test/canvas-keys.test.ts` keeps the two in step.
  */
 const DIGITS = [..."0123456789"];

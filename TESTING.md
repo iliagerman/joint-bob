@@ -62,7 +62,7 @@ homeserver.
 Run a single file while iterating:
 
 ```bash
-npm run test:file test/canvas-layout.test.ts
+npm run test:file test/control-center-board.test.ts
 ```
 
 Focused harness boundary checks:
@@ -87,7 +87,7 @@ Disposable servers bind only to loopback, not the machine's external network int
 | Browser tests | `test/ui/*.test.ts` | A real Chrome walks a user journey and the page actually renders and works |
 
 Source assertions are cheap and catch deletions, but they cannot see behaviour.
-A regression that squashed the canvas conversation picker to an unreadable height
+A regression that squashed a conversation picker to an unreadable height
 passed every source assertion in this repository, because the CSS rules the tests
 checked for were all still there. Reach for a server test or a browser test
 whenever the thing that can break is behaviour or layout.
@@ -140,7 +140,7 @@ inside a test, so the browser suite and a developer's own browser see the same d
 
 Drives your installed Chrome through `playwright-core` (no browser download).
 It signs in through the real form, opens a project, reads a transcript, and opens
-the canvas picker, and it fails on any console error or any 4xx/5xx response.
+the control center, and it fails on any console error or any 4xx/5xx response.
 
 It lives outside the `test/*.test.ts` glob on purpose. It needs a Chrome binary,
 and a browser suite that silently skips itself reports success while testing
@@ -169,7 +169,7 @@ Conventions that keep it stable:
 
 - Wait for **application state**, never a load event or a sleep. `await page.getByText("Internal Assistant").waitFor()` is a readiness signal; `waitForTimeout` is not.
 - Use `data-testid` for controls and visible text for content. Every interactive element must carry a `data-testid`.
-- Set a desktop viewport. The canvas is hidden below 1024px.
+- Set a desktop viewport. The control center is hidden below 1024px.
 - Before measuring geometry, wait two animation frames.
 - **Assert the precondition the bug needs.** The picker rows only collapsed once the list overflowed its maximum height, so the test selects the project with the most conversations and asserts the list is actually scrolling before it measures a single row.
 
@@ -231,7 +231,7 @@ or README change does not override instructions already loaded into a session.
 **Prove it fails.** Break the code the test covers, run the test, and confirm it
 fails with a message that names the problem. Then restore the code. A test that
 passes against the broken version is worse than no test, because it is read as
-coverage. This is not optional — it is how the canvas-picker assertion was found
+coverage. This is not optional — it is how a conversation-picker assertion was found
 to be checking a list too short to trigger the bug it was written for.
 
 The rest follows from that:

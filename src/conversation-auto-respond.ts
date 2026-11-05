@@ -165,10 +165,21 @@ export async function disableAutoRespond(projectId: string, conversationId: stri
 
 function stripMeta({ revision: _revision, updatedAt: _updatedAt, ...rest }: AutoRespondState): Omit<AutoRespondState, "revision" | "updatedAt"> { return rest; }
 
+const stopListeners = new Set<(state: AutoRespondState) => void>();
+
+/** Hears each time an active responder stops, so whoever watches the conversation can take over from there. */
+export function onAutoRespondStopped(listener: (state: AutoRespondState) => void): () => void {
+  stopListeners.add(listener);
+  return () => stopListeners.delete(listener);
+}
+
 /** Stops an active responder. The message it stopped on stays unanswered, so Resume judges it again. */
 export async function stopAutoRespond(projectId: string, conversationId: string, kind: AutoRespondStopKind, reason: string): Promise<AutoRespondState | undefined> {
-  return change(projectId, conversationId, (current) => current?.status === "active"
+  const wasActive = (await getAutoRespond(projectId, conversationId))?.status === "active";
+  const stopped = await change(projectId, conversationId, (current) => current?.status === "active"
     ? { ...stripMeta(current), status: "stopped", stopKind: kind, stopReason: reason.slice(0, 2_000), retry: null } : undefined);
+  if (wasActive && stopped?.status === "stopped") for (const listener of stopListeners) listener(stopped);
+  return stopped;
 }
 
 /** Counts a response, only while the configuration is still the one the responder started with. */
@@ -185,6 +196,11 @@ export async function retryAutoRespond(projectId: string, conversationId: string
     const nextAt = new Date(Date.now() + Math.min(60_000, 2_000 * 2 ** Math.min(attempts - 1, 5))).toISOString();
     return { ...stripMeta(current), retry: { attempts, nextAt, error: error.slice(0, 2_000) } };
   });
+}
+
+/** Every responder that is on or stopped, for the control center's board. */
+export async function listAutoResponders(): Promise<AutoRespondState[]> {
+  return ((await database()).prepare("SELECT * FROM conversation_auto_responders WHERE status IN ('active', 'stopped')").all() as unknown as Row[]).map(fromRow);
 }
 
 export async function listActiveAutoResponders(): Promise<AutoRespondState[]> {

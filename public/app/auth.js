@@ -1,4 +1,5 @@
-import { DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, normalizeCanvasKeymap } from "../canvas-layout.js";
+import { DEFAULT_CANVAS_KEYMAP, normalizeCanvasKeymap } from "../keymap.js";
+import { setShortcutKeymap } from "./shortcuts.js";
 import { applyAdminVisibility, showAdminTransferOffer, showTerminalNoticeOnce } from "./node-admin.js";
 import { api, savePreferences, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
@@ -197,42 +198,35 @@ export async function initializeApplication() {
   applyFocusUi();
   syncNotifyButton();
   updateInstallButton();
-  state.canvasLayout = preferences.canvasLayout || emptyCanvasLayout();
   // The node normalizes on the way out; normalizing again costs nothing and keeps a
   // stale shape (or an older node) from reaching the dispatcher unvalidated.
   state.canvasKeymap = normalizeCanvasKeymap(preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP);
+  state.controlCenter = preferences.controlCenter;
   syncShortcutHints();
-  if (!state.canvasPaneMode) {
-    state.canvasController?.setKeymap(state.canvasKeymap);
-    state.canvasController?.setLayout(state.canvasLayout);
-    setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
-  }
-  if (state.canvasPaneMode) {
-    if (state.initialProjectId) state.activeProjectId = state.initialProjectId;
-    if (state.initialSessionPath) state.activeSessionPath = state.initialSessionPath;
-    if (state.initialSessionId) state.activeSessionId = state.initialSessionId;
-    if (state.initialNodeId) state.activeNodeId = state.initialNodeId;
-    setMobileView("chat", false);
-  }
+  setShortcutKeymap(state.canvasKeymap);
+  setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
   revealApplication();
   void watchVisitorProfile();
   await loadWorkspaces();
   await loadProjects();
-  if (!state.canvasPaneMode && !state.initialSessionId && !state.initialSessionPath) setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
+  if (!state.initialSessionId && !state.initialSessionPath) setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
   state.preferencesLoaded = true;
-  if (!state.canvasPaneMode) {
-    void showWhatsNew(preferences.lastSeenVersion).catch((error) => console.warn("Could not load the changelog", error));
-  }
+  void showWhatsNew(preferences.lastSeenVersion).catch((error) => console.warn("Could not load the changelog", error));
   if (state.initialProjectId || state.initialSessionPath) {
     savePreferencesInBackground({ activeProjectId: state.activeProjectId, activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   }
-  if (state.authenticated && !state.canvasPaneMode) startProjectSyncPolling();
-  if (state.authenticated && !state.canvasPaneMode) void showTerminalNoticeOnce();
-  if (state.authenticated && !state.canvasPaneMode) void showAdminTransferOffer();
-  if (!state.canvasPaneMode && state.initialAction === "new-conversation") {
+  if (state.authenticated) startProjectSyncPolling();
+  if (state.authenticated) void showTerminalNoticeOnce();
+  if (state.authenticated) void showAdminTransferOffer();
+  if (state.initialAction === "new-conversation") {
     state.initialAction = null;
     const { startGlobalConversation } = await import("./new-session.js");
     await startGlobalConversation();
+  }
+  // The app icon's "Control center" shortcut (public/manifest.webmanifest).
+  if (state.initialAction === "control-center") {
+    state.initialAction = null;
+    setMobileView("control");
   }
 }
 

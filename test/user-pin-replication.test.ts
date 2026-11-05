@@ -87,6 +87,33 @@ test("pin replication is last-write-wins per item and resolves project aliases",
   }
 });
 
+test("a canvas shortcut event from an older machine is accepted and dropped, and the old tables are removed", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-compat-"));
+  const previous = process.env.PI_WEB_DATA_DIR;
+  process.env.PI_WEB_DATA_DIR = dataDir;
+  try {
+    createNode(dataDir);
+    const db = new DatabaseSync(path.join(dataDir, "node.db"));
+    db.exec("CREATE TABLE canvas_shortcuts (username TEXT NOT NULL, binding TEXT NOT NULL); INSERT INTO canvas_shortcuts VALUES ('old', 'K')");
+    db.close();
+    const { receiveReplicationBatch } = await import(`../src/replication.ts?canvas-compat=${Date.now()}`);
+    const received = await receiveReplicationBatch({ events: [{
+      id: "00000000-0000-4000-8000-0000000000aa", originNodeId: "node-b", entityType: "canvas.shortcut", entityKey: `${ILIA}:K`, operation: "upsert",
+      payload: { username: ILIA, binding: "K", projectId: "p", engine: "pi", sessionId: "s", updatedAt: "2026-09-02T11:00:00.000Z", originNodeId: "node-b" },
+      createdAt: "2026-09-02T11:00:00.000Z",
+    }] });
+    assert.deepEqual(received, ["00000000-0000-4000-8000-0000000000aa"]);
+    const check = new DatabaseSync(path.join(dataDir, "node.db"), { readOnly: true });
+    const tables = (check.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'canvas_shortcut%'").all() as Array<{ name: string }>).map((row) => row.name);
+    check.close();
+    assert.deepEqual(tables, [], "the old canvas shortcut tables are dropped");
+  } finally {
+    if (previous === undefined) delete process.env.PI_WEB_DATA_DIR;
+    else process.env.PI_WEB_DATA_DIR = previous;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("every durable entity maps to the browser data it invalidates", async () => {
   const { replicationInvalidations } = await import(`../src/replication.ts?invalidations=${Date.now()}`);
   const event = (entityType: string) => ({ entityType } as never);
@@ -96,7 +123,8 @@ test("every durable entity maps to the browser data it invalidates", async () =>
   for (const entityType of ["conversation.ownership", "conversation.record", "conversation.review"]) {
     assert.deepEqual(replicationInvalidations([event(entityType)]), ["sessionsChanged"], entityType);
   }
-  assert.deepEqual(replicationInvalidations([event("canvas.shortcut")]), ["shortcutsChanged"]);
+  // Older machines still send canvas shortcuts; they change nothing here.
+  assert.deepEqual(replicationInvalidations([event("canvas.shortcut")]), []);
   assert.deepEqual(replicationInvalidations([event("user.pin")]), ["pinsChanged"]);
   assert.deepEqual(replicationInvalidations([event("unknown")]), []);
 });

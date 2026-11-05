@@ -4,7 +4,7 @@
 // square. The badge names the key alone - every command rides the same modifiers, so
 // repeating them on 45 buttons only costs space - and the whole chord stays available as
 // the badge's tooltip and in the shortcuts panel.
-import { CANVAS_COMMAND_MODIFIERS, chordKeyLabel, chordLabel, normalizeCanvasKeymap } from "../canvas-layout.js";
+import { CANVAS_COMMAND_MODIFIERS, chordKeyLabel, chordLabel, normalizeCanvasKeymap } from "../keymap.js";
 import { state } from "./state.js";
 
 export function syncShortcutHints() {

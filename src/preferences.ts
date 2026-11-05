@@ -18,141 +18,6 @@ export interface RecentSession {
   updatedAt: string | null;
 }
 
-export interface CanvasPanePreference {
-  kind: "pane";
-  id: string;
-  projectId: string;
-  sessionPath: string;
-  sessionId: string;
-  executionNodeId: string | null;
-  harnessId?: HarnessId;
-}
-
-export interface CanvasRowPreference {
-  id: string;
-  /** Pinned pixel height, or null while the row shares available canvas height. */
-  height: number | null;
-  /** Proportional pane widths. They sum to one, so every row stays filled. */
-  weights: number[];
-  panes: CanvasPanePreference[];
-}
-
-export interface CanvasSplitPreference {
-  kind: "split";
-  id: string;
-  axis: "row" | "column";
-  ratio: number;
-  first: CanvasNodePreference;
-  second: CanvasNodePreference;
-}
-export type CanvasNodePreference = CanvasPanePreference | CanvasSplitPreference;
-export interface CanvasPagePreference {
-  id: string;
-  name: string;
-  root: CanvasNodePreference | null;
-  focusedPaneId: string | null;
-  projectFilter: string;
-}
-export interface CanvasLayoutPreference {
-  version: 6;
-  pages: CanvasPagePreference[];
-  activePageId: string;
-}
-
-const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
-
-export const CANVAS_MIN_PANE_WIDTH = 0.08;
-export const CANVAS_WIDTH_TOLERANCE = 1e-6;
-export const CANVAS_MIN_ROW_HEIGHT = 200;
-export const CANVAS_MAX_ROW_HEIGHT = 2400;
-
-export function canvasRowGeometryIsLegal(row: { height?: number | null; weights: number[] }): boolean {
-  const total = row.weights.reduce((sum, weight) => sum + weight, 0);
-  return Math.abs(total - 1) <= CANVAS_WIDTH_TOLERANCE
-    && row.weights.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH - CANVAS_WIDTH_TOLERANCE)
-    && (row.height === null || row.height === undefined
-      || (row.height >= CANVAS_MIN_ROW_HEIGHT && row.height <= CANVAS_MAX_ROW_HEIGHT));
-}
-
-function equalCanvasWeights(count: number): number[] {
-  return Array.from({ length: count }, () => 1 / count);
-}
-
-function normalizedCanvasWeights(weights: unknown, count: number): number[] {
-  if (!Array.isArray(weights) || weights.length !== count) return equalCanvasWeights(count);
-  const total = weights.reduce<number>((sum, weight) => sum + Number(weight), 0);
-  const normalized = weights.map((weight) => Number(weight) / total);
-  return normalized.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH) ? normalized : equalCanvasWeights(count);
-}
-
-interface StoredCanvasLayout {
-  version: number;
-  rows: Array<{ id: string; height?: number | null; weights?: number[]; panes: CanvasPanePreference[] }>;
-  focusedPaneId: string | null;
-}
-
-/** Migrates row layouts to persisted split trees. */
-function splitRows(rows: StoredCanvasLayout["rows"]): CanvasNodePreference | null {
-  // Right-nested splits reproduce the exact widths the row weights described, and
-  // rows stack in a column split with equal shares — the same shape the client builds.
-  const weighted = (items: CanvasNodePreference[], weights: number[] | undefined, axis: "row" | "column"): CanvasNodePreference | null => {
-    if (!items.length) return null;
-    if (items.length === 1) return items[0];
-    const values = Array.isArray(weights) && weights.length === items.length && weights.every((weight) => Number.isFinite(weight) && weight > 0)
-      ? weights
-      : items.map(() => 1);
-    const total = values.reduce((sum, value) => sum + value, 0);
-    const ratio = Math.min(0.85, Math.max(0.15, values[0] / total));
-    // items.length >= 2 here, so the tail always yields at least one pane.
-    const rest = weighted(items.slice(1), values.slice(1), axis) as CanvasNodePreference;
-    return { kind: "split", id: crypto.randomUUID(), axis, ratio, first: items[0], second: rest };
-  };
-  return weighted(rows.map((row) => weighted(row.panes, row.weights, "row")).filter((node): node is CanvasNodePreference => Boolean(node)), rows.map(() => 1), "column");
-}
-function nodeDepth(node: CanvasNodePreference | null): number {
-  return !node ? 0 : node.kind === "pane" ? 1 : 1 + Math.max(nodeDepth(node.first), nodeDepth(node.second));
-}
-function balancedNodes(items: CanvasPanePreference[], axis: "row" | "column" = "row"): CanvasNodePreference | null {
-  if (!items.length) return null;
-  if (items.length === 1) return items[0];
-  const middle = Math.ceil(items.length / 2);
-  return { kind: "split", id: crypto.randomUUID(), axis, ratio: middle / items.length, first: balancedNodes(items.slice(0, middle), axis === "row" ? "column" : "row")!, second: balancedNodes(items.slice(middle), axis === "row" ? "column" : "row")! };
-}
-/** A legacy tree that breaks the v6 limits is spread over pages of eight as balanced
- *  trees, in reading order, exactly like the client's migration. Panes past nine
- *  pages are dropped: a pane is only a view onto a conversation. */
-function legacyPages(tree: CanvasNodePreference | null, focusedPaneId: string | null): { roots: Array<CanvasNodePreference | null>; focusedPaneId: string | null } {
-  const items = panesInCanvasNode(tree);
-  let roots: Array<CanvasNodePreference | null>;
-  if (items.length <= 8 && nodeDepth(tree) <= 8) {
-    roots = [tree];
-  } else {
-    roots = [];
-    for (let start = 0; start < items.length && roots.length < 9; start += 8) {
-      roots.push(balancedNodes(items.slice(start, start + 8)));
-    }
-    if (!roots.length) roots = [null];
-  }
-  const ids = new Set(roots.flatMap((root) => panesInCanvasNode(root).map((pane) => pane.id)));
-  return { roots, focusedPaneId: focusedPaneId && ids.has(focusedPaneId) ? focusedPaneId : null };
-}
-function legacyPageLayout(roots: Array<CanvasNodePreference | null>, focusedPaneId: string | null): CanvasLayoutPreference {
-  return {
-    version: 6,
-    // Focus lands on the page that actually holds the pane, and only when that
-    // pane survived the spread; otherwise it is dropped rather than invalidated.
-    pages: roots.map((root, index) => ({ id: `page-${index + 1}`, name: `Page ${index + 1}`, root, focusedPaneId: focusedPaneId && panesInCanvasNode(root).some((pane) => pane.id === focusedPaneId) ? focusedPaneId : null, projectFilter: "" })),
-    activePageId: "page-1",
-  };
-}
-
-export function normalizeCanvasLayoutPreference(layout: StoredCanvasLayout | CanvasLayoutPreference | { version: 1; root: CanvasNodePreference | null; focusedPaneId: string | null }): CanvasLayoutPreference {
-  const source = layout as StoredCanvasLayout & CanvasLayoutPreference & { root?: CanvasNodePreference | null };
-  if (source.version === 6) return source;
-  const { roots, focusedPaneId } = legacyPages(source.version === 1 ? source.root ?? null : splitRows(source.rows), source.focusedPaneId ?? null);
-  return legacyPageLayout(roots, focusedPaneId);
-}
-
 export type CanvasModifier = CanvasChordModifier;
 
 /** Canvas keyboard shortcuts for one account. Every command holds one chord or a
@@ -169,16 +34,12 @@ const CANVAS_MODIFIERS: CanvasModifier[] = [...CANVAS_CHORD_MODIFIERS];
 // command already holds it, so an existing account never loses a binding it configured.
 const CANVAS_KEYMAP_COMMANDS = [
   "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput", "savedCommands",
-  "paneSearch", "recentPane", "focusPane",
-  "splitRight", "splitBelow", "closePane", "createPage",
-  "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
-  "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
   "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat", "newKiroChat", "quickNote", "toggleNotes",
-  "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename", "browser", "scheduledTasks",
+  "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "rename", "browser", "scheduledTasks",
   "backgroundTasks", "chatFiles", "sessionActions", "markDone", "autoRespond", "git", "explainConversation", "costs", "activity",
 ] as const;
 
-/** Mirrors `DEFAULT_CANVAS_KEYMAP` in `public/canvas-layout.js`; every command rides
+/** Mirrors `DEFAULT_CANVAS_KEYMAP` in `public/keymap.js`; every command rides
  * Control+Option (Control+Alt off a Mac) so a button badge can name the key alone.
  * Conversation keys keep their own base chord, which no command may share. */
 const CANVAS_COMMAND_MODIFIERS: CanvasModifier[] = ["ctrl", "alt"];
@@ -212,7 +73,6 @@ export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
     terminal: commandChord("X"),
     browser: commandChord("B"),
     notify: commandChord("Y"),
-    addToCanvas: commandChord("J"),
     rename: commandChord("E"),
     scheduledTasks: commandChord("S"),
     backgroundTasks: commandChord("U"),
@@ -225,21 +85,6 @@ export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
     explainConversation: ["ctrl", "alt", "shift", "E"],
     costs: ["ctrl", "alt", "shift", "C"],
     activity: ["ctrl", "alt", "shift", "S"],
-    paneSearch: commandChord("F"),
-    recentPane: commandChord("L"),
-    focusPane: commandChord("G"),
-    splitRight: commandChord("\\"),
-    splitBelow: commandChord("-"),
-    closePane: commandChord("W"),
-    // Pages sit on the digits, and the digit that selects no page creates one.
-    createPage: commandChord("0"),
-    prevPage: commandChord(";"),
-    nextPage: commandChord("'"),
-    focusLeft: commandChord("ARROWLEFT"),
-    focusRight: commandChord("ARROWRIGHT"),
-    focusUp: commandChord("ARROWUP"),
-    focusDown: commandChord("ARROWDOWN"),
-    ...Object.fromEntries([..."123456789"].map((digit, index) => [`page${index + 1}`, commandChord(digit)])),
   },
 });
 
@@ -303,7 +148,7 @@ export interface UserPreferences {
   completionSound: "off" | "chime" | "bell";
   terminalDock: TerminalDockPreference;
   installDismissed: boolean;
-  mobileView: "projects" | "sessions" | "board" | "chat" | "canvas";
+  mobileView: "projects" | "sessions" | "board" | "chat" | "control";
   activeProjectId: string | null;
   activeSessionPath: string | null;
   activeSessionId: string | null;
@@ -315,12 +160,13 @@ export interface UserPreferences {
   projectsPanelCollapsed: boolean;
   chatsPanelCollapsed: boolean;
   lastSeenVersion: string | null;
-  canvasLayout: CanvasLayoutPreference;
   canvasKeymap: CanvasKeymapPreference;
   /** Per conversation, the newest message time (epoch ms) the reader has viewed. */
   conversationLastRead: Record<string, number>;
   /** Conversation-list visibility per project. Missing entries use the hidden defaults. */
   projectConversationVisibility: Record<string, { done: boolean; scheduled: boolean }>;
+  /** The control center board: card colors and free positions by conversation, the layout and the project filter. */
+  controlCenter: ControlCenterPreference;
   /** Default Git reviewer; null means choose from the conversation's last harness. */
   gitReviewer: GitReviewerPreference | null;
 }
@@ -350,11 +196,11 @@ interface PreferenceRow {
   projects_panel_collapsed: number;
   chats_panel_collapsed: number;
   last_seen_version: string | null;
-  canvas_layout: string;
   git_reviewer: string;
   canvas_keymap: string;
   conversation_last_read: string;
   project_conversation_visibility: string;
+  control_center: string;
 }
 
 const dataDir = resolveDataDirectory();
@@ -384,7 +230,6 @@ function preferencesDatabase(): DatabaseSync {
       pinned_session_paths TEXT NOT NULL DEFAULT '[]',
       projects_panel_collapsed INTEGER NOT NULL DEFAULT 0,
       chats_panel_collapsed INTEGER NOT NULL DEFAULT 0,
-      canvas_layout TEXT NOT NULL DEFAULT '{"version":1,"root":null,"focusedPaneId":null}',
       canvas_keymap TEXT NOT NULL DEFAULT '{"modifiers":["meta","shift"],"recentPane":"E","focusPane":"G","paneSearch":"F"}',
       updated_at TEXT NOT NULL
     );
@@ -401,11 +246,11 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "chats_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN chats_panel_collapsed INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "recent_sessions")) database.exec("ALTER TABLE user_preferences ADD COLUMN recent_sessions TEXT NOT NULL DEFAULT '[]'");
   if (!columns.some((column) => column.name === "last_seen_version")) database.exec("ALTER TABLE user_preferences ADD COLUMN last_seen_version TEXT");
-  if (!columns.some((column) => column.name === "canvas_layout")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_layout TEXT NOT NULL DEFAULT '{\"version\":1,\"root\":null,\"focusedPaneId\":null}'");
   if (!columns.some((column) => column.name === "canvas_keymap")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_keymap TEXT NOT NULL DEFAULT '{\"modifiers\":[\"meta\",\"shift\"],\"recentPane\":\"E\",\"focusPane\":\"G\",\"paneSearch\":\"F\"}'");
   if (!columns.some((column) => column.name === "conversation_last_read")) database.exec("ALTER TABLE user_preferences ADD COLUMN conversation_last_read TEXT NOT NULL DEFAULT '{}'");
   if (!columns.some((column) => column.name === "git_reviewer")) database.exec("ALTER TABLE user_preferences ADD COLUMN git_reviewer TEXT NOT NULL DEFAULT 'null'");
   if (!columns.some((column) => column.name === "project_conversation_visibility")) database.exec("ALTER TABLE user_preferences ADD COLUMN project_conversation_visibility TEXT NOT NULL DEFAULT '{}'");
+  if (!columns.some((column) => column.name === "control_center")) database.exec("ALTER TABLE user_preferences ADD COLUMN control_center TEXT NOT NULL DEFAULT '{}'");
   return database;
 }
 
@@ -504,182 +349,33 @@ function parseRecentSessions(value: string): RecentSession[] {
   }
 }
 
-function validStoredCanvasNode(node: unknown, depth: number, ids: Set<string>, identities: Set<string>): CanvasNodePreference | null {
-  if (!node || typeof node !== "object" || depth > 8) return null;
-  const item = node as Record<string, unknown>;
-  if (typeof item.id !== "string" || !item.id || item.id.length > 200 || ids.has(item.id)) return null;
-  ids.add(item.id);
-  if (item.kind === "pane") {
-    if (typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120 || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000 || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200 || !(item.executionNodeId === null || typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100) || (item.harnessId !== undefined && !isHarnessId(item.harnessId))) return null;
-    const sessionPath = canonicalSessionPath(item.sessionPath);
-    const identity = `${item.projectId}\0${item.sessionId}`;
-    const pathIdentity = `${item.projectId}\0${sessionPath}`;
-    if (identities.has(identity) || identities.has(pathIdentity)) return null;
-    identities.add(identity); identities.add(pathIdentity);
-    return { kind: "pane", id: item.id, projectId: item.projectId, sessionPath, sessionId: item.sessionId, executionNodeId: item.executionNodeId as string | null, ...(item.harnessId === undefined ? {} : { harnessId: item.harnessId }) };
-  }
-  if (item.kind !== "split" || (item.axis !== "row" && item.axis !== "column") || typeof item.ratio !== "number" || !Number.isFinite(item.ratio) || item.ratio < .15 || item.ratio > .85) return null;
-  const first = validStoredCanvasNode(item.first, depth + 1, ids, identities);
-  const second = validStoredCanvasNode(item.second, depth + 1, ids, identities);
-  return first && second ? { kind: "split", id: item.id, axis: item.axis, ratio: item.ratio, first, second } : null;
+export interface ControlCenterPreference {
+  /** Card color by `projectId:conversationId`, as #rrggbb. */
+  colors: Record<string, string>;
+  positions: Record<string, { x: number; y: number }>;
+  layout: "grouped" | "free";
+  /** Project ids the board is limited to; empty shows every project. */
+  filter: string[];
+  /** Which side Bob's chat sits on, and how wide it is in pixels. */
+  chatSide: "left" | "right";
+  chatWidth: number;
 }
-function validStoredCanvasLayout(value: unknown): CanvasLayoutPreference | null {
-  if (!value || typeof value !== "object") return null;
-  const source = value as Record<string, unknown>;
-  if (source.version !== 6 || !Array.isArray(source.pages) || source.pages.length < 1 || source.pages.length > 9 || typeof source.activePageId !== "string") return null;
-  const ids = new Set<string>(); const identities = new Set<string>(); const pages: CanvasPagePreference[] = [];
-  for (const item of source.pages) {
-    if (!item || typeof item !== "object") return null;
-    const page = item as Record<string, unknown>;
-    if (typeof page.id !== "string" || !page.id || page.id.length > 200 || ids.has(page.id) || typeof page.name !== "string" || !page.name.trim() || page.name.length > 80 || typeof page.projectFilter !== "string" || page.projectFilter.length > 120 || !(page.focusedPaneId === null || typeof page.focusedPaneId === "string")) return null;
-    ids.add(page.id); const root = page.root === null ? null : validStoredCanvasNode(page.root, 1, ids, identities);
-    if (page.root !== null && !root) return null;
-    const pagePanes = panesInCanvasNode(root);
-    if (pagePanes.length > 8 || page.focusedPaneId && !pagePanes.some((pane) => pane.id === page.focusedPaneId)) return null;
-    pages.push({ id: page.id, name: page.name, root, focusedPaneId: page.focusedPaneId as string | null, projectFilter: page.projectFilter });
-  }
-  return pages.some((page) => page.id === source.activePageId) ? { version: 6, pages, activePageId: source.activePageId } : null;
-}
-function panesInCanvasNode(node: CanvasNodePreference | null, result: CanvasPanePreference[] = []): CanvasPanePreference[] { if (!node) return result; if (node.kind === "pane") result.push(node); else { panesInCanvasNode(node.first, result); panesInCanvasNode(node.second, result); } return result; }
 
-/** A hand-edited canvas row must degrade to an empty canvas, never take the node down. */
-function parseCanvasLayout(value: string): CanvasLayoutPreference {
+const emptyControlCenter = (): ControlCenterPreference => ({ colors: {}, positions: {}, layout: "grouped", filter: [], chatSide: "right", chatWidth: 400 });
+
+function parseControlCenter(value: string): ControlCenterPreference {
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== "object") return emptyCanvasLayout();
-    if ((parsed as { version?: unknown }).version === 1) {
-      // A stored version 1 tree is validated exactly like a stored version 6 page,
-      // then runs through the same spread-over-pages migration so oversized legacy
-      // trees cannot produce a layout the schema would reject.
-      const legacy = parsed as { root?: unknown; focusedPaneId?: unknown };
-      const ids = new Set<string>();
-      const identities = new Set<string>();
-      const root = validStoredCanvasNode(legacy.root ?? null, 1, ids, identities);
-      if (legacy.root != null && !root) return emptyCanvasLayout();
-      const panes = panesInCanvasNode(root);
-      const focusedPaneId = typeof legacy.focusedPaneId === "string" && panes.some((pane) => pane.id === legacy.focusedPaneId)
-        ? legacy.focusedPaneId
-        : null;
-      const { roots, focusedPaneId: keptFocus } = legacyPages(root, focusedPaneId);
-      return legacyPageLayout(roots, keptFocus);
-    }
-    if ((parsed as { version?: unknown }).version === 6) return validStoredCanvasLayout(parsed) ?? emptyCanvasLayout();
-    const layout = parsed as unknown as {
-      version: number;
-      rows: Array<CanvasRowPreference & { height?: number | null; weights?: number[] }>;
-      focusedPaneId: string | null;
+    const stored = JSON.parse(value) as Partial<ControlCenterPreference> | null;
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return emptyControlCenter();
+    return {
+      colors: stored.colors && typeof stored.colors === "object" ? Object.fromEntries(Object.entries(stored.colors).filter(([key, color]) => key.length <= 300 && /^#[0-9a-f]{6}$/i.test(String(color)))) : {},
+      positions: stored.positions && typeof stored.positions === "object" ? Object.fromEntries(Object.entries(stored.positions).filter(([key, point]) => key.length <= 300 && Number.isFinite(point?.x) && Number.isFinite(point?.y))) : {},
+      layout: stored.layout === "free" ? "free" : "grouped",
+      filter: Array.isArray(stored.filter) ? stored.filter.filter((id): id is string => typeof id === "string" && id.length <= 200) : [],
+      chatSide: stored.chatSide === "left" ? "left" : "right",
+      chatWidth: typeof stored.chatWidth === "number" && stored.chatWidth >= 300 && stored.chatWidth <= 820 ? stored.chatWidth : 400,
     };
-    const ids = new Set<string>();
-    const sessionIdentities = new Set<string>();
-    const pathIdentities = new Set<string>();
-    const paneIds = new Set<string>();
-    if (!Array.isArray(layout.rows) || layout.rows.length > 10) return emptyCanvasLayout();
-    const rows: CanvasRowPreference[] = [];
-    for (const row of layout.rows) {
-      if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id || row.id.length > 200 || ids.has(row.id)) return emptyCanvasLayout();
-      ids.add(row.id);
-      if (!Array.isArray(row.panes) || row.panes.length < 1 || row.panes.length > 8) return emptyCanvasLayout();
-      if (![2, 3, 4, 5].includes(layout.version)) return emptyCanvasLayout();
-      if (layout.version !== 4 && (!Array.isArray(row.weights) || row.weights.length !== row.panes.length
-        || !row.weights.every((weight) => typeof weight === "number" && Number.isFinite(weight) && weight > 0))) return emptyCanvasLayout();
-      if ((layout.version === 3 || layout.version === 5)
-        && !(row.height === undefined || row.height === null || (typeof row.height === "number" && Number.isFinite(row.height)))) return emptyCanvasLayout();
-      const panes: CanvasPanePreference[] = [];
-      for (const item of row.panes) {
-        if (!item || typeof item !== "object") return emptyCanvasLayout();
-        if (typeof item.id !== "string" || !item.id || item.id.length > 200 || ids.has(item.id)) return emptyCanvasLayout();
-        ids.add(item.id);
-        if (item.kind !== "pane"
-          || typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120
-          || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000
-          || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200
-          || !(item.executionNodeId === null || (typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100))
-          || (item.harnessId !== undefined && !isHarnessId(item.harnessId))) return emptyCanvasLayout();
-        const identity = `${item.projectId}\0${item.sessionId}`;
-        const pathIdentity = `${item.projectId}\0${canonicalSessionPath(item.sessionPath)}`;
-        if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) return emptyCanvasLayout();
-        sessionIdentities.add(identity);
-        pathIdentities.add(pathIdentity);
-        paneIds.add(item.id);
-        panes.push({ kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId, ...(item.harnessId === undefined ? {} : { harnessId: item.harnessId }) });
-      }
-      const weights = normalizedCanvasWeights(row.weights, panes.length);
-      const height = layout.version === 3 || layout.version === 5 ? row.height ?? null : null;
-      if (layout.version === 5 && !canvasRowGeometryIsLegal({ height, weights: row.weights! })) return emptyCanvasLayout();
-      rows.push({ id: row.id, height, weights, panes });
-    }
-    if (!(layout.focusedPaneId === null || (typeof layout.focusedPaneId === "string" && paneIds.has(layout.focusedPaneId)))) return emptyCanvasLayout();
-    return normalizeCanvasLayoutPreference({ version: layout.version, rows, focusedPaneId: layout.focusedPaneId ?? null });
-  } catch {
-    return emptyCanvasLayout();
-  }
-}
-
-/** Version 1 split tree -> rows: a column stacks rows, a row split flattens to one row. */
-export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreference {
-  const legacy = parsed as { root?: unknown; focusedPaneId?: unknown };
-  const ids = new Set<string>();
-  const sessionIdentities = new Set<string>();
-  const pathIdentities = new Set<string>();
-  const paneIds = new Set<string>();
-  const pane = (item: unknown): CanvasPanePreference | null => {
-    if (!item || typeof item !== "object") return null;
-    const candidate = item as Record<string, unknown>;
-    if (candidate.kind !== "pane" || typeof candidate.id !== "string" || !candidate.id || ids.has(candidate.id)) return null;
-    if (typeof candidate.projectId !== "string" || !candidate.projectId || candidate.projectId.length > 120
-      || typeof candidate.sessionPath !== "string" || !candidate.sessionPath || candidate.sessionPath.length > 2000
-      || typeof candidate.sessionId !== "string" || !candidate.sessionId || candidate.sessionId.length > 200
-      || !(candidate.executionNodeId === null || (typeof candidate.executionNodeId === "string" && candidate.executionNodeId.length <= 100))
-      || (candidate.harnessId !== undefined && !isHarnessId(candidate.harnessId))) return null;
-    const identity = `${candidate.projectId}\0${candidate.sessionId}`;
-    const pathIdentity = `${candidate.projectId}\0${canonicalSessionPath(candidate.sessionPath)}`;
-    if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) return null;
-    ids.add(candidate.id);
-    sessionIdentities.add(identity);
-    pathIdentities.add(pathIdentity);
-    paneIds.add(candidate.id);
-    return { kind: "pane", id: candidate.id, projectId: candidate.projectId, sessionPath: canonicalSessionPath(candidate.sessionPath), sessionId: candidate.sessionId, executionNodeId: candidate.executionNodeId, ...(candidate.harnessId === undefined ? {} : { harnessId: candidate.harnessId }) };
-  };
-  const rows: CanvasRowPreference[] = [];
-  let valid = true;
-  const chunk = (entries: CanvasPanePreference[]) => {
-    for (let start = 0; start < entries.length && rows.length < 10; start += 8) {
-      const panes = entries.slice(start, start + 8);
-      rows.push({ id: crypto.randomUUID(), height: null, weights: equalCanvasWeights(panes.length), panes });
-    }
-  };
-  // Split ratios are still validated, then discarded: the grid spaces panes evenly.
-  const collect = (candidate: unknown, level: number, entries: CanvasPanePreference[]): void => {
-    if (!candidate || typeof candidate !== "object" || level > 8) { valid = false; return; }
-    const entry = candidate as Record<string, unknown>;
-    if (entry.kind === "pane") {
-      const flat = pane(entry);
-      if (flat) entries.push(flat);
-      else valid = false;
-      return;
-    }
-    if (entry.kind !== "split" || (entry.axis !== "row" && entry.axis !== "column")) { valid = false; return; }
-    if (entry.axis === "row" && (typeof entry.ratio !== "number" || !Number.isFinite(entry.ratio) || entry.ratio < 0.15 || entry.ratio > 0.85)) { valid = false; return; }
-    collect(entry.first, level + 1, entries);
-    collect(entry.second, level + 1, entries);
-  };
-  const visit = (node: unknown, depth: number): void => {
-    if (!node) return;
-    if (typeof node !== "object" || depth > 8) { valid = false; return; }
-    const item = node as Record<string, unknown>;
-    if (item.kind === "split" && item.axis === "column") {
-      if (typeof item.ratio !== "number" || !Number.isFinite(item.ratio) || item.ratio < 0.15 || item.ratio > 0.85) { valid = false; return; }
-      visit(item.first, depth + 1);
-      visit(item.second, depth + 1);
-      return;
-    }
-    const entries: CanvasPanePreference[] = [];
-    collect(item, depth, entries);
-    chunk(entries);
-  };
-  visit(legacy.root, 0);
-  if (!valid || (typeof legacy.focusedPaneId === "string" && !paneIds.has(legacy.focusedPaneId))) return emptyCanvasLayout();
-  return normalizeCanvasLayoutPreference({ version: 5, rows, focusedPaneId: typeof legacy.focusedPaneId === "string" ? legacy.focusedPaneId : null });
+  } catch { return emptyControlCenter(); }
 }
 
 function parseProjectConversationVisibility(value: string): UserPreferences["projectConversationVisibility"] {
@@ -703,7 +399,8 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     completionSound: row.completion_sound,
     terminalDock: parseTerminalDockPreference(row.terminal_dock),
     installDismissed: row.install_dismissed === 1,
-    mobileView: row.mobile_view,
+    // The canvas view no longer exists; a saved canvas view opens the control center that replaced it.
+    mobileView: (row.mobile_view as string) === "canvas" ? "control" : row.mobile_view,
     activeProjectId: row.active_project_id,
     activeSessionPath: row.active_session_path,
     activeSessionId: row.active_session_id,
@@ -715,10 +412,10 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     projectsPanelCollapsed: row.projects_panel_collapsed === 1,
     chatsPanelCollapsed: row.chats_panel_collapsed === 1,
     lastSeenVersion: row.last_seen_version,
-    canvasLayout: parseCanvasLayout(row.canvas_layout),
     canvasKeymap: parseCanvasKeymap(row.canvas_keymap),
     conversationLastRead: parseConversationLastRead(row.conversation_last_read),
     projectConversationVisibility: parseProjectConversationVisibility(row.project_conversation_visibility),
+    controlCenter: parseControlCenter(row.control_center),
     gitReviewer: JSON.parse(row.git_reviewer) as GitReviewerPreference | null,
   };
 }
@@ -728,7 +425,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, terminal_dock, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, focus_ui_enabled, projects_panel_collapsed, chats_panel_collapsed,
-      last_seen_version, canvas_layout, canvas_keymap, conversation_last_read, project_conversation_visibility, git_reviewer
+      last_seen_version, canvas_keymap, conversation_last_read, project_conversation_visibility, control_center, git_reviewer
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -772,10 +469,10 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["projectsPanelCollapsed", "projects_panel_collapsed", (value) => value ? 1 : 0],
     ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
     ["lastSeenVersion", "last_seen_version", (value) => value as string | null],
-    ["canvasLayout", "canvas_layout", (value) => JSON.stringify(value as CanvasLayoutPreference)],
     ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as CanvasKeymapPreference)],
     ["conversationLastRead", "conversation_last_read", (value) => JSON.stringify(boundConversationLastRead(value as Record<string, number>))],
     ["projectConversationVisibility", "project_conversation_visibility", (value) => JSON.stringify(value)],
+    ["controlCenter", "control_center", (value) => JSON.stringify(value)],
     ["gitReviewer", "git_reviewer", (value) => JSON.stringify(value)],
   ];
   for (const [property, column, serialize] of fields) {

@@ -1,4 +1,5 @@
-import { DEFAULT_CANVAS_KEYMAP, normalizeCanvasKeymap } from "../canvas-layout.js";
+import { DEFAULT_CANVAS_KEYMAP, normalizeCanvasKeymap } from "../keymap.js";
+import { setShortcutKeymap } from "./shortcuts.js";
 import { api } from "./api.js";
 import { applyTerminalDockPreference } from "./terminal.js";
 import { setPanelCollapsed } from "./layout.js";
@@ -18,7 +19,7 @@ export async function reloadTravellingPreferences() {
     setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
     setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
     state.canvasKeymap = normalizeCanvasKeymap(preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP);
-    state.canvasController?.setKeymap(state.canvasKeymap);
+    setShortcutKeymap(state.canvasKeymap);
     syncShortcutHints();
   } finally {
     state.preferencesLoaded = loaded;

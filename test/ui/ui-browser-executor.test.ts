@@ -931,7 +931,7 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
         assert.equal(f.commands.filter((command) => command.action === "close").length, 0);
       } finally { await f.page.close(); }
     });
-    await t.test("placeholder cannot start a browser and canvas pane uses its own conversation identity", async () => {
+    await t.test("placeholder cannot start a browser and a conversation uses its own identity", async () => {
       const f = await setup();
       try {
         await f.page.evaluate(async () => {
@@ -944,21 +944,18 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
         assert.equal(await f.page.getByTestId("chat-open-browser-button").isDisabled(), true);
         assert.match((await f.page.getByTestId("chat-open-browser-button").getAttribute("title"))!, /conversation|message/i);
         assert.equal(f.starts.length, 0);
-        // Real pane boot, same path and IDs the canvas passes to its iframe.
         await f.page.locator("#sessionList .list-row").filter({ has: f.page.locator("strong", { hasText: "Short one" }) }).first().click();
         await f.page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
-        const params = await f.page.evaluate(async () => {
+        const identity = await f.page.evaluate(async () => {
           const { state } = await import("/app/state.js" as string);
-          return new URLSearchParams({ canvasPane: "1", projectId: state.activeProjectId, sessionPath: state.activeSessionPath, sessionId: state.activeSessionId, nodeId: state.activeNodeId }).toString();
+          return { sessionId: state.activeSessionId as string, nodeId: state.activeNodeId as string };
         });
-        await f.page.goto(`${node.url}/?${params}`);
-        await f.page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
         if (await f.page.getByTestId("chat-more-button").isVisible()) await f.page.getByTestId("chat-more-button").click();
         await f.page.getByTestId("chat-open-browser-button").click();
         await f.page.getByTestId("browser-start").click();
         await f.page.getByTestId("browser-screen").waitFor();
-        assert.equal(f.starts[0].conversationId, new URLSearchParams(params).get("sessionId"));
-        assert.equal(f.starts[0].appNodeId, new URLSearchParams(params).get("nodeId"));
+        assert.equal(f.starts[0].conversationId, identity.sessionId);
+        assert.equal(f.starts[0].appNodeId, identity.nodeId);
       } finally { await f.page.close(); }
     });
     assert.deepEqual(pageErrors, [], "browser UI must not throw unhandled page errors");

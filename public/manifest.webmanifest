@@ -25,6 +25,15 @@
       ]
     },
     {
+      "name": "Control center",
+      "short_name": "Control",
+      "description": "Bob's chat and every agent that is running",
+      "url": "/?action=control-center",
+      "icons": [
+        { "src": "/icon-192.png", "sizes": "192x192" }
+      ]
+    },
+    {
       "name": "Personal assistants",
       "short_name": "Assistants",
       "url": "/assistant.html",

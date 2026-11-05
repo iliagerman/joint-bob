@@ -7,7 +7,6 @@ import { canonicalCanvasKeyToken } from "../canvas-keys.js";
 import { listHarnesses } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { classificationSchema, conversationLabelIconsSchema, conversationLabelsInputSchema } from "../conversation-labels.js";
-import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal } from "../preferences.js";
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
 import { canonicalClusterUrl, isClusterOriginUrl } from "./http-auth.js";
 import type { RuntimeSettings, SettingsInput } from "../settings.js";
@@ -411,119 +410,6 @@ export const settingsSchema = z.object({
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
 });
-const canvasPanePreferenceSchema = z.object({
-  kind: z.literal("pane"),
-  id: z.string().min(1).max(200),
-  projectId: z.string().trim().min(1).max(120),
-  sessionPath: z.string().trim().min(1).max(2000),
-  sessionId: z.string().trim().min(1).max(200),
-  executionNodeId: z.string().uuid().nullable(),
-  harnessId: z.string().refine(isHarnessId, "Harness ID is invalid").optional(),
-}).strict();
-const canvasRowPreferenceSchema = z.object({
-  id: z.string().min(1).max(200),
-  height: z.number().finite().min(CANVAS_MIN_ROW_HEIGHT).max(CANVAS_MAX_ROW_HEIGHT).nullable().optional(),
-  weights: z.array(z.number().finite().positive()).min(1).max(8).optional(),
-  panes: z.array(canvasPanePreferenceSchema).min(1).max(8),
-}).strict();
-interface CanvasSplitInput {
-  kind: "split";
-  id: string;
-  axis: "row" | "column";
-  ratio: number;
-  first: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput;
-  second: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput;
-}
-const canvasNodePreferenceSchema: z.ZodType<z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput> = z.lazy(() => z.union([
-  canvasPanePreferenceSchema,
-  z.object({
-    kind: z.literal("split"),
-    id: z.string().min(1).max(200),
-    axis: z.enum(["row", "column"]),
-    ratio: z.number().finite().min(0.15).max(0.85),
-    first: canvasNodePreferenceSchema,
-    second: canvasNodePreferenceSchema,
-  }).strict(),
-]));
-const canvasLayoutV1Schema = z.object({
-  version: z.literal(1),
-  root: canvasNodePreferenceSchema.nullable(),
-  focusedPaneId: z.string().min(1).max(200).nullable(),
-}).strict();
-const canvasLayoutV6Schema = z.object({
-  version: z.literal(6),
-  pages: z.array(z.object({
-    id: z.string().min(1).max(200), name: z.string().trim().min(1).max(80),
-    root: canvasNodePreferenceSchema.nullable(), focusedPaneId: z.string().min(1).max(200).nullable(),
-    projectFilter: z.string().max(120),
-  }).strict()).min(1).max(9),
-  activePageId: z.string().min(1).max(200),
-}).strict();
-const canvasLayoutPreferenceSchema = z.union([
-  canvasLayoutV1Schema,
-  canvasLayoutV6Schema,
-  z.object({
-    version: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
-    rows: z.array(canvasRowPreferenceSchema).max(10),
-    focusedPaneId: z.string().min(1).max(200).nullable(),
-  }).strict(),
-]).superRefine((layout, context) => {
-  const ids = new Set<string>();
-  const sessionIdentities = new Set<string>();
-  const pathIdentities = new Set<string>();
-  const paneIds = new Set<string>();
-  const pane = (node: { id: string; kind: string; projectId?: string; sessionId?: string; sessionPath?: string }) => {
-    if (ids.has(node.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
-    ids.add(node.id);
-    if (node.kind !== "pane") return;
-    paneIds.add(node.id);
-    const identity = `${node.projectId}\0${node.sessionId}`;
-    const pathIdentity = `${node.projectId}\0${node.sessionPath!.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "")}`;
-    if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) context.addIssue({ code: z.ZodIssueCode.custom, message: "A conversation can appear on the canvas only once" });
-    sessionIdentities.add(identity);
-    pathIdentities.add(pathIdentity);
-  };
-  const walk = (node: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput, depth: number): void => {
-    pane(node);
-    if (node.kind === "split") {
-      if (depth >= 8) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas splits cannot nest deeper than eight levels" });
-        return;
-      }
-      walk(node.first, depth + 1);
-      walk(node.second, depth + 1);
-    }
-  };
-  if (layout.version === 1 && layout.root) walk(layout.root, 1);
-  if (layout.version === 6) {
-    if (!layout.pages.some((page) => page.id === layout.activePageId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Active canvas page is unknown" });
-    const pagePaneIds = (node: z.infer<typeof canvasNodePreferenceSchema> | null, result = new Set<string>()) => {
-      if (!node) return result;
-      if (node.kind === "pane") result.add(node.id);
-      else { pagePaneIds(node.first, result); pagePaneIds(node.second, result); }
-      return result;
-    };
-    for (const page of layout.pages) {
-      if (ids.has(page.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
-      ids.add(page.id);
-      const before = paneIds.size;
-      if (page.root) walk(page.root, 1);
-      if (paneIds.size - before > 8) context.addIssue({ code: z.ZodIssueCode.custom, message: "A canvas page holds at most eight conversations" });
-      if (page.focusedPaneId && !pagePaneIds(page.root).has(page.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
-    }
-    return;
-  }
-  if (layout.version !== 1) for (const row of layout.rows) {
-    if (ids.has(row.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
-    ids.add(row.id);
-    if (layout.version === 5 && (!row.weights || row.weights.length !== row.panes.length
-      || !canvasRowGeometryIsLegal({ height: row.height, weights: row.weights }))) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas row geometry is out of range" });
-    }
-    for (const item of row.panes) pane(item);
-  }
-  if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
-});
 const canvasKeymapKeySchema = z.string().trim().refine((key) => canonicalCanvasKeyToken(key) !== null, "Unsupported canvas key").nullable();
 // A shortcut is one modified key or a two-stroke sequence. The normalizer decides
 // token semantics and collisions; the schema only caps client input size.
@@ -553,7 +439,7 @@ export const userPreferencesSchema = z.object({
     verticalSize: z.number().int().min(180).max(2500),
   }).strict().optional(),
   installDismissed: z.boolean().optional(),
-  mobileView: z.enum(["projects", "sessions", "board", "chat", "canvas"]).optional(),
+  mobileView: z.enum(["projects", "sessions", "board", "chat", "control"]).optional(),
   activeProjectId: z.string().trim().min(1).max(120).nullable().optional(),
   activeSessionPath: z.string().trim().min(1).max(2000).nullable().optional(),
   activeSessionId: z.string().trim().min(1).max(200).nullable().optional(),
@@ -565,12 +451,21 @@ export const userPreferencesSchema = z.object({
   projectsPanelCollapsed: z.boolean().optional(),
   chatsPanelCollapsed: z.boolean().optional(),
   lastSeenVersion: z.string().trim().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
-  canvasLayout: canvasLayoutPreferenceSchema.optional(),
+  // Older pages and twins still send the removed canvas layout; it is accepted and dropped.
+  canvasLayout: z.unknown().optional(),
   canvasKeymap: canvasKeymapPreferenceSchema.optional(),
   conversationLastRead: z.record(z.string().min(1).max(200), z.number().int().nonnegative())
     .refine((marks) => Object.keys(marks).length <= 400, "Too many conversation read marks").optional(),
   projectConversationVisibility: z.record(z.string().min(1).max(240), z.object({ done: z.boolean(), scheduled: z.boolean() }).strict())
     .refine((projects) => Object.keys(projects).length <= 400, "Too many project visibility settings").optional(),
+  controlCenter: z.object({
+    colors: z.record(z.string().min(1).max(300), z.string().regex(/^#[0-9a-fA-F]{6}$/)).refine((colors) => Object.keys(colors).length <= 400, "Too many card colors"),
+    positions: z.record(z.string().min(1).max(300), z.object({ x: z.number().finite(), y: z.number().finite() }).strict()).refine((positions) => Object.keys(positions).length <= 400, "Too many card positions"),
+    layout: z.enum(["grouped", "free"]),
+    filter: z.array(z.string().min(1).max(200)).max(200),
+    chatSide: z.enum(["left", "right"]),
+    chatWidth: z.number().min(300).max(820),
+  }).strict().optional(),
   gitReviewer: z.object({
     harnessId: registeredHarnessIdSchema,
     provider: z.string().trim().min(1).max(200).optional(),

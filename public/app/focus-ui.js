@@ -25,19 +25,28 @@ let position = null;
 // Toolbar actions the chat menu already offers on its own; the Tools submenu lists every other one.
 const TOOLS_SHOWN_ELSEWHERE = new Set(["autoRespondPill", "chatRecentSessionsButton", "chatRunningConversationsButton", "activityToggleButton", "autoRespondButton", "chatDoneButton"]);
 
+// The control center is offered from every view, as a tile beside Costs and Settings. It has no markup of its own: it is the same target icon the toolbar uses.
+const controlCenterTile = Object.assign(document.createElement("button"), { type: "button", id: "focusControl", textContent: "Control center" });
+controlCenterTile.dataset.testid = "focus-control-center";
+controlCenterTile.title = "Bob's chat and every agent that is running";
+const controlCenterIcon = elements.openControlCenterButton.querySelector("svg").cloneNode(true);
+controlCenterIcon.setAttribute("class", "focus-action-icon");
+controlCenterTile.prepend(controlCenterIcon);
+document.querySelector("#focusMore").append(controlCenterTile);
+
 // Each action button lives in exactly one container, chosen by the view. Captured before any move.
 const actionButtons = Object.fromEntries([
   "focusMarkDone", "focusAddSecret", "focusAutoRespond", "focusActivity", "focusTools", "focusNewConversation", "focusNewNote",
-  "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusConversations", "focusCosts", "focusSettings",
+  "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusConversations", "focusControl", "focusCosts", "focusSettings",
 ].map(id => [id, document.getElementById(id)]));
 // Buttons that work in every view sit in the same place and order everywhere; the chat adds its own around them.
 const chatPlacement = {
   "#focusDock": ["focusMarkDone", "focusAutoRespond", "focusNewConversation", "focusNewNote", "focusAddSecret", "focusConversations"],
-  "#focusMore": ["focusActivity", "focusTools", "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusCosts", "focusSettings"],
+  "#focusMore": ["focusActivity", "focusTools", "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusControl", "focusCosts", "focusSettings"],
 };
 const viewPlacement = {
   "#focusDock": ["focusNewConversation", "focusNewNote", "focusConversations"],
-  "#focusMore": ["focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusCosts", "focusSettings"],
+  "#focusMore": ["focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusControl", "focusCosts", "focusSettings"],
 };
 
 const harnessPicker = createSearchableSelect({ id: "focusHarness", testid: "focus-harness", label: "Harness", prompt: "Choose a harness", placeholder: "Search harnesses", emptyText: "No harnesses found" });
@@ -59,7 +68,7 @@ modelPicker.onChange(key => {
 });
 
 function currentView() {
-  return ["projects", "sessions", "chat", "board", "canvas"].find(view => document.body.classList.contains(`view-${view}`)) || "projects";
+  return ["projects", "sessions", "chat", "board", "control"].find(view => document.body.classList.contains(`view-${view}`)) || "projects";
 }
 function placeMenu() {
   if (menu.hidden) return;
@@ -88,7 +97,7 @@ function syncMenuLayout(section = "") {
   if (tools) renderTools();
   document.querySelector("#focusContextTitle").textContent = tools
     ? "Tools"
-    : { projects: "Projects", sessions: "This project", chat: "This conversation", board: "Project board", canvas: "Canvas" }[currentView()];
+    : { projects: "Projects", sessions: "This project", chat: "This conversation", board: "Project board", control: "Control center" }[currentView()];
   placeMenu();
 }
 
@@ -156,6 +165,7 @@ function syncView() {
   const view = currentView();
   showMenu(false);
   placeActions();
+  controlCenterTile.hidden = view === "control";
   document.querySelector("#focusConversations").disabled = !state.activeProjectId;
   syncMenuLayout();
   context.replaceChildren();
@@ -165,11 +175,9 @@ function syncView() {
     if (rowMenu) proxyAction("Project actions", rowMenu, "sliders");
     if (state.activeProjectId) dashboardAction(() => ({ kind: "project", id: state.activeProjectId, projectId: state.activeProjectId }));
     proxyAction("Project board", elements.openBoardButton, "canvas");
-    proxyAction("Canvas", elements.openCanvasButton, "canvas");
   }
   if (state.activeProjectId && view === "projects") proxyAction("Project notes", document.querySelector("#projectNotesButton"), "file");
   if (view === "board") proxyAction("New task", elements.newTaskButton, "pencil");
-  if (view === "canvas") proxyAction("Add conversation", elements.canvasAddButton, "chat");
   syncQuickActionLabels();
 }
 
@@ -215,7 +223,7 @@ function modelIdentity(key) {
 /** Layout only: never reload a session or change the user's panel-collapse preferences.
  *  Mobile screens always use the focus interface; desktops keep the classic layout. */
 export function applyFocusUi() {
-  enabled = mobileFocusViewport.matches && !state.canvasPaneMode;
+  enabled = mobileFocusViewport.matches;
   document.body.classList.toggle("focus-ui", enabled);
   syncMobileProjectControls();
   fab.hidden = !enabled;
@@ -269,6 +277,7 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
     document.getElementById(id).onclick = () => { showMenu(false); Promise.resolve().then(action).catch(error => toast(error.message)); };
   }
   document.querySelector("#focusProjects").onclick = () => setMobileView("projects");
+  controlCenterTile.onclick = () => { showMenu(false); setMobileView("control"); };
   document.querySelector("#focusConversations").onclick = () => setMobileView("sessions");
   document.querySelector("#focusClose").onclick = () => showMenu(false);
   chatHost.addEventListener("click", event => { if (!mobileFocusViewport.matches && event.target.closest("button:not(:disabled)")) showMenu(false); });
@@ -335,7 +344,7 @@ function installFabDrag() {
 function installTapGestures() {
   let tap = null, sequence = null, timer = null, lastTouch = -Infinity;
   const controls = "button,input,textarea,select,a,summary,label,[contenteditable],[role=button]";
-  const nativeControls = "input,textarea,select,label,[contenteditable],#sendButton,#browserPanel,.browser-viewer,.xterm,.canvas-root";
+  const nativeControls = "input,textarea,select,label,[contenteditable],#sendButton,#browserPanel,.browser-viewer,.xterm";
   const clear = () => { clearTimeout(timer); tap = sequence = null; };
   const finish = () => {
     const completed = sequence;

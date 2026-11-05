@@ -3,21 +3,20 @@
 // second stroke, with at most four physical keys total.
 
 import {
-  chordId, chordLabel, conversationChord, DEFAULT_CANVAS_KEYMAP, fuzzyMatchScore,
+  chordLabel, DEFAULT_CANVAS_KEYMAP, fuzzyMatchScore,
   normalizeCanvasKeymap, normalizeChord, shortcutsConflict,
-} from "../canvas-layout.js";
-import { api, savePreferences } from "./api.js";
+} from "../keymap.js";
+import { savePreferences } from "./api.js";
 import { elements } from "./elements.js";
 import { captureChordInput } from "./key-capture.js";
+import { setShortcutKeymap } from "./shortcuts.js";
 import { syncShortcutHints } from "./shortcut-hints.js";
 import { state } from "./state.js";
 
-const baseInput = document.querySelector("#canvasKeymapBase");
 const commandsHost = document.querySelector("#canvasKeymapCommands");
 const statusLine = document.querySelector("#canvasKeymapStatus");
 const saveButton = document.querySelector("#canvasKeymapSaveButton");
 const resetButton = document.querySelector("#canvasKeymapResetButton");
-let conversationShortcuts = [];
 
 /** One row per configurable command, in the order the panel lists them. Labels stay
  * here, next to their recorder wiring, so adding a command is adding one line. */
@@ -44,7 +43,6 @@ const COMMAND_ROWS = [
   { command: "terminal", label: "Chat: open the terminal" },
   { command: "browser", label: "Chat: open the browser" },
   { command: "notify", label: "Chat: toggle notifications" },
-  { command: "addToCanvas", label: "Chat: add this conversation to the canvas" },
   { command: "rename", label: "Chat: rename this conversation" },
   { command: "scheduledTasks", label: "Chat: open scheduled tasks" },
   { command: "backgroundTasks", label: "Chat: open background tasks" },
@@ -55,28 +53,13 @@ const COMMAND_ROWS = [
   { command: "git", label: "Chat: open git" },
   { command: "explainConversation", label: "Chat: explain what this conversation did" },
   { command: "activity", label: "Chat: show or collapse the activity panel (steps and summary)" },
-  { command: "toggleView", label: "Switch between the canvas and the conversation you left" },
-  { command: "recentPane", label: "Canvas: jump to the conversation you were in before" },
-  { command: "focusPane", label: "Canvas: bring the current conversation forward, or put it back" },
-  { command: "paneSearch", label: "Canvas: search the conversations already on the canvas" },
-  { command: "splitRight", label: "Canvas: split the screen and put a new conversation to the right" },
-  { command: "splitBelow", label: "Canvas: split the screen and put a new conversation below" },
-  { command: "closePane", label: "Canvas: close this conversation, after a Y/N confirmation" },
-  { command: "createPage", label: "Canvas: new page" },
-  { command: "nextPage", label: "Canvas: next page" },
-  { command: "prevPage", label: "Canvas: previous page" },
-  { command: "focusLeft", label: "Canvas: go to the conversation to the left" },
-  { command: "focusRight", label: "Canvas: go to the conversation to the right" },
-  { command: "focusUp", label: "Canvas: go to the conversation above" },
-  { command: "focusDown", label: "Canvas: go to the conversation below" },
-  ...[..."123456789"].map((digit, index) => ({ command: `page${index + 1}`, label: `Canvas: jump to page ${digit}` })),
+  { command: "toggleView", label: "Open or leave the control center" },
   { command: "costs", label: "Open costs and subscriptions" },
 ];
 const rowTestid = (command) => `canvas-keymap-${command.replace(/[A-Z0-9]/g, (character) => `-${character.toLowerCase()}`)}-input`;
 
 const commandInputs = new Map();
 const commandRowEntries = [];
-captureChordInput(baseInput, { modifierOnly: true });
 for (const { command, label } of COMMAND_ROWS) {
   const row = document.createElement("label");
   row.className = "canvas-keymap-command";
@@ -105,42 +88,14 @@ function filterShortcutRows(rawQuery) {
   const terms = rawQuery.trim().split(/\s+/).filter(Boolean);
   const matches = (text) => terms.every((term) => fuzzyMatchScore(text, term) !== null);
   for (const { row, command, label } of commandRowEntries) row.hidden = !matches(`${label} ${command}`);
-  for (const row of elements.shortcutConversationList.querySelectorAll("[data-testid='settings-conversation-shortcut-row']")) row.hidden = !matches(row.textContent);
 }
 elements.canvasKeymapSearch.addEventListener("input", () => filterShortcutRows(elements.canvasKeymapSearch.value));
 
 function fillFields(keymap) {
-  baseInput.dataset.chord = JSON.stringify(keymap.base);
-  baseInput.value = chordLabel(keymap.base);
   for (const [command, input] of commandInputs) {
     const chord = keymap.commands[command];
     input.dataset.chord = chord ? JSON.stringify(chord) : "";
     input.value = chord ? chordLabel(chord) : "";
-  }
-}
-
-/** The keys the account gave individual conversations, so both kinds are visible together. */
-function renderConversationShortcuts(shortcuts) {
-  elements.shortcutConversationList.replaceChildren();
-  if (!shortcuts.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "No conversation has its own key yet.";
-    elements.shortcutConversationList.append(empty);
-    return;
-  }
-  for (const shortcut of shortcuts) {
-    const row = document.createElement("div");
-    row.className = "shortcut-conversation-row";
-    row.dataset.testid = "settings-conversation-shortcut-row";
-    const key = document.createElement("kbd");
-    key.textContent = chordLabel(conversationChord(state.canvasKeymap, shortcut.binding));
-    const name = document.createElement("span");
-    // The canvas knows the conversation's name while it is on a page; a binding for a
-    // conversation that is not shows its id, which is still enough to recognise it.
-    name.textContent = shortcut.title || shortcut.sessionId;
-    row.append(key, name);
-    elements.shortcutConversationList.append(row);
   }
 }
 
@@ -158,21 +113,13 @@ export async function fillShortcutSettings() {
   statusLine.textContent = "";
   elements.canvasKeymapSearch.value = "";
   filterShortcutRows("");
-  try {
-    conversationShortcuts = (await api("/api/canvas/shortcuts")).shortcuts || [];
-  } catch {
-    conversationShortcuts = state.canvasController?.listShortcuts() || [];
-  }
-  renderConversationShortcuts(conversationShortcuts);
 }
 
 /** Reads the panel into one keymap, refusing a chord that cannot work. */
 function keymapFromPanel() {
-  const base = normalizeChord(baseInput.dataset.chord ? JSON.parse(baseInput.dataset.chord) : null, { modifierOnly: true });
-  if (!base) throw new Error("The conversation-key chord needs Command, Control, or Option, and at most three modifiers.");
   // The panel always writes the current scheme, so the draft carries its version -
   // an older one would be treated as stale and rebuilt back to the defaults.
-  const draft = { version: DEFAULT_CANVAS_KEYMAP.version, base, commands: {} };
+  const draft = { version: DEFAULT_CANVAS_KEYMAP.version, base: state.canvasKeymap.base, commands: {} };
   const taken = [];
   for (const [command, input] of commandInputs) {
     const raw = input.dataset.chord ? JSON.parse(input.dataset.chord) : null;
@@ -181,8 +128,6 @@ function keymapFromPanel() {
     if (!chord) { draft.commands[command] = null; continue; }
     const clash = taken.find((entry) => shortcutsConflict(entry.chord, chord));
     if (clash) throw new Error(`Two commands cannot share or shadow one shortcut: ${chordLabel(chord)} conflicts with ${clash.command}.`);
-    const holder = conversationShortcuts.find((shortcut) => chordId(conversationChord({ base }, shortcut.binding)) === chordId(chord));
-    if (holder) throw new Error(`${chordLabel(chord)} already belongs to a conversation on the canvas.`);
     taken.push({ command, chord });
     draft.commands[command] = chord;
   }
@@ -205,7 +150,7 @@ async function saveShortcutSettings() {
   }
   state.canvasKeymap = next;
   syncSavedCommandsHelp(next);
-  state.canvasController?.setKeymap(next);
+  setShortcutKeymap(next);
   syncShortcutHints();
   statusLine.textContent = "Saved.";
 }

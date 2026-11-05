@@ -24,7 +24,7 @@ function sessionCookie(response: Response): string {
   return cookie.split(";", 1)[0];
 }
 
-test("preferences store v6 canvas layouts and reject invalid trees", async () => {
+test("preferences store the keymap, ignore the removed canvas layout and map a saved canvas view", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-preferences-"));
   const previousDataDir = process.env.PI_WEB_DATA_DIR;
   const previousUsername = process.env.MASTER_BOB_ADMIN_USERNAME;
@@ -46,8 +46,7 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
 
     const defaults = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.equal(defaults.status, 200);
-    assert.deepEqual((await defaults.json() as { canvasLayout: unknown }).canvasLayout,
-      { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
+    assert.equal("canvasLayout" in (await defaults.json() as object), false, "the canvas layout is gone from the preferences");
 
     const terminalDefaultsResponse = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     const terminalDefaults = await terminalDefaultsResponse.json() as { terminalDock: unknown };
@@ -75,115 +74,37 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
     const invalidFocus = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ focusUiEnabled: "true" }) });
     assert.equal(invalidFocus.status, 400);
 
-    const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
-    const stored = { version: 6 as const, activePageId: "page", pages: [{ id: "page", name: "Page", root: { kind: "split" as const, id: "split", axis: "row" as const, ratio: 0.4, first: { ...pane("pane-a", "s-a"), harnessId: "kiro" }, second: pane("pane-b", "s-b") }, focusedPaneId: "pane-b", projectFilter: "" }] };
-    const saved = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: stored }) });
-    assert.equal(saved.status, 200);
-    assert.deepEqual((await saved.json() as { canvasLayout: unknown }).canvasLayout, stored);
+    // An older page still sends the canvas layout: it is accepted, and never stored or returned.
+    const legacyLayout = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: { version: 6, pages: [], activePageId: "page-1" } }) });
+    assert.equal(legacyLayout.status, 200);
+    assert.equal("canvasLayout" in (await legacyLayout.json() as object), false);
 
-    const roundTrip = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
-    assert.equal(roundTrip.status, 200);
-    assert.deepEqual((await roundTrip.json() as { canvasLayout: unknown }).canvasLayout, stored);
-
-    const invalidHarness = structuredClone(stored);
-    invalidHarness.pages[0].root.first.harnessId = "Bad ID";
-    const rejectedHarness = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: invalidHarness }) });
-    assert.equal(rejectedHarness.status, 400);
-    const afterRejectedHarness = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
-    assert.deepEqual((await afterRejectedHarness.json() as { canvasLayout: unknown }).canvasLayout, stored);
-
-    const keymap = { version: 4, base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE", "\\"], splitBelow: ["ctrl", "SPACE", "-"] } };
+    const keymap = { version: 4, base: ["meta", "shift"], commands: { newPiChat: ["ctrl", "SPACE", "\\"], splitRight: ["ctrl", "SPACE", "-"] } };
     const savedKeymap = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasKeymap: keymap }) });
     assert.equal(savedKeymap.status, 200);
     const savedKeymapBody = await savedKeymap.json() as { canvasKeymap: { version?: number; commands: Record<string, string[] | null> } };
     assert.equal(savedKeymapBody.canvasKeymap.version, 4);
-    assert.deepEqual(savedKeymapBody.canvasKeymap.commands.splitRight, ["ctrl", "SPACE", "\\"]);
+    assert.deepEqual(savedKeymapBody.canvasKeymap.commands.newPiChat, ["ctrl", "SPACE", "\\"]);
+    assert.equal("splitRight" in savedKeymapBody.canvasKeymap.commands, false, "pane commands left with the canvas");
 
-    for (const invalid of [
-      { ...stored, activePageId: "missing" },
-      { ...stored, pages: [{ ...stored.pages[0], focusedPaneId: "missing" }] },
-      { ...stored, pages: [{ ...stored.pages[0], root: { kind: "split", id: "split", axis: "row", ratio: .9, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") } }] },
-      { ...stored, pages: [{ ...stored.pages[0], root: { kind: "split", id: "pane-a", axis: "row", ratio: .5, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") } }] },
-      { ...stored, pages: [...Array.from({ length: 10 }, (_, index) => ({ id: `p${index}`, name: `P${index}`, root: null, focusedPaneId: null, projectFilter: "" }))] },
-      { ...stored, pages: [{ ...stored.pages[0], root: { kind: "split", id: "s2", axis: "row", ratio: .5, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-a") } }] },
-    ]) {
-      const response = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: invalid }) });
-      assert.equal(response.status, 400, JSON.stringify(invalid).slice(0, 120));
-    }
+    // The control center keeps card colors, free positions, the layout and the project filter with the account.
+    const controlCenter = { colors: { "p:c": "#ff6b9a" }, positions: { "p:c": { x: 10, y: 20 } }, layout: "free", filter: ["p"], chatSide: "left", chatWidth: 520 };
+    const savedBoard = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ controlCenter }) });
+    assert.equal(savedBoard.status, 200);
+    assert.deepEqual((await savedBoard.json() as { controlCenter: unknown }).controlCenter, controlCenter);
+    const badColor = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ controlCenter: { ...controlCenter, colors: { "p:c": "red" } } }) });
+    assert.equal(badColor.status, 400);
 
-    // Weighted v5 rows keep their proportions as nested splits on one page.
-    const put = async (canvasLayout: unknown) => {
-      const response = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout }) });
-      return { status: response.status, body: await response.json() as { canvasLayout?: { version?: number; pages?: Array<{ name?: string; root?: unknown; focusedPaneId?: string | null }> } } };
-    };
-    const legacyPane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
-    const weighted = await put({ version: 5, rows: [{ id: "row-a", height: null, weights: [0.25, 0.75], panes: [{ ...legacyPane("pane-a", "s-a"), harnessId: "kiro" }, legacyPane("pane-b", "s-b")] }], focusedPaneId: "pane-b" });
-    assert.equal(weighted.status, 200);
-    assert.equal(weighted.body.canvasLayout?.version, 6);
-    assert.equal(weighted.body.canvasLayout?.pages?.length, 1);
-    assert.equal((weighted.body.canvasLayout?.pages?.[0].root as { ratio?: number }).ratio, 0.25);
-    assert.equal((weighted.body.canvasLayout?.pages?.[0].root as { first?: { harnessId?: string } }).first?.harnessId, "kiro");
-    assert.equal(weighted.body.canvasLayout?.pages?.[0].focusedPaneId, "pane-b");
-
-    // A v1 split tree migrates unchanged onto its first page.
-    const legacyTree = await put({ version: 1, root: { kind: "split", id: "split", axis: "row", ratio: .3, first: { ...legacyPane("legacy-a", "legacy-a"), harnessId: "kiro" }, second: legacyPane("legacy-b", "legacy-b") }, focusedPaneId: "legacy-a" });
-    assert.equal(legacyTree.status, 200);
-    assert.equal((legacyTree.body.canvasLayout?.pages?.[0].root as { ratio?: number }).ratio, .3);
-    assert.equal((legacyTree.body.canvasLayout?.pages?.[0].root as { first?: { harnessId?: string } }).first?.harnessId, "kiro");
-    assert.equal(legacyTree.body.canvasLayout?.pages?.[0].focusedPaneId, "legacy-a");
-
-    // Nine conversations no longer fit one page; they spread in reading order.
-    const nine = await put({ version: 5, rows: [
-      { id: "row-9a", height: null, weights: Array.from({ length: 5 }, () => 1 / 5), panes: Array.from({ length: 5 }, (_, index) => legacyPane(`p${index}`, `s${index}`)) },
-      { id: "row-9b", height: null, weights: [.25, .25, .25, .25], panes: Array.from({ length: 4 }, (_, index) => legacyPane(`p${index + 5}`, `s${index + 5}`)) },
-    ], focusedPaneId: "p8" });
-    assert.equal(nine.status, 200);
-    assert.deepEqual(nine.body.canvasLayout?.pages?.map((page) => page.name), ["Page 1", "Page 2"]);
-    assert.equal(nine.body.canvasLayout?.pages?.[1].focusedPaneId, "p8", "focus follows its pane onto its own page");
-
-    // The largest layout v5 allowed (10 rows x 8 panes) is still accepted: pages cap
-    // at nine and overflow panes are dropped rather than corrupting the account.
-    const oversize = await put({ version: 5, rows: Array.from({ length: 10 }, (_, row) => ({ id: `row-${row}`, height: null, weights: Array.from({ length: 8 }, () => 1 / 8), panes: Array.from({ length: 8 }, (_, column) => legacyPane(`p-${row}-${column}`, `s-${row}-${column}`)) })), focusedPaneId: "p-9-7" });
-    assert.equal(oversize.status, 200);
-    assert.equal(oversize.body.canvasLayout?.pages?.length, 9);
-    const pageCount = (oversize.body.canvasLayout?.pages ?? []).map((page) => JSON.stringify(page.root).match(/"kind":"pane"/g)?.length ?? 0);
-    assert.deepEqual(pageCount, Array.from({ length: 9 }, () => 8));
-    assert.equal(pageCount.reduce((sum, count) => sum + count, 0), 72, "overflow panes are dropped, not stored");
-
-    // Restore the value the restart assertion below expects.
-    const restored = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: stored }) });
-    assert.equal(restored.status, 200);
-
-    await node.close();
-    node = await listen(app.createApp());
-    const persisted = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
-    assert.equal(persisted.status, 200);
-    assert.deepEqual((await persisted.json() as { canvasLayout: unknown }).canvasLayout, stored);
-
-    // A hand-edited or corrupt stored tree must degrade to an empty canvas, never a broken one.
+    // The canvas view no longer exists: a saved canvas view opens the control center that replaced it.
+    const rejectedView = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ mobileView: "canvas" }) });
+    assert.equal(rejectedView.status, 400);
     await node.close();
     const store = new DatabaseSync(path.join(root, "node.db"));
-    // A stored version 1 tree holding more than eight conversations still spreads
-    // over pages, so a restart can never resurrect an unsaveable layout.
-    let legacySplits = 0;
-    const balancedV1 = (panes: unknown[]): unknown => panes.length === 1 ? panes[0]
-      : { kind: "split", id: `legacy-split-${legacySplits++}`, axis: "row", ratio: Math.ceil(panes.length / 2) / panes.length, first: balancedV1(panes.slice(0, Math.ceil(panes.length / 2))), second: balancedV1(panes.slice(Math.ceil(panes.length / 2))) };
-    const nineLegacy = Array.from({ length: 9 }, (_, index) => pane(`v1-${index}`, `v1-s-${index}`));
-    store.prepare("UPDATE user_preferences SET canvas_layout = ?").run(JSON.stringify({ version: 1, root: balancedV1(nineLegacy), focusedPaneId: "v1-8" }));
-    node = await listen(app.createApp());
-    const spread = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
-    assert.equal(spread.status, 200);
-    const spreadLayout = (await spread.json() as { canvasLayout: { pages?: unknown[] } }).canvasLayout;
-    assert.equal(spreadLayout.pages?.length, 2, "a stored nine-pane v1 tree spreads across two pages");
-
-    await node.close();
-    store.prepare("UPDATE user_preferences SET canvas_layout = ?").run(JSON.stringify({ version: 6, pages: [{ id: "page-1", name: "Page 1", root: { kind: "split", id: "split", axis: "row", ratio: 2, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") }, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" }));
+    store.prepare("UPDATE user_preferences SET mobile_view = 'canvas'").run();
     store.close();
     node = await listen(app.createApp());
-    const degraded = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
-    assert.equal(degraded.status, 200);
-    assert.deepEqual((await degraded.json() as { canvasLayout: unknown }).canvasLayout,
-      { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
+    const mapped = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.equal((await mapped.json() as { mobileView: string }).mobileView, "control");
   } finally {
     if (node) await node.close();
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
