@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.212.10 — 2026-11-05
+
+- Fixed the clear conversation control in Activity Chat, which was hidden inside its settings panel; it now sits beside the chat as Clear conversation.
+
 ## 2.212.9 — 2026-11-05
 
 - Fixed new work appearing above its queued message after Force start, including while the agent is still starting.
