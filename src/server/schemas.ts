@@ -461,8 +461,9 @@ export const userPreferencesSchema = z.object({
     .refine((projects) => Object.keys(projects).length <= 400, "Too many project visibility settings").optional(),
   controlCenter: z.object({
     colors: z.record(z.string().min(1).max(300), z.string().regex(/^#[0-9a-fA-F]{6}$/)).refine((colors) => Object.keys(colors).length <= 400, "Too many card colors"),
-    positions: z.record(z.string().min(1).max(300), z.object({ x: z.number().finite(), y: z.number().finite() }).strict()).refine((positions) => Object.keys(positions).length <= 400, "Too many card positions"),
-    layout: z.enum(["grouped", "free"]),
+    // Sent by 2.213 pages, which had a free layout; accepted and not kept.
+    positions: z.unknown().optional(),
+    layout: z.unknown().optional(),
     filter: z.array(z.string().min(1).max(200)).max(200),
     chatSide: z.enum(["left", "right"]),
     chatWidth: z.number().min(300).max(820),

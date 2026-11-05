@@ -88,7 +88,7 @@ test("a card opens its conversation over the board to watch; taking control lets
   await page.evaluate("window.__held = 'you'; window.dispatchEvent(new CustomEvent('control-center-changed'))");
   const held = page.getByTestId("control-center-card");
   await held.getByTestId("control-card-action-give-back").waitFor();
-  assert.match(await held.innerText(), /you're in control/);
+  assert.match(await held.innerText(), /You're in it/);
   await held.getByTestId("control-card-action-give-back").click();
   await page.getByTestId("control-card-action-take-control").waitFor();
   assert.deepEqual(await page.evaluate("window.__lease"), ["take", "release", "take", "release", "release"]);

@@ -3,6 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a check when a conversation stops for review: the decision model, or Bob's agent below your threshold, judges whether the task is really done; Bob tells an unfinished one to go on (up to three times in a row), brings one that waits for you to Needs you, and marks a finished one as checked. A setting chooses push, ask first, or leave it.
+- Changed the control center board to one layout: each lane groups its conversations by project, projects in name order and the newest first; the free layout is gone, and a project's Dashboard button sits on its group.
+- Cards now show one short line about where the conversation stands, with the whole summary on hover; finished work is marked To review, and each card says whether the system drives it, Bob watches it, or you are in it.
+- Bob's answers in the control center are formatted instead of showing raw Markdown.
+- The control center now takes the whole window; Esc twice leaves it, the first press asking first.
+- Bob can create, rename, move, close and delete workspaces, projects and conversations, and start a conversation, after you confirm each change.
+- Fixed the assistant dialog's link to the assistant's page: it matches the other buttons and is hidden for an assistant on another machine, where it could not open.
+
 ## 2.214.0 — 2026-11-05
 
 - Added a confirmed Force ownership transfer button to stop reachable runs and recover stuck ownership, preserving histories and warning about unreachable machines.

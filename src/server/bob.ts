@@ -2,23 +2,22 @@ import type { AuthSession } from "../auth.js";
 import { decisionModelTarget } from "../classifiers/conversation-routing.js";
 import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import { BOB_INSTRUCTIONS, bobContext, bobMaterial } from "../control-center/bob-context.js";
-import { appendBobMessage, bobDatabase, listBobMessages, readBobSettings, type BobMessage, type BobSettings } from "../control-center/bob-store.js";
+import { appendBobMessage, bobDatabase, listBobMessages, readBobSettings, rememberBobAccount, type BobMessage, type BobSettings } from "../control-center/bob-store.js";
+import { actingAccountFromSession } from "../account-context.js";
 import { collectBobContext, notifyBobExchange, type BobTurn } from "../control-center/bob-hooks.js";
 import { harnessFromMessage } from "../control-center/harness-override.js";
 import { listHarnesses } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
-import { bobAutoRespondConfig, bobWantsAutoRespond } from "../control-center/auto-respond.js";
+import { bobWantsAutoRespond } from "../control-center/auto-respond.js";
 import { chooseConversation, decideForBob, needsAgentDecision, type BobDecision, type BobProjectOption } from "../control-center/decisions.js";
-import { recordBobStart } from "../control-center/started.js";
 import { handleBobMoveRequest } from "../control-center/moves-bob.js";
 import { getClusterNode } from "../cluster.js";
-import { enableAutoRespond } from "../conversation-auto-respond.js";
-import { getConversationRecord } from "../conversation-records.js";
-import { createQuickNote } from "../quick-notes.js";
 import { genericSecretEnvironment } from "../secrets.js";
 import type { HarnessId, ProjectRecord } from "../types.js";
 import { loadBoard } from "./control-center-board.js";
+import { startBobConversation, titleOf } from "./control-center-start.js";
 import { handleBobAutomation } from "./control-center-automation-chat.js";
+import { handleBobOrganize } from "./control-center-organize.js";
 import { bobDashboardRequest } from "./control-center-dashboard-request.js";
 import { GitReviewRunError, runGitReview } from "./git-review-run.js";
 import { iconHarnessId } from "./label-icon.js";
@@ -27,7 +26,6 @@ import { isLeased } from "../control-center/leases.js";
 import { storedDigest } from "../conversation-digest.js";
 import { randomUUID } from "node:crypto";
 import { queueConversationPrompt } from "./conversation-prompt.js";
-import { launchQuickNote } from "./quick-note-dispatch.js";
 import { sharedProjectSessions } from "./sessions-helpers.js";
 
 export { GitReviewRunError };
@@ -78,21 +76,6 @@ async function continueExisting(args: { session: AuthSession; settings: BobSetti
 }
 
 /** Auto respond runs where the conversation is owned, so it is turned on only for work that started on this node. Says what happened either way. */
-async function turnOnAutoRespond(session: AuthSession, settings: BobSettings, projectId: string, harnessId: HarnessId, sessionId: string, nodeId: string | null): Promise<string> {
-  if (nodeId && nodeId !== (await getClusterNode()).id) return " Auto respond stays off: it only runs on the machine that owns the conversation.";
-  try {
-    const record = await getConversationRecord(projectId, harnessId, sessionId);
-    await enableAutoRespond(projectId, record?.conversationId ?? sessionId, await bobAutoRespondConfig(settings, harnessId), null, session.accountId);
-    return " I turned on auto respond for it: I'll answer its routine questions, and it stops for anything that needs you.";
-  } catch (error) {
-    return ` I could not turn on auto respond: ${error instanceof Error ? error.message : "unknown error"}.`;
-  }
-}
-
-function titleOf(message: string): string {
-  const line = message.split("\n")[0].trim();
-  return line.length > 80 ? `${line.slice(0, 77)}…` : line;
-}
 
 function viaText(reason: string | null, decision: BobDecision | null, projectName: string | null): string {
   if (!decision) return reason === "no-decision-model" ? "No decision model set up, so Bob's agent decided" : "The decision model could not answer, so Bob's agent decided";
@@ -124,6 +107,8 @@ export interface BobReply { action: "started" | "answer"; user: BobMessage; repl
  */
 export async function handleBobMessage(session: AuthSession, input: { message: string; projectId?: string; answerOnly?: boolean }): Promise<BobReply> {
   const db = await bobDatabase();
+  // Talking to Bob, from the chat or from Telegram, is also how he learns who to tell about things that happen later.
+  rememberBobAccount(db, actingAccountFromSession(session));
   const settings = readBobSettings(db, session.accountId);
   const recent = listBobMessages(db, session.accountId, { limit: 20 }).filter((entry) => entry.role !== "system").slice(-RECENT_CHAT_LINES).map((entry) => entry.text);
   const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
@@ -148,11 +133,14 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
   const dashboards = input.answerOnly ? null : await bobDashboardRequest({ session, db, settings, message: input.message, recentChat: recent, project, projects, decision: sure, model });
   if (dashboards) return { action: "answer", user, reply: dashboards, projectId: project?.id ?? null };
 
-  // Listing, pausing, resuming, deleting or creating a scheduled task, webhook or Bob report is carried out in control-center-automation-chat.ts.
-  const automation = input.answerOnly ? null : await handleBobAutomation({ session, message: input.message, recentChat: recent, project: project ? { id: project.id, name: project.name } : null, options, settings }, decision);
-  if (automation) return { action: "answer", user, reply: automation, projectId: null };
-
   const turn: BobTurn = { session, message: input.message, recentChat: recent, project: project ? { id: project.id, name: project.name } : null, options, settings };
+  // Listing, pausing, resuming, deleting or creating a scheduled task, webhook or Bob report is carried out in control-center-automation-chat.ts.
+  const automation = input.answerOnly ? null : await handleBobAutomation(turn, decision);
+  if (automation) return { action: "answer", user, reply: automation, projectId: null };
+  // Creating, renaming, moving, closing or deleting a workspace, project or conversation is carried out in control-center-organize.ts.
+  const organized = input.answerOnly ? null : await handleBobOrganize(turn, decision);
+  if (organized) return { action: "answer", user, reply: organized, projectId: organized.projectId };
+
   if (!input.answerOnly && sure && sure.kind === "task" && project) {
     await assertProjectEditable(project);
     // Bob's own agent, unless the person named another in the message ("do it with Pi").
@@ -172,10 +160,8 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
     // What Bob knows about how the person works goes into the brief, the way they would write it themselves.
     const known = await collectBobContext(turn);
     const brief = known.text ? `${input.message}\n\n---\nNotes about how I work, kept by my assistant:\n${known.text}` : input.message;
-    const note = createQuickNote({ projectId: project.id, title: titleOf(input.message), content: brief, harnessId });
-    const started = await launchQuickNote(note.id);
-    if (started.sessionId) await recordBobStart(project.id, started.sessionId);
-    const autoRespondNote = started.sessionId && bobWantsAutoRespond(settings, sure) ? await turnOnAutoRespond(session, settings, project.id, harnessId as HarnessId, started.sessionId, note.nodeId) : "";
+    const started = await startBobConversation({ session, settings, project, title: titleOf(input.message), brief, harnessId, autoRespond: bobWantsAutoRespond(settings, sure) });
+    const autoRespondNote = started.autoRespondNote;
     const reply = appendBobMessage(db, session.accountId, {
       role: "bob", text: `Started in ${project.name}. It is on the board now; I'll show what it is doing there.${autoRespondNote}${skipped}`,
       via: [viaText(null, sure, project.name), ...known.via].join(" · "), projectId: project.id, projectName: project.name,

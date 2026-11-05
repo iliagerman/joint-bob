@@ -64,7 +64,7 @@ test("the board lists nothing on an empty node, and Bob answers with his own age
     assert.deepEqual({ threshold: settings.threshold, monitoring: settings.monitoring }, { threshold: 0.9, monitoring: true });
     const settingsChange = await fetch(`${node.baseUrl}/api/control-center/bob/settings`, { method: "PUT", headers, body: JSON.stringify({ threshold: 0.75, harnessId: "claude", monitoring: false }) });
     assert.equal(settingsChange.status, 200);
-    assert.deepEqual(await settingsChange.json(), { harnessId: "claude", provider: "", modelId: "", thinkingLevel: "", threshold: 0.75, classifier: "typesafe", monitoring: false, askBeforeSaving: false, autoRespond: "bob" });
+    assert.deepEqual(await settingsChange.json(), { harnessId: "claude", provider: "", modelId: "", thinkingLevel: "", threshold: 0.75, classifier: "typesafe", monitoring: false, askBeforeSaving: false, autoRespond: "bob", reviewCheck: "push" });
     assert.equal((await fetch(`${node.baseUrl}/api/control-center/bob/settings`, { method: "PUT", headers, body: JSON.stringify({ threshold: 3 }) })).status, 400);
 
     for (const invalid of [{ message: "" }, { message: "x", threshold: 2 }, { message: "x", extra: true }]) {

@@ -352,8 +352,6 @@ function parseRecentSessions(value: string): RecentSession[] {
 export interface ControlCenterPreference {
   /** Card color by `projectId:conversationId`, as #rrggbb. */
   colors: Record<string, string>;
-  positions: Record<string, { x: number; y: number }>;
-  layout: "grouped" | "free";
   /** Project ids the board is limited to; empty shows every project. */
   filter: string[];
   /** Which side Bob's chat sits on, and how wide it is in pixels. */
@@ -361,7 +359,7 @@ export interface ControlCenterPreference {
   chatWidth: number;
 }
 
-const emptyControlCenter = (): ControlCenterPreference => ({ colors: {}, positions: {}, layout: "grouped", filter: [], chatSide: "right", chatWidth: 400 });
+const emptyControlCenter = (): ControlCenterPreference => ({ colors: {}, filter: [], chatSide: "right", chatWidth: 400 });
 
 function parseControlCenter(value: string): ControlCenterPreference {
   try {
@@ -369,8 +367,6 @@ function parseControlCenter(value: string): ControlCenterPreference {
     if (!stored || typeof stored !== "object" || Array.isArray(stored)) return emptyControlCenter();
     return {
       colors: stored.colors && typeof stored.colors === "object" ? Object.fromEntries(Object.entries(stored.colors).filter(([key, color]) => key.length <= 300 && /^#[0-9a-f]{6}$/i.test(String(color)))) : {},
-      positions: stored.positions && typeof stored.positions === "object" ? Object.fromEntries(Object.entries(stored.positions).filter(([key, point]) => key.length <= 300 && Number.isFinite(point?.x) && Number.isFinite(point?.y))) : {},
-      layout: stored.layout === "free" ? "free" : "grouped",
       filter: Array.isArray(stored.filter) ? stored.filter.filter((id): id is string => typeof id === "string" && id.length <= 200) : [],
       chatSide: stored.chatSide === "left" ? "left" : "right",
       chatWidth: typeof stored.chatWidth === "number" && stored.chatWidth >= 300 && stored.chatWidth <= 820 ? stored.chatWidth : 400,
@@ -472,7 +468,8 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as CanvasKeymapPreference)],
     ["conversationLastRead", "conversation_last_read", (value) => JSON.stringify(boundConversationLastRead(value as Record<string, number>))],
     ["projectConversationVisibility", "project_conversation_visibility", (value) => JSON.stringify(value)],
-    ["controlCenter", "control_center", (value) => JSON.stringify(value)],
+    // A 2.213 page still sends the free layout's positions and mode; the board has one layout now, so they are not kept.
+    ["controlCenter", "control_center", (value) => { const { positions: _positions, layout: _layout, ...kept } = value as ControlCenterPreference & { positions?: unknown; layout?: unknown }; return JSON.stringify(kept); }],
     ["gitReviewer", "git_reviewer", (value) => JSON.stringify(value)],
   ];
   for (const [property, column, serialize] of fields) {

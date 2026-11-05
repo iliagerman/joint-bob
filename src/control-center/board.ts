@@ -6,6 +6,8 @@ export type BoardColumn = "needs-you" | "running" | "review";
 export interface BoardReview { id: string; title: string; subject: string; detail: string; expiresAt: string }
 /** Why auto respond stopped, when it stopped on something the person has to look at. */
 export interface BoardAutoRespondStop { kind: string; reason: string }
+/** What Bob found when the conversation stopped for review: done, pushed on, or waiting for the person. */
+export interface BoardReviewCheck { verdict: "done" | "continue" | "needs-user"; reason: string; by: string; pushes: number; pushPending: boolean; needsYou: boolean }
 
 export interface BoardCard {
   projectId: string;
@@ -32,6 +34,7 @@ export interface BoardCard {
   autoRespondStop: BoardAutoRespondStop | null;
   /** Someone has taken control: Bob and auto respond leave the conversation alone. */
   controlledBy: "you" | "someone-else" | null;
+  reviewCheck: BoardReviewCheck | null;
 }
 
 export interface BoardProject {
@@ -47,6 +50,7 @@ export interface BoardSources {
   pendingReviews(projectId: string, conversationId: string): BoardReview[];
   autoRespondStop(projectId: string, conversationId: string): BoardAutoRespondStop | null;
   controlledBy(projectId: string, conversationId: string): "you" | "someone-else" | null;
+  reviewCheck(projectId: string, conversationId: string): BoardReviewCheck | null;
 }
 
 /** Running conversations and finished ones waiting for review, newest activity first. */
@@ -60,6 +64,9 @@ export function buildBoard(projects: BoardProject[], sources: BoardSources): Boa
       const needsReview = session.reviewState === "needs_review";
       const autoRespondStop = needsReview && !running ? sources.autoRespondStop(project.projectId, conversationId) : null;
       if (!running && !needsReview && !pendingReviews.length) continue;
+      const reviewCheck = sources.reviewCheck(project.projectId, conversationId);
+      // Bob checked it and it is not done: it waits for the person, so it is not just ready for review.
+      const checkedForYou = needsReview && !running && Boolean(reviewCheck?.needsYou);
       cards.push({
         projectId: project.projectId,
         projectName: project.projectName,
@@ -67,7 +74,7 @@ export function buildBoard(projects: BoardProject[], sources: BoardSources): Boa
         sessionId: session.id,
         path: session.path,
         title: session.title,
-        column: pendingReviews.length || autoRespondStop ? "needs-you" : running ? "running" : "review",
+        column: pendingReviews.length || autoRespondStop || checkedForYou ? "needs-you" : running ? "running" : "review",
         agentId: session.agentId,
         agentLabel: session.agentLabel,
         agentModel: session.agentModel ?? null,
@@ -81,6 +88,7 @@ export function buildBoard(projects: BoardProject[], sources: BoardSources): Boa
         pendingReviews,
         autoRespondStop,
         controlledBy: sources.controlledBy(project.projectId, conversationId),
+        reviewCheck,
       });
     }
   }

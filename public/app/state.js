@@ -28,7 +28,7 @@ export const state = {
   viewBeforeControl: null,
   // True while a conversation opens over the control center: choosing its project and the conversation do not leave the board.
   keepControlView: false,
-  controlCenter: { colors: {}, positions: {}, layout: "grouped", filter: [], chatSide: "right", chatWidth: 400 },
+  controlCenter: { colors: {}, filter: [], chatSide: "right", chatWidth: 400 },
   projects: [],
   sessions: [],
   quickNotes: [],

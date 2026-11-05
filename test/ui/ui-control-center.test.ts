@@ -6,8 +6,8 @@ const BOARD = {
   projects: [{ id: "p1", name: "Joint Bob" }, { id: "p2", name: "DAK Live" }],
   cards: [
     { projectId: "p1", projectName: "Joint Bob", conversationId: "c1", sessionId: "c1", path: "/c1", title: "Mobile menu", column: "running", agentId: "claude", agentLabel: "Claude", agentModel: "sonnet", executionNodeId: null, updatedAt: "2026-11-05T10:00:00Z", turnRunning: true, backgroundRunning: false, summary: "Running the UI tests", autoRespondActive: true },
-    { projectId: "p2", projectName: "DAK Live", conversationId: "c2", sessionId: "c2", path: "/c2", title: "Slice 7", column: "running", agentId: "pi", agentLabel: "Pi", agentModel: null, executionNodeId: null, updatedAt: "2026-11-05T09:00:00Z", turnRunning: true, backgroundRunning: false, summary: null, autoRespondActive: false },
-    { projectId: "p1", projectName: "Joint Bob", conversationId: "c3", sessionId: "c3", path: "/c3", title: "Review counter", column: "review", agentId: "claude", agentLabel: "Claude", agentModel: null, executionNodeId: null, updatedAt: "2026-11-05T08:00:00Z", turnRunning: false, backgroundRunning: false, summary: "Fixed and tested", autoRespondActive: false },
+    { projectId: "p2", projectName: "DAK Live", conversationId: "c2", sessionId: "c2", path: "/c2", title: "Slice 7", column: "running", agentId: "pi", agentLabel: "Pi", agentModel: null, executionNodeId: null, updatedAt: "2026-11-05T09:00:00Z", turnRunning: true, backgroundRunning: false, summary: null, autoRespondActive: false, startedBy: "bob" },
+    { projectId: "p1", projectName: "Joint Bob", conversationId: "c3", sessionId: "c3", path: "/c3", title: "Review counter", column: "review", agentId: "claude", agentLabel: "Claude", agentModel: null, executionNodeId: null, updatedAt: "2026-11-05T08:00:00Z", turnRunning: false, backgroundRunning: false, summary: "**Goal** — Fix the review counter.\n**Done so far** — The counter counts reviews again.\n**Current state** — Fixed and tested; it waits for your review. The tests ran twice.", autoRespondActive: false, reviewCheck: { verdict: "done", reason: "", by: "Decision model 94%", pushes: 0, pushPending: false, needsYou: false } },
   ],
 };
 
@@ -38,7 +38,7 @@ test("the control center shows the live board, filters by project, colors cards 
         window.__timeline.push(user);
         const reply = started
           ? make('bob', 'Started in ' + project.projectName + '. It is on the board now.', { via: 'Decision model 93% · task' })
-          : make('bob', 'Two conversations are running.', { via: "Decision model 60% is under the threshold, so Bob's agent decided" });
+          : make('bob', '**Two conversations are running.**\\n- Mobile menu\\n- Slice 7', { via: "Decision model 60% is under the threshold, so Bob's agent decided" });
         window.__timeline.push(reply);
         return new Response(JSON.stringify({ action: started ? 'started' : 'answer', user, reply, projectId: project.projectId }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
@@ -58,11 +58,18 @@ test("the control center shows the live board, filters by project, colors cards 
   await page.waitForSelector('[data-testid="control-center-card"]');
   assert.equal(await page.locator("body.view-control").count(), 1);
   assert.equal(await page.getByTestId("control-center-card").count(), 3);
-  assert.equal(await page.getByTestId("control-center-count").textContent(), "2 running");
+  assert.match(await page.getByTestId("control-center-count").textContent() ?? "", /^2 running/);
   assert.match(await page.locator('[data-key="p1:c1"]').textContent() ?? "", /Running the UI tests/);
-  assert.match(await page.locator('[data-key="p1:c1"]').textContent() ?? "", /auto respond/);
+  assert.match(await page.locator('[data-key="p1:c1"]').textContent() ?? "", /System drives/, "auto respond drives it");
   assert.match(await page.locator('[data-key="p2:c2"]').textContent() ?? "", /Working…/);
   assert.equal(await page.locator('[data-key="p1:c3"]').getAttribute("data-column"), "review");
+  // A card says briefly where the conversation stands: the first sentence of the summary's current state, without Markdown.
+  const review = page.locator('[data-key="p1:c3"]');
+  assert.equal(await review.locator(".control-live-text").textContent(), "Fixed and tested; it waits for your review.");
+  assert.match(await review.locator(".control-live").getAttribute("title") ?? "", /^Goal — Fix the review counter\. Done so far/, "the whole summary is on hover");
+  assert.match(await review.textContent() ?? "", /To review/, "finished work waiting for the person is marked");
+  assert.equal(await review.getByTestId("control-card-check").textContent(), "✓ Bob checked: done", "Bob checked that it is really done");
+  assert.equal(await page.locator('.control-lane[data-column="review"] .control-lane-count').textContent(), "1");
 
   // Filter to one project.
   await page.getByTestId("control-center-filters").getByText("DAK Live").click();
@@ -78,12 +85,17 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.equal(await page.locator('[data-key="p1:c1"]').evaluate((card) => card.style.getPropertyValue("--card-color")), "#ff6b9a");
   assert.equal(await page.locator('[data-key="p1:c1"]').evaluate((card) => card.classList.contains("colored")), true);
 
-  // Free layout positions cards absolutely; Reset puts everything back.
-  await page.getByTestId("control-center-layout-free").click();
-  assert.equal(await page.locator(".control-board.free").count(), 1);
-  assert.equal(await page.locator('[data-key="p1:c1"]').evaluate((card) => getComputedStyle(card).position), "absolute");
+  // One layout: each lane groups its conversations by project, projects in name order. Reset clears colors and the filter.
+  assert.equal(await page.getByTestId("control-center-layout-free").count(), 0, "there is no free layout");
+  const running = page.locator('.control-lane[data-column="running"] + .control-lane-groups [data-testid="control-project-group"]');
+  assert.deepEqual(await running.locator(".control-project-head b").allTextContents(), ["DAK Live", "Joint Bob"]);
+  assert.deepEqual(await page.locator('[data-project="p1"] [data-testid="control-center-card"]').evaluateAll((cards) => cards.map((card) => card.getAttribute("data-key"))), ["p1:c1", "p1:c3"]);
+  // Who drives a conversation shows on its card: auto respond is the system, a conversation Bob started is watched by him.
+  assert.equal(await page.locator('[data-key="p1:c1"] [data-testid="control-card-driver"]').textContent(), "⚙ System drives");
+  assert.equal(await page.locator('[data-key="p2:c2"] [data-testid="control-card-driver"]').textContent(), "👁 Bob watches");
+  assert.equal(await page.locator('[data-key="p1:c3"] [data-testid="control-card-driver"]').count(), 0, "the person's own conversation has no driver");
+  assert.match(await page.getByTestId("control-center-count").textContent() ?? "", /1 driven by the system · 1 watched by Bob/);
   await page.getByTestId("control-center-reset").click();
-  assert.equal(await page.locator(".control-board.free").count(), 0);
   assert.equal(await page.locator('[data-key="p1:c1"]').evaluate((card) => card.classList.contains("colored")), false);
 
   // Bob's chat keeps its timeline and labels every entry by project and by how much it matters.
@@ -96,6 +108,11 @@ test("the control center shows the live board, filters by project, colors cards 
   await page.getByTestId("control-chat-input").fill("what is running?");
   await page.getByTestId("control-chat-send").click();
   await page.getByTestId("control-chat-messages").getByText("Two conversations are running.").waitFor();
+  // Bob's answer is Markdown, shown formatted.
+  const answer = page.locator(".control-msg.markdown").last();
+  assert.equal(await answer.locator("strong").textContent(), "Two conversations are running.");
+  assert.deepEqual(await answer.locator("li").allTextContents(), ["Mobile menu", "Slice 7"]);
+  assert.equal((await answer.textContent())?.includes("**"), false);
   assert.match(await page.getByTestId("control-chat-messages").innerText(), /under the threshold, so Bob's agent decided/);
   await page.getByTestId("control-chat-project").selectOption({ label: "DAK Live" });
   await page.getByTestId("control-chat-input").fill("fix the slice 7 map");
@@ -151,6 +168,13 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.equal(await page.locator("body.view-control").count(), 0);
   await page.getByTestId("projects-open-control-center-button").click();
   await page.waitForSelector('[data-testid="control-center-card"]');
+  // The side bars are not shown here; Esc once asks, and Esc again leaves.
+  assert.equal(await page.locator("#projectsPanel").isVisible(), false);
+  assert.equal(await page.locator("#chatsPanel").isVisible(), false);
+  await page.keyboard.press("Escape");
+  await page.getByTestId("control-exit-prompt").waitFor({ state: "visible" });
+  assert.equal(await page.locator("body.view-control").count(), 1, "one Esc does not leave");
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("body.view-control").count(), 0);
+  assert.equal(await page.getByTestId("control-exit-prompt").isVisible(), false);
 });

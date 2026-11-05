@@ -150,21 +150,26 @@ app.get("/api/workspaces", async (_request, response, next) => {
   }
 });
 
+/** Creates or renames a workspace, and sets its sharing when given, as the acting account. Bob's chat creates them here too. */
+export async function saveWorkspaceAsActor(raw: unknown) {
+  const payload = workspaceSchema.parse(raw);
+  const db = await clusterV2Database(), local = (await getClusterNode()).id;
+  if (payload.sharing) {
+    if (actingAccount()?.isRemoteLogin) throw new ResourceSharingError("Workspace sharing must be managed on its home node", 403);
+    validateWorkspaceSharing(db, local, payload.sharing);
+  }
+  const workspace = await saveWorkspace(payload);
+  if (payload.sharing) {
+    setWorkspaceSharing(db, local, workspace.id, payload.sharing);
+    void import("../shared-workspaces.js").then(({ announceWorkspaceChanges }) => announceWorkspaceChanges()).catch((error) => console.warn("Shared workspace notice failed", error));
+  }
+  await ensureManagedHome(getSettings().projects.homePath, (await listWorkspaces()).map((entry) => entry.id));
+  return workspace;
+}
+
 app.put("/api/workspaces", async (request, response, next) => {
   try {
-    const payload = workspaceSchema.parse(request.body);
-    const db = await clusterV2Database(), local = (await getClusterNode()).id;
-    if (payload.sharing) {
-      if (actingAccount()?.isRemoteLogin) throw new ResourceSharingError("Workspace sharing must be managed on its home node", 403);
-      validateWorkspaceSharing(db, local, payload.sharing);
-    }
-    const workspace = await saveWorkspace(payload);
-    if (payload.sharing) {
-      setWorkspaceSharing(db, local, workspace.id, payload.sharing);
-      void import("../shared-workspaces.js").then(({ announceWorkspaceChanges }) => announceWorkspaceChanges()).catch((error) => console.warn("Shared workspace notice failed", error));
-    }
-    await ensureManagedHome(getSettings().projects.homePath, (await listWorkspaces()).map((entry) => entry.id));
-    response.json({ workspace });
+    response.json({ workspace: await saveWorkspaceAsActor(request.body) });
   } catch (error) {
     if (error instanceof ResourceSharingError) { response.status(error.statusCode).json({ error: error.message }); return; }
     next(error);

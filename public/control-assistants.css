@@ -4,8 +4,9 @@
 .control-asst-heading > div { flex: 1 1 260px; min-width: 0; }
 .control-asst-heading h2 { margin: 0 0 2px; font-size: 15px; }
 .control-asst-heading .control-hint { max-width: 70ch; }
-.control-asst-link { text-decoration: none; color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
-.control-asst-link:hover { border-color: var(--accent); }
+.control-asst-link { display: inline-flex; align-items: center; height: 30px; padding: 0 9px; text-decoration: none; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; font-size: 12px; white-space: nowrap; }
+.control-asst-link:hover { color: var(--text); border-color: var(--line-strong); }
+.control-asst-link[hidden] { display: none; }
 .control-asst-list { flex: 1; min-height: 150px; min-width: 0; overflow: hidden; }
 .control-asst-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; align-content: start; }
 .control-asst-grid.single { grid-template-columns: minmax(0, 1fr); }

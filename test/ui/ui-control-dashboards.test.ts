@@ -115,13 +115,15 @@ test("the Dashboards tab lists dashboards, shows one over the board, and every b
   await page.getByTestId("projects-open-control-center-button").click();
   await page.waitForSelector('[data-testid="control-center-card"]');
 
-  // Every board card has a dashboard button: the project's dashboard, or a way to ask Bob for one.
-  await page.getByTestId("control-card-action-dashboard").first().waitFor();
-  assert.equal(await page.locator('[data-key="' + `${assistant.id}:c1` + '"] [data-testid="control-card-action-dashboard"]').count(), 1);
-  assert.equal(await page.locator('[data-key="' + `${bob.id}:c2` + '"] [data-testid="control-card-action-dashboard"]').count(), 1);
-  assert.equal(await page.locator('[data-key="' + `${infra.id}:c3` + '"] [data-testid="control-card-action-dashboard"]').count(), 0, "a project without a dashboard has no button for one");
-  const create = page.locator('[data-key="' + `${infra.id}:c3` + '"] [data-testid="control-card-action-dashboard-create"]');
-  assert.equal(await page.locator('[data-testid="control-card-action-dashboard-create"]').count(), 1);
+  // Every project's group on the board has a dashboard button: the project's dashboard, or a way to ask Bob for one.
+  const group = (id: string) => page.locator(`[data-testid="control-project-group"][data-project="${id}"]`);
+  await page.getByTestId("control-project-action-dashboard").first().waitFor();
+  assert.equal(await group(assistant.id).getByTestId("control-project-action-dashboard").count(), 1);
+  assert.equal(await group(bob.id).getByTestId("control-project-action-dashboard").count(), 1);
+  assert.equal(await group(infra.id).getByTestId("control-project-action-dashboard").count(), 0, "a project without a dashboard has no button for one");
+  const create = group(infra.id).getByTestId("control-project-action-dashboard-create");
+  assert.equal(await page.getByTestId("control-project-action-dashboard-create").count(), 1);
+  assert.equal(await page.getByTestId("control-card-action-dashboard").count(), 0, "the button is on the project, not on each conversation");
 
   // The create button puts the request in Bob's message box with the project chosen; the person finishes and sends it.
   await create.click();
@@ -131,7 +133,7 @@ test("the Dashboards tab lists dashboards, shows one over the board, and every b
   await page.getByTestId("control-chat-input").fill("");
 
   // One click on the project's dashboard button shows it over the board, with its data.
-  await page.locator('[data-key="' + `${assistant.id}:c1` + '"] [data-testid="control-card-action-dashboard"]').click();
+  await group(assistant.id).getByTestId("control-project-action-dashboard").click();
   const dialog = page.getByTestId("control-dashboard-dialog");
   await page.locator("dialog.control-dash-dialog[open]").waitFor();
   assert.equal(await page.getByTestId("control-dashboard-title").textContent(), "Bugs per day");

@@ -1,14 +1,16 @@
 # Control center
 
-The control center is one screen for everything that is running. It replaces the canvas: choose **Control center** (the target icon) in the toolbar above the project list, or press the same shortcut (Control+Option+V by default). **Esc** or **Exit** takes you back to where you were. On a phone it is Bob's chat (see **On a phone**).
+The control center is one screen for everything that is running. It replaces the canvas: choose **Control center** (the target icon) in the toolbar above the project list, or press the same shortcut (Control+Option+V by default). It takes the whole window: the project and conversation side bars come back when you leave. **Exit**, or **Esc** twice (the first press asks, with a **Leave** button), takes you back to where you were. On a phone it is Bob's chat (see **On a phone**).
 
 ## The board
 
-Every conversation that is running, one that waits for you, and one that finished and waits for review, in all the projects you can see, newest activity first.
+Every conversation that is running, one that waits for you, and one that finished and waits for review, in all the projects you can see. Each lane (**Needs you**, **Running**, **Done · ready for review**) groups its conversations by project, projects in name order and the newest conversation first, so one project's work sits together; the lane's count stands out, in blue for what waits for review.
 
 - **Needs you** cards show a step waiting for your OK (a Guardian review: what the agent wants to run, with **Allow once** and **Block**), or an agent whose auto respond stopped on something only you can settle.
-- **Running** cards show the project, the title, the agent and model, whether auto respond is driving it, who started it, and a live line: the conversation's running summary. The line updates when the summary does.
-- **Done · ready for review** cards show what finished. Open one to read it.
+- **Running** cards show the title, the agent and model, and one short line: where the conversation stands (the first sentence of its summary's *Current state*). Hover the line for the whole summary. It updates when the summary does.
+- **Done · ready for review** cards are marked **To review** with a blue edge. Open one to read it. A card Bob checked says **✓ Bob checked: done** (see **Is it really done?** below).
+- **Who drives it** is on the card: **⚙ System drives** when auto respond answers the agent for you, **👁 Bob watches** for a conversation Bob started (he tells you when it needs you), **✋ You're in it** once you take control. A card with none of these is yours alone. The line under the title counts them for the board (*2 driven by the system · 1 watched by Bob*).
+- A project's own buttons, such as its **Dashboard**, are on the project's group, not on each card.
 - Click a card to open its conversation over the board, to **watch**: you read it live while Bob keeps driving, and there is no message box. **Take control** (in the open conversation, or on the card) brings the message box back and tells Bob and auto respond to stay out until you give it back (a banner in the conversation says so, and has the button). **Close** or **Esc** goes back to the board, and closing hands the conversation back to Bob. Leaving the control center closes it too.
 
 The board refreshes from the signals that already keep the running list current, and from the server when Bob has something new. The control center's icon shows a number when something waits for you (a step to approve, or a message from Bob with buttons still on it), even when the control center is closed.
@@ -21,10 +23,9 @@ The board is the first tab, **Live agents**. **Project overview** shows one proj
 
 - **Project filter.** The chips above the board show only the projects that have cards. Select one or several; **All** clears the filter.
 - **Color.** The circle in a card's corner is a color picker. The whole card takes the color.
-- **Grouped or Free.** Grouped lists the cards by column. Free places each card where you drag it (use the handle at its top left).
-- **Reset layout** clears colors, positions and the filter.
+- **Reset** clears the colors and the filter.
 
-Colors, positions, the filter, and the chat's side and width are kept with your account.
+Colors, the filter, and the chat's side and width are kept with your account. Bob's answers are formatted (lists, bold, code), not shown as raw Markdown.
 
 ## Bob
 
@@ -84,13 +85,35 @@ One timer serves all of Bob's reports: it waits for the earliest report that is 
 - **Changing, deleting and creating** first post a message labelled *Needs you* that says exactly what will happen, with a button (**Change it**, **Delete** or **Create**, and **Cancel**). Nothing changes until you press it; a button works once and comes back if the action fails. A change renames or re-times one automation and keeps everything else: a scheduled task takes a new name, frequency, time or weekday (a schedule with options the small form cannot show is changed under **More options**), a Bob report a new name or time, a webhook a new name.
 - **A webhook** is not created from the chat, because its secret address is shown only once; Bob says so and points you to **+ Webhook**.
 
+## Is it really done?
+
+A conversation that stops and waits for review is not always finished: the agent may have listed next steps, asked whether to go on, or stopped after an error it could fix. So when a turn ends, Bob checks.
+
+- **When.** About 20 seconds after the turn ends, on the machine that runs the conversation, if nothing else moves it: no message waits in its queue, auto respond is off (auto respond already answers for the agent, and Bob is told when it stops), and you have not taken control. A scheduled task's conversation is left to its own settings.
+- **Whose.** The person whose conversation it is: who sent the turn, or, for a conversation Bob started or pushed on, the person he did it for. Nobody else's Bob acts on it, and nothing happens while Bob is paused.
+- **How it is decided.** The decision model reads the request, the conversation's summary and the end of the agent's last answer, and judges one of three: **done**, **not done** (work the agent can carry on with by itself), or **waits for you** (a decision, a plan to approve, credentials or access, or a go-ahead for a production or destructive step). When the model is missing, cannot answer, or is less sure than your threshold, Bob's own agent reads the same and decides. The line under Bob's message and the card's hover say which.
+- **What Bob does.**
+  - *Done*: nothing; the card stays in review, marked **✓ Bob checked: done**.
+  - *Not done*: Bob tells the agent to go on ("Continue with the task: you stopped before it was done… If you need something only I can decide, ask me"), says so in his chat, and the card shows **↻ Bob told it to go on (1 of 3)** and **⚙ System drives**. After three pushes in a row with no message from you between them, Bob stops and brings it to you instead.
+  - *Waits for you*: the card moves to **Needs you** with what it waits for, and Bob's chat has it with **Open** and **Push it on**.
+- **Your setting.** In Bob's settings, **When work stops unfinished**: **Bob tells it to go on** (the default), **Bob asks me first** (a *Needs you* message with **Push it on** and **Leave it**), or **Leave it in review**.
+
+## Workspaces, projects and conversations
+
+Bob can create and arrange your work: "create a project called Billing in Clients", "create a workspace called Clients", "rename the slice 10 conversation to Admin overview", "move Billing to Personal", "mark the errors conversation as done", "start a conversation in DAK to check the payout job", "delete the Clients workspace". The decision model labels such a message *organize*; one step of Bob's agent turns it into a small, checked intent that can only name your own workspaces and projects, and the conversations on your board.
+
+- **Every change waits for your button.** Bob says exactly what will happen (*Create the project "Billing" in the workspace "Clients"?*) with **Create it**, **Rename it**, **Move it**, **Mark done**, **Start it** or **Remove it**, and **Cancel**. Removing is a warning button.
+- **It is the same as doing it yourself.** The change runs as you, through the functions behind the Projects screen and Settings → Workspaces, with the same checks: a new project gets its folder in your projects home; moving a project moves its folder; removing a project takes it out of Joint Bob and leaves its folder on disk; a workspace is deleted only when it is empty, and Bob says what is still in it.
+- **A new conversation** starts like a task Bob starts: with Bob's agent, marked started by Bob, with auto respond when your setting says always.
+- Bob refuses what it cannot find, or a workspace name you already have, without asking.
+
 ## Dashboards
 
 The **Dashboards** tab shows the dashboards you can see, as cards, in two groups: **Projects** (a project's own dashboard) and **For me** (a dashboard of your workspace, not tied to one project). It is the existing dashboards feature (the dashboard-creator agent, the bundled widgets, script or AI refresh, approval of what other machines share); nothing is copied. Conversation dashboards stay in their conversations.
 
 - **A card** names the project (or the workspace), the title, who made it (*made by Bob*, *yours*, *shared with you*), when it was refreshed and whether it refreshes by **script** (no AI) or by **AI** (*costs AI*). It follows the board's project filter (a project's dashboards, and a personal one whose workspace holds a chosen project), puts the number on the tab, and pages to the height it has instead of scrolling.
 - **One click** shows the dashboard over the board, in the existing sandboxed frame. **Refresh** runs its script, or, for an AI dashboard, the button says **Refresh with AI** and a note says each refresh uses AI. **Ask Bob to change it** sends your words to Bob's chat and the dashboard agent edits the dashboard. **Full view** opens the dashboards screen for editing, sharing and approving. A dashboard another machine shared is not run until you read and approve it there.
-- **A Dashboard button on every board card** opens that project's dashboard. A project without one shows **Create dashboard**, which writes the start of the request in Bob's message box with the project chosen, for you to finish.
+- **A Dashboard button on each project's group** on the board opens that project's dashboard. A project without one shows **+ Dashboard**, which writes the start of the request in Bob's message box with the project chosen, for you to finish.
 - **Unfinished work shows too.** A dashboard Bob is still building shows *Bob is building it…*; one the agent could not finish stays as a draft, and a click opens the full view to carry on.
 
 **Ask Bob from the chat.** "Create a dashboard for Julian showing bugs per day", "make me a dashboard of what needs my attention", or both in one message. After the decision model has labelled the message, a small check asks it two yes/no questions in one request (a dashboard for a project? one for you?); below Bob's confidence, or with no decision model, Bob's own agent answers the same questions as a small JSON object that is checked before it is used, and only for a message that mentions a dashboard. Nothing else is read from free text.

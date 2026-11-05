@@ -3,6 +3,7 @@
 import { api } from "./api.js";
 import { loadSessionNodes } from "./chat-controls.js";
 import { refreshControlCenter, saveControlCenter } from "./control-center.js";
+import { briefStatus } from "./control-cards.js";
 import { createControlViewElement, registerControlView, showControlView } from "./control-views.js";
 import { setMobileView, shortSessionTitle } from "./layout.js";
 import { selectProject } from "./project-selection.js";
@@ -128,7 +129,7 @@ function renderCard({ agent, machine }) {
   const top = makeNode("div", "control-card-top");
   top.append(makeNode("span", "control-project", agent.projectName), makeNode("span", "control-spacer"), testid(makeNode("span", "control-badge", machine.name), "cluster-card-machine"));
   const live = makeNode("div", "control-live");
-  live.append(makeNode("span", `control-pulse ${agent.state === "running" ? "running" : "review"}`), makeNode("span", "", agent.summary ?? (agent.state === "running" ? "Working…" : "Background work is still running")));
+  live.append(makeNode("span", `control-pulse ${agent.state === "running" ? "running" : "review"}`), makeNode("span", "control-live-text", briefStatus(agent.summary) ?? (agent.state === "running" ? "Working…" : "Background work is still running")));
   const meta = [agent.agentLabel, agent.agentModel, agent.state === "background" ? "background work" : null, ago(agent.updatedAt)].filter(Boolean).join(" · ");
   card.append(top, makeNode("h3", "control-title", agent.title), live, makeNode("div", "control-meta", meta), testid(makeNode("div", "cluster-card-foot", "Read-only · click to open"), "cluster-card-open"));
   const open = () => diveIn(agent, machine).catch((error) => toast(error.message));

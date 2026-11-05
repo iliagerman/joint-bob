@@ -239,6 +239,7 @@
       </section>
 
       <section class="panel view-panel control-center" id="controlCenterPanel" aria-label="Control center">
+        <div class="control-exit-prompt" id="controlExitPrompt" role="status" hidden data-testid="control-exit-prompt"><span>Press <kbd>Esc</kbd> again to leave the control center</span><button class="primary compact" id="controlExitConfirm" type="button" data-testid="control-exit-confirm">Leave</button></div>
         <header class="panel-bar">
           <div class="panel-title">
             <h1>Control center</h1>
@@ -253,11 +254,7 @@
             <section class="control-view" id="controlViewLive" data-view="live" role="tabpanel">
               <div class="control-bar">
                 <div class="control-filters" id="controlCenterFilters" aria-label="Filter by project" data-testid="control-center-filters"></div>
-                <div class="control-layout" id="controlCenterLayout" aria-label="Layout">
-                  <button type="button" data-layout="grouped" data-testid="control-center-layout-grouped">Grouped</button>
-                  <button type="button" data-layout="free" data-testid="control-center-layout-free">Free</button>
-                </div>
-                <button class="ghost compact" id="controlCenterReset" type="button" title="Back to the default arrangement, colors and filters" data-testid="control-center-reset">Reset layout</button>
+                <button class="ghost compact" id="controlCenterReset" type="button" title="Clear the card colors and the project filter" data-testid="control-center-reset">Reset</button>
               </div>
               <div class="control-board" id="controlCenterBoard" data-testid="control-center-board"></div>
             </section>
@@ -282,6 +279,7 @@
               <label>Decision model <select id="controlBobClassifier" data-testid="control-bob-classifier"><option value="typesafe">TypeSafe</option><option value="laya">Laya</option></select></label>
               <label>Minimum confidence <input id="controlBobThreshold" type="number" min="0" max="100" step="1" data-testid="control-bob-threshold"> %</label>
               <label>Auto respond <select id="controlBobAutoRespond" data-testid="control-bob-auto-respond"><option value="bob">Bob decides per task</option><option value="always">Bob always answers for the agent</option><option value="never">Never: agents wait for me</option></select></label>
+              <label>When work stops unfinished <select id="controlBobReviewCheck" data-testid="control-bob-review-check"><option value="push">Bob tells it to go on</option><option value="ask">Bob asks me first</option><option value="off">Leave it in review</option></select></label>
               <label class="control-check"><input id="controlBobAsk" type="checkbox" data-testid="control-bob-ask"> Ask me before Bob saves anything</label>
               <div class="control-guard" id="controlBobGuard" data-testid="control-bob-guard">
                 <span id="controlBobGuardText"></span>

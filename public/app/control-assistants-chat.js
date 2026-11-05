@@ -45,7 +45,7 @@ const parts = {
   where: tagged(el("small"), "control-assistant-chat-where"),
   switchLabel: el("span", "control-hint", "Bob may ask"),
   toggle: tagged(el("button", "control-asst-switch"), "control-assistant-chat-switch"),
-  page: tagged(el("a", "ghost compact control-asst-link", "Assistants page"), "control-assistant-open-page"),
+  page: tagged(el("a", "control-asst-link", "Open assistant ↗"), "control-assistant-open-page"),
   close: tagged(el("button", "usage-icon-button", "×"), "control-assistant-close"),
   timeline: tagged(el("div", "control-asst-timeline"), "control-assistant-timeline"),
   side: tagged(el("aside", "control-asst-side"), "control-assistant-side"),
@@ -98,6 +98,9 @@ function renderHeader() {
   parts.toggle.title = assistant.askable ? "Bob may ask this assistant" : assistant.reason;
   parts.toggle.disabled = assistant.shared;
   parts.page.href = `/assistant.html?id=${encodeURIComponent(assistant.id)}`;
+  // The assistant's own page is on the machine it runs on; from here it would not open.
+  parts.page.hidden = !assistant.local;
+  parts.page.title = `Open ${assistant.name} in a new tab`;
 }
 
 function section(label, ...content) {

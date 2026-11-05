@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { registerCardAction } from "./control-cards.js";
+import { registerProjectAction } from "./control-cards.js";
 import { refreshControlCenter } from "./control-center.js";
 import { createControlViewElement, registerControlView, showControlView } from "./control-views.js";
 import { openDashboardMode } from "./dashboards.js";
@@ -205,15 +205,16 @@ window.addEventListener("control-bob-action", (event) => {
   if (event.detail.actionId === "dashboards.open") showControlView("dashboards");
 });
 
-registerCardAction({
+// A dashboard belongs to a project, so its button is on the project's group on the board, not on each conversation.
+registerProjectAction({
   id: "dashboard", label: "Dashboard", title: "Show this project's dashboard", order: 60,
-  visible: (card) => projectDashboards.has(card.projectId),
-  run: (card) => openCard(projectDashboards.get(card.projectId)),
+  visible: (project) => projectDashboards.has(project.projectId),
+  run: (project) => openCard(projectDashboards.get(project.projectId)),
 });
-registerCardAction({
-  id: "dashboard-create", label: "Create dashboard", title: "Ask Bob to create a dashboard for this project", order: 61,
-  visible: (card) => !projectDashboards.has(card.projectId),
-  run: (card) => askBob(`Create a dashboard for ${card.projectName} showing `, card.projectId),
+registerProjectAction({
+  id: "dashboard-create", label: "+ Dashboard", title: "Ask Bob to create a dashboard for this project", order: 61,
+  visible: (project) => !projectDashboards.has(project.projectId),
+  run: (project) => askBob(`Create a dashboard for ${project.projectName} showing `, project.projectId),
 });
 
 // ── The dashboard over the board ──────────────────────────────────────────────────────────────────────────

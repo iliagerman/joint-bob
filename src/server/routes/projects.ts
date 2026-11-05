@@ -1,4 +1,5 @@
 import { revokeAgentCapabilities } from "../../agent-capabilities.js";
+import { NotFoundError } from "../../not-found.js";
 import path from "node:path";
 import { assertProjectFolderAllowed, projectHomeFor, withProjectRuntime } from "../../project-runtime.js";
 import { liveHomeCatalog, projectHiddenFromOtherNodes, setProjectHiddenFromOtherNodes } from "../live-link.js";
@@ -100,49 +101,60 @@ app.post("/api/projects/:projectId/sync/rescan", async (request, response, next)
   }
 });
 
+/** A refusal shown to the person as it is: the final error handler sends its status and message. */
+class ProjectRequestError extends Error {
+  readonly expose = true;
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+/** Creates a project as the acting account. The Projects form and Bob's chat both come here. */
+export async function createProjectAsActor(raw: unknown) {
+  const payload = projectSchema.parse(raw);
+  const homePath = projectHomeFor(actingAccount(), getSettings().projects.homePath);
+  const workspaces = await listWorkspaces();
+  if (!workspaces.some((workspace) => workspace.id === payload.type)) {
+    throw new WorkspaceError(`Unknown workspace "${payload.type}"`);
+  }
+  const projectPath = payload.path ?? managedProjectPath(homePath, payload.type, payload.name);
+  // In multi-user mode a folder must be the person's own; the admin's may need a grant.
+  const grantTo = await assertProjectFolderAllowed(actingAccount(), projectPath);
+  if (payload.sourcePath) await assertProjectFolderAllowed(actingAccount(), payload.sourcePath);
+  if (!payload.path) await ensureManagedHome(homePath, workspaces.map((workspace) => workspace.id));
+  if (payload.sourcePath) {
+    if (!payload.importMode) throw new ProjectDirectoryImportError("Choose how to import the project");
+    // Every project on the node, so no two people register one folder; the message names none.
+    const projects = await asNode(() => listProjects());
+    if (projects.some((project) => path.resolve(project.path) === path.resolve(projectPath))) {
+      throw new ProjectDirectoryImportError("Managed project folder is already registered");
+    }
+    const sourcePath = await mappedPathInsideHome(payload.sourcePath);
+    if (projects.some((project) => path.resolve(project.path) === sourcePath)) {
+      throw new ProjectDirectoryImportError("Source project folder is already registered");
+    }
+    await importProjectDirectory(sourcePath, projectPath, payload.importMode);
+  }
+  const project = await addProject(payload.name, projectPath, {
+    synced: payload.synced,
+    macPath: payload.macPath ?? payload.sourcePath,
+    type: payload.type,
+    color: payload.color ?? undefined,
+    writeInstructions: !payload.sourcePath,
+  });
+  if (grantTo) await grantProjectFolder(grantTo, project.path);
+  // The project exists either way; enrollment creates the folder once a peer shares it.
+  if (payload.synced && project.syncFolderId) {
+    // cutover-engine (P5): only while the project is on Syncthing here (a new project always is; the guard is for its id's history).
+    try { await whileFilesOnSyncthing(project.id, () => ensureSyncthingFolder(project.syncFolderId!, project.name, project.path)); }
+    catch (error) { warnOnChange(`project-folder:${project.id}`, `Syncthing folder for ${project.name} was not created: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  sessionWatcher.ensureProject(project);
+  (await projectAudience(project.id))({ type: "projectsChanged" });
+  return projectView(project);
+}
+
 app.post("/api/projects", async (request, response, next) => {
   try {
-    const payload = projectSchema.parse(request.body);
-    const homePath = projectHomeFor(actingAccount(), getSettings().projects.homePath);
-    const workspaces = await listWorkspaces();
-    if (!workspaces.some((workspace) => workspace.id === payload.type)) {
-      throw new WorkspaceError(`Unknown workspace "${payload.type}"`);
-    }
-    const projectPath = payload.path ?? managedProjectPath(homePath, payload.type, payload.name);
-    // In multi-user mode a folder must be the person's own; the admin's may need a grant.
-    const grantTo = await assertProjectFolderAllowed(actingAccount(), projectPath);
-    if (payload.sourcePath) await assertProjectFolderAllowed(actingAccount(), payload.sourcePath);
-    if (!payload.path) await ensureManagedHome(homePath, workspaces.map((workspace) => workspace.id));
-    if (payload.sourcePath) {
-      if (!payload.importMode) throw new ProjectDirectoryImportError("Choose how to import the project");
-      // Every project on the node, so no two people register one folder; the message names none.
-      const projects = await asNode(() => listProjects());
-      if (projects.some((project) => path.resolve(project.path) === path.resolve(projectPath))) {
-        throw new ProjectDirectoryImportError("Managed project folder is already registered");
-      }
-      const sourcePath = await mappedPathInsideHome(payload.sourcePath);
-      if (projects.some((project) => path.resolve(project.path) === sourcePath)) {
-        throw new ProjectDirectoryImportError("Source project folder is already registered");
-      }
-      await importProjectDirectory(sourcePath, projectPath, payload.importMode);
-    }
-    const project = await addProject(payload.name, projectPath, {
-      synced: payload.synced,
-      macPath: payload.macPath ?? payload.sourcePath,
-      type: payload.type,
-      color: payload.color ?? undefined,
-      writeInstructions: !payload.sourcePath,
-    });
-    if (grantTo) await grantProjectFolder(grantTo, project.path);
-    // The project exists either way; enrollment creates the folder once a peer shares it.
-    if (payload.synced && project.syncFolderId) {
-      // cutover-engine (P5): only while the project is on Syncthing here (a new project always is; the guard is for its id's history).
-      try { await whileFilesOnSyncthing(project.id, () => ensureSyncthingFolder(project.syncFolderId!, project.name, project.path)); }
-      catch (error) { warnOnChange(`project-folder:${project.id}`, `Syncthing folder for ${project.name} was not created: ${error instanceof Error ? error.message : String(error)}`); }
-    }
-    sessionWatcher.ensureProject(project);
-    (await projectAudience(project.id))({ type: "projectsChanged" });
-    response.status(201).json({ project: await projectView(project) });
+    response.status(201).json({ project: await createProjectAsActor(request.body) });
   } catch (error) {
     next(error);
   }
@@ -189,28 +201,30 @@ app.put("/api/projects/:projectId/path-mapping", async (request, response, next)
   }
 });
 
+/** Renames, recolors or moves a project to another workspace, as the acting account. */
+export async function updateProjectAsActor(projectId: string, raw: unknown) {
+  const existing = await getProject(projectId);
+  if (!existing) throw new NotFoundError("Project not found");
+  await assertProjectEditable(existing);
+  const payload = projectUpdateSchema.parse(raw);
+  if (payload.type && !(await listWorkspaces()).some((workspace) => workspace.id === payload.type)) {
+    throw new WorkspaceError(`Unknown workspace "${payload.type}"`);
+  }
+  let project = existing;
+  const typeChanged = Boolean(payload.type && payload.type !== existing.type);
+  if (typeChanged && payload.type) project = await relocateProjectWorkspace(project, payload.type);
+  if (payload.name !== undefined) {
+    project = await renameProject(project.id, payload.name);
+    await setProjectName(project.id, payload.name);
+  }
+  if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
+  (await projectAudience(project.id))({ type: "projectsChanged" });
+  return projectView(project);
+}
+
 app.patch("/api/projects/:projectId", async (request, response, next) => {
   try {
-    const existing = await getProject(request.params.projectId);
-    if (!existing) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    await assertProjectEditable(existing);
-    const payload = projectUpdateSchema.parse(request.body);
-    if (payload.type && !(await listWorkspaces()).some((workspace) => workspace.id === payload.type)) {
-      throw new WorkspaceError(`Unknown workspace "${payload.type}"`);
-    }
-    let project = existing;
-    const typeChanged = Boolean(payload.type && payload.type !== existing.type);
-    if (typeChanged && payload.type) project = await relocateProjectWorkspace(project, payload.type);
-    if (payload.name !== undefined) {
-      project = await renameProject(project.id, payload.name);
-      await setProjectName(project.id, payload.name);
-    }
-    if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
-    (await projectAudience(project.id))({ type: "projectsChanged" });
-    response.json({ project: await projectView(project) });
+    response.json({ project: await updateProjectAsActor(request.params.projectId, request.body) });
   } catch (error) {
     next(error);
   }
@@ -253,23 +267,22 @@ export async function conversationOfAnotherProject(project: ProjectRecord, engin
   return false;
 }
 
+/** Renames a conversation of a project, as the acting account. */
+export async function renameConversationAsActor(projectId: string, raw: unknown): Promise<void> {
+  const project = await getProject(projectId);
+  if (!project) throw new NotFoundError("Project not found");
+  const payload = sessionTitleSchema.parse(raw);
+  if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) throw new NotFoundError("Conversation not found");
+  if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) throw new ProjectRequestError(409, "Done ticket conversations are read-only");
+  // No conversation-list lookup: a conversation named at creation has no
+  // transcript on disk yet, and the list is where that name matters most.
+  await setSessionTitle(payload.sessionId, payload.title);
+  broadcastToProject(project.id, { type: "sessionsChanged" });
+}
+
 app.put("/api/projects/:projectId/sessions/title", async (request, response, next) => {
   try {
-    const project = await getProject(request.params.projectId);
-    if (!project) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    const payload = sessionTitleSchema.parse(request.body);
-    if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
-    if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) {
-      sendError(response, 409, "Done ticket conversations are read-only");
-      return;
-    }
-    // No conversation-list lookup: a conversation named at creation has no
-    // transcript on disk yet, and the list is where that name matters most.
-    await setSessionTitle(payload.sessionId, payload.title);
-    broadcastToProject(project.id, { type: "sessionsChanged" });
+    await renameConversationAsActor(request.params.projectId, request.body);
     response.json({ ok: true });
   } catch (error) {
     next(error);
@@ -298,23 +311,25 @@ app.put("/api/projects/:projectId/sessions/classification", async (request, resp
   }
 });
 
+/** Closes a conversation out (or opens it again), as the acting account. */
+export async function markConversationDoneAsActor(projectId: string, raw: unknown) {
+  const project = await getProject(projectId);
+  if (!project) throw new NotFoundError("Project not found");
+  const payload = sessionDoneSchema.parse(raw);
+  if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) throw new NotFoundError("Conversation not found");
+  // Like classification, a conversation can be closed out before its transcript exists.
+  await setSessionDone(payload.sessionId, payload.done);
+  const cleanup = payload.done ? await cleanupDoneWorktrees(project).catch((error) => {
+    console.warn("Done worktree cleanup failed", error);
+    return undefined;
+  }) : undefined;
+  broadcastToProject(project.id, { type: "sessionsChanged" });
+  return cleanup;
+}
+
 app.put("/api/projects/:projectId/sessions/done", async (request, response, next) => {
   try {
-    const project = await getProject(request.params.projectId);
-    if (!project) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    const payload = sessionDoneSchema.parse(request.body);
-    if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
-    // Like classification, a conversation can be closed out before its transcript exists.
-    await setSessionDone(payload.sessionId, payload.done);
-    const cleanup = payload.done ? await cleanupDoneWorktrees(project).catch((error) => {
-      console.warn("Done worktree cleanup failed", error);
-      return undefined;
-    }) : undefined;
-    broadcastToProject(project.id, { type: "sessionsChanged" });
-    response.json({ ok: true, ...cleanup });
+    response.json({ ok: true, ...await markConversationDoneAsActor(request.params.projectId, request.body) });
   } catch (error) {
     next(error);
   }
@@ -341,38 +356,36 @@ app.put("/api/projects/:projectId/sessions/color", async (request, response, nex
   }
 });
 
+const DELETE_WAITS = ["Settle task handoffs before deleting project", "Wait for task handoff settlement before deleting project", "Wait for task agents to finish before deleting project"];
+
+/** Removes a project from Joint Bob, as the acting account. Its folder stays on disk. */
+export async function deleteProjectAsActor(projectId: string): Promise<void> {
+  const project = await getProject(projectId);
+  if (!project) throw new NotFoundError("Project not found");
+  await assertProjectEditable(project);
+  const tasks = await listTasks(project.id);
+  if (tasks.some((task) => task.mergeTx === "open")) throw new ProjectRequestError(409, "Wait for this project's ticket merge transaction to finish before deleting the project");
+  if (projectHasMergeReservation(project.id)) throw new ProjectRequestError(409, "A ticket merge reservation is active for this project");
+  if (tasks.some((task) => task.worktreePath && !task.worktreeBranch && unmergedWorkspaceBlocksClose(task))) {
+    throw new ProjectRequestError(409, "Resolve this project's ticket merges (or discard them) before deleting the project");
+  }
+  const tellAudience = await projectAudience(project.id);
+  try {
+    await removeProject(project.id);
+  } catch (error) {
+    if (error instanceof Error && DELETE_WAITS.includes(error.message)) throw new ProjectRequestError(409, error.message);
+    throw error;
+  }
+  revokeAgentCapabilities(project.id);
+  sessionWatcher.removeProject(project.id);
+  tellAudience({ type: "projectsChanged" });
+}
+
 app.delete("/api/projects/:projectId", async (request, response, next) => {
   try {
-    const project = await getProject(request.params.projectId);
-    if (!project) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    await assertProjectEditable(project);
-    const tasks = await listTasks(project.id);
-    if (tasks.some((task) => task.mergeTx === "open")) {
-      sendError(response, 409, "Wait for this project's ticket merge transaction to finish before deleting the project");
-      return;
-    }
-    if (projectHasMergeReservation(project.id)) {
-      sendError(response, 409, "A ticket merge reservation is active for this project");
-      return;
-    }
-    if (tasks.some((task) => task.worktreePath && !task.worktreeBranch && unmergedWorkspaceBlocksClose(task))) {
-      sendError(response, 409, "Resolve this project's ticket merges (or discard them) before deleting the project");
-      return;
-    }
-    const tellAudience = await projectAudience(project.id);
-    await removeProject(project.id);
-    revokeAgentCapabilities(project.id);
-    sessionWatcher.removeProject(project.id);
-    tellAudience({ type: "projectsChanged" });
+    await deleteProjectAsActor(request.params.projectId);
     response.status(204).send();
   } catch (error) {
-    if (error instanceof Error && ["Settle task handoffs before deleting project", "Wait for task handoff settlement before deleting project", "Wait for task agents to finish before deleting project"].includes(error.message)) {
-      sendError(response, 409, error.message);
-      return;
-    }
     next(error);
   }
 });

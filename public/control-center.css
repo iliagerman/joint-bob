@@ -4,9 +4,6 @@
 .control-bar .control-filters { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 320px; }
 .control-chip { border: 1px solid var(--line-strong); background: var(--field); color: var(--muted); border-radius: 999px; padding: 2px 11px; font: inherit; font-size: 12px; cursor: pointer; }
 .control-chip.active { background: var(--panel); color: var(--text); border-color: var(--accent); }
-.control-layout { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
-.control-layout button { border: 0; background: var(--field); color: var(--muted); padding: 4px 11px; font: inherit; font-size: 12px; cursor: pointer; }
-.control-layout button.active { background: var(--panel); color: var(--text); }
 .control-count { color: var(--muted); font-size: 12px; }
 .control-tabs { display: flex; gap: 4px; padding: 6px 14px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
 .control-tab { border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
@@ -18,16 +15,16 @@
 .control-main { flex: 1; min-height: 0; display: flex; }
 .control-main.chat-left { flex-direction: row-reverse; }
 .control-board { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-.control-board.free { display: block; position: relative; }
 .control-lane { color: var(--muted); font-size: 12px; margin-top: 4px; }
-.control-lane b { color: var(--text); }
-.control-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+.control-lane[data-column] { display: flex; align-items: center; gap: 8px; }
+.control-lane b { color: var(--text); font-size: 13px; }
+.control-lane-count { min-width: 20px; padding: 0 7px; border-radius: 999px; background: var(--field); color: var(--text); font-size: 11.5px; font-weight: 600; text-align: center; }
+.control-lane[data-column="review"] .control-lane-count { background: #5b6cf0; color: #fff; }
+.control-lane[data-column="needs-you"] .control-lane-count { background: #f2b44b; color: #1b1b1b; }
 .control-card { background: color-mix(in srgb, var(--card-color, transparent) 18%, var(--panel)); border: 1px solid var(--card-color, var(--line)); border-radius: 10px; padding: 10px 11px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; min-width: 0; }
-.control-board.free .control-card { position: absolute; width: 270px; }
 .control-card:hover { border-color: var(--line-strong); }
 .control-card.colored:hover { border-color: var(--card-color); }
 .control-card-top { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-.control-grip { cursor: grab; letter-spacing: -2px; }
 .control-spacer { flex: 1; }
 .control-badge { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--accent); }
 .control-color { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer; }
@@ -35,7 +32,9 @@
 .control-color::-webkit-color-swatch { border: 1px solid var(--line-strong); border-radius: 50%; }
 .control-color::-moz-color-swatch { border: 1px solid var(--line-strong); border-radius: 50%; }
 .control-title { margin: 0; font-size: 13px; line-height: 1.3; }
-.control-live { display: flex; gap: 7px; align-items: flex-start; font-size: 12px; background: var(--field); border-radius: 7px; padding: 6px 8px; min-height: 34px; }
+.control-live { display: flex; gap: 7px; align-items: flex-start; font-size: 12px; background: var(--field); border-radius: 7px; padding: 6px 8px; }
+/* The status is one short line; the whole summary is on hover. */
+.control-live-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .control-pulse { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex: none; background: var(--accent); }
 .control-pulse.running { animation: control-pulse 1.4s infinite; }
 .control-pulse.review { background: #7b8cff; }
@@ -56,6 +55,13 @@
 .control-msg { max-width: 92%; padding: 7px 11px; border-radius: 12px; background: var(--field); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
 .control-msg.user { align-self: flex-end; background: color-mix(in srgb, var(--accent) 14%, var(--field)); }
 .control-msg.bob { align-self: flex-start; border-left: 2px solid var(--accent); }
+.control-msg.markdown { white-space: normal; }
+.control-msg.markdown > :first-child { margin-top: 0; }
+.control-msg.markdown > :last-child { margin-bottom: 0; }
+.control-msg.markdown :is(p, ul, ol, pre, table) { margin: 0 0 6px; }
+.control-msg.markdown :is(ul, ol) { padding-left: 18px; }
+.control-msg.markdown li + li { margin-top: 2px; }
+.control-msg.markdown code { font-size: 11.5px; }
 .control-msg.error { align-self: flex-start; border-left: 2px solid #ef6b6b; }
 .control-via { align-self: flex-start; font-size: 11.5px; color: var(--muted); padding: 2px 9px; border: 1px dashed var(--line-strong); border-radius: 999px; }
 .control-chat-form { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -93,8 +99,8 @@
 .control-action.primary { background: var(--accent); color: #06201a; border-color: transparent; font-weight: 600; }
 .control-action.warn { background: #f2b44b; color: #1a1205; border-color: transparent; font-weight: 600; }
 .control-action:disabled { opacity: .5; cursor: default; }
-.control-card-actions { display: flex; flex-wrap: wrap; gap: 4px; border-top: 1px dashed var(--line); padding-top: 6px; }
-.control-card-action { border: 1px solid var(--line); background: var(--field); color: var(--muted); border-radius: 6px; padding: 1px 7px; font: inherit; font-size: 11px; cursor: pointer; }
+.control-card-actions { display: flex; flex-wrap: wrap; gap: 3px; border-top: 1px dashed var(--line); padding-top: 6px; }
+.control-card-action { border: 1px solid var(--line); background: var(--field); color: var(--muted); border-radius: 6px; padding: 1px 6px; font: inherit; font-size: 11px; cursor: pointer; }
 .control-card-action:hover { color: var(--text); border-color: var(--line-strong); }
 .control-need { border: 1px solid color-mix(in srgb, #f2b44b 55%, transparent); background: color-mix(in srgb, #f2b44b 7%, transparent); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .control-need-title { font-weight: 600; color: #f2b44b; }
@@ -111,6 +117,9 @@
 .control-lease-banner[hidden] { display: none; }
 .control-lease-banner span { flex: 1; }
 .control-badge.control { color: #f2b44b; border-color: color-mix(in srgb, #f2b44b 55%, transparent); }
+/* Finished work waiting for the person stands out from what is still running. */
+.control-badge.review { color: #fff; background: #5b6cf0; border-color: #5b6cf0; font-weight: 600; }
+.control-card[data-column="review"]:not(.colored) { border-color: color-mix(in srgb, #7b8cff 60%, transparent); box-shadow: inset 3px 0 0 #7b8cff; }
 .control-overview-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .control-overview-head select { width: auto; max-width: 260px; }
 .control-overview-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 12px; padding: 12px 14px; min-height: 0; flex: 1; }
@@ -140,3 +149,33 @@ body.control-popup:not(.control-held) #composer { display: none; }
 @media (max-width: 1023px) {
   body.view-control.control-popup .shell > #chatPanel { inset: 0; border-radius: 0; }
 }
+
+/* Lanes hold one group per project, side by side, so a project's conversations sit together. */
+.control-lane-groups { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+.control-project-group { display: flex; flex-direction: column; gap: 6px; max-width: 100%; padding: 6px 8px 8px; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--field) 35%, transparent); }
+.control-project-head { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
+.control-project-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.control-project-count { color: var(--muted); font-size: 11px; margin-right: auto; }
+.control-project-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+.control-project-cards .control-card { width: 236px; }
+
+/* Who drives a conversation shows on its card: the system (auto respond), Bob watching what he started, or the person. */
+.control-driver { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.control-driver.system { color: #0f2a26; background: #4fd1b5; }
+.control-driver.watched { color: #4fd1b5; border: 1px solid color-mix(in srgb, #4fd1b5 60%, transparent); }
+.control-driver.you-in { color: #1b1b1b; background: #f2b44b; }
+.control-card[data-driver="system"]:not(.colored) { border-color: color-mix(in srgb, #4fd1b5 55%, transparent); }
+
+/* The control center takes the whole window: the project and conversation side bars return when it is left. */
+@media (min-width: 1024px) {
+  body.view-control .shell { grid-template-columns: minmax(0, 1fr); }
+  body.view-control .shell > :is(#projectsPanel, #chatsPanel) { display: none; }
+}
+#controlCenterPanel { position: relative; }
+.control-exit-prompt { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); box-shadow: 0 10px 30px rgb(0 0 0 / 40%); font-size: 13px; }
+.control-exit-prompt[hidden] { display: none; }
+
+/* What Bob found when the conversation stopped for review. */
+.control-check { font-size: 11.5px; color: var(--muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.control-check.done { color: #4fd1b5; }
+.control-check.needs { color: #f2b44b; }

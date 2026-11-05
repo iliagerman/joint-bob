@@ -1,7 +1,7 @@
 import type { SystemOneChoice, SystemOneQuestion } from "../classifiers/typesafe.js";
 
 /** What Bob should do with a message, as the decision model judges it. */
-export type BobKind = "question" | "task" | "automation" | "other";
+export type BobKind = "question" | "task" | "automation" | "organize" | "other";
 export type BobSize = "short" | "long";
 
 export interface BobProjectOption { id: string; name: string; headlines: string[] }
@@ -38,6 +38,7 @@ const KIND: SystemOneQuestion = {
     question: "The user asks what is happening, what was decided, or something the assistant can answer from what it already knows about their projects.",
     task: "The user asks for work to be done in a project: build, fix, change, investigate, review or research something.",
     automation: "The user asks to create, change, pause or delete a scheduled task or a webhook.",
+    organize: "The user asks to create, rename, move, close or delete a workspace, a project or a conversation itself, rather than for work inside a project.",
     other: "Chatting, thanks, or anything that is none of the above.",
   },
 };

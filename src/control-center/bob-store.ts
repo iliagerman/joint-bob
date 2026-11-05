@@ -20,11 +20,13 @@ export interface BobSettings {
   askBeforeSaving: boolean;
   /** Whether Bob's responder answers for the agents Bob starts: Bob decides per task, always, or never (they wait for the person). */
   autoRespond: "bob" | "always" | "never";
+  /** When a conversation stops for review before its task is done: Bob tells it to go on, asks the person first, or leaves it. */
+  reviewCheck: "push" | "ask" | "off";
 }
 
 export const DEFAULT_BOB_SETTINGS: BobSettings = {
   harnessId: "", provider: "", modelId: "", thinkingLevel: "",
-  threshold: DEFAULT_BOB_CONFIDENCE, classifier: "typesafe", monitoring: true, askBeforeSaving: false, autoRespond: "bob",
+  threshold: DEFAULT_BOB_CONFIDENCE, classifier: "typesafe", monitoring: true, askBeforeSaving: false, autoRespond: "bob", reviewCheck: "push",
 };
 
 /** How much a message matters to the person: the labels the chat can be filtered by. */
@@ -88,6 +90,7 @@ function clean(value: Partial<BobSettings>): BobSettings {
     monitoring: value.monitoring !== false,
     askBeforeSaving: value.askBeforeSaving === true,
     autoRespond: value.autoRespond === "always" || value.autoRespond === "never" ? value.autoRespond : "bob",
+    reviewCheck: value.reviewCheck === "ask" || value.reviewCheck === "off" ? value.reviewCheck : "push",
   };
 }
 

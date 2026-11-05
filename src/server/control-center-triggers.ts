@@ -147,7 +147,7 @@ registerBobAction(INVESTIGATE, ({ db, session, action }) => runAsAccount(actingA
     // The ordinary way Bob starts work: a conversation in the project, marked as started by Bob. The brief says read-only and quotes the call as data.
     const note = createQuickNote({ projectId: project.id, title: oneLine(`Investigate (read-only): ${trigger.title}`, 80), content: investigationBrief(trigger), harnessId: settings.harnessId || iconHarnessId() });
     const started = await launchQuickNote(note.id);
-    if (started.sessionId) await recordBobStart(project.id, started.sessionId);
+    if (started.sessionId) await recordBobStart(project.id, started.sessionId, session.accountId);
   } catch (error) {
     if (error instanceof QuickNoteLaunchError) throw new BobActionError(error.status, error.message);
     if (error instanceof ProjectLockedError) throw new BobActionError(409, error.message);

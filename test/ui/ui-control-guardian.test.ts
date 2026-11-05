@@ -50,7 +50,7 @@ test("a step waiting for your OK shows under Needs you with answer buttons, and 
 
   await page.getByTestId("projects-open-control-center-button").click();
   await page.waitForSelector('[data-testid="control-center-card"]');
-  assert.equal(await page.getByTestId("control-center-count").textContent(), "1 running · 2 need you");
+  assert.equal(await page.getByTestId("control-center-count").textContent(), "1 running · 2 need you · 1 watched by Bob");
   const review = page.locator('[data-key="p1:c1"]');
   assert.equal(await review.getAttribute("data-column"), "needs-you");
   assert.match(await review.innerText(), /aws ecs update-service --force-new-deployment/);

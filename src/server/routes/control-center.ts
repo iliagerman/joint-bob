@@ -21,10 +21,12 @@ import { sharedProjectSessions } from "../sessions-helpers.js";
 import { startMemorySync } from "../../control-center/memory-sync.js";
 import { loadBoard } from "../control-center-board.js";
 import { startControlCenterWatch } from "../control-center-watch.js";
+import { startReviewChecks } from "../control-center-review-check.js";
 import { app } from "../state.js";
 
 /** What the control center board shows: running conversations and finished ones waiting for review, across every project the caller can see. */
 startControlCenterWatch();
+startReviewChecks();
 startMemorySync();
 
 /** What waits for the person, for the badge on the control center's icon: open Guardian reviews and Bob's items with buttons still on them. */

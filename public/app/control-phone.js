@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { cardActionList } from "./control-cards.js";
+import { briefStatus, cardActionList } from "./control-cards.js";
 import { openConversation, refreshControlCenter } from "./control-center.js";
 import { currentControlView, showControlView } from "./control-views.js";
 import { elements } from "./elements.js";
@@ -155,8 +155,8 @@ function decide({ card, review }, decision, buttons) {
 function detail({ group, card, review }) {
   if (group === "ok") return `${card.projectName} · ${review.subject}`;
   if (group === "you") return `${card.projectName} · ${card.autoRespondStop.reason || card.autoRespondStop.kind}`;
-  if (group === "running") return `${card.projectName} · ${card.summary ?? "Working…"}${card.autoRespondActive ? " · auto respond" : ""}`;
-  return `${card.projectName} · ${card.summary ?? "Finished. Open it to review."}`;
+  if (group === "running") return `${card.projectName} · ${briefStatus(card.summary) ?? "Working…"}${card.autoRespondActive ? " · auto respond" : ""}`;
+  return `${card.projectName} · ${briefStatus(card.summary) ?? "Finished. Open it to review."}`;
 }
 
 function buildRow(entry) {

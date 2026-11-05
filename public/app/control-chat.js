@@ -1,4 +1,5 @@
 import { harnessOption } from "../harness-metadata.js";
+import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { openConversation, refreshControlCenter, saveControlCenter } from "./control-center.js";
@@ -39,7 +40,10 @@ function renderMessage(message) {
   labels.append(element("span", "control-label project", message.projectName ?? "General"));
   labels.append(element("span", `control-label importance ${message.importance}`, IMPORTANCE_LABELS[message.importance] ?? message.importance));
   if (message.role === "user") labels.classList.add("right");
-  const body = element("div", `control-msg ${message.role === "user" ? "user" : "bob"}`, message.text);
+  const body = element("div", `control-msg ${message.role === "user" ? "user" : "bob"}`);
+  // Bob's agent answers in Markdown. What the person typed, and system notices that quote commands, stay as written.
+  if (message.role === "bob") { body.classList.add("markdown"); renderMarkdown(body, message.text); }
+  else body.textContent = message.text;
   wrap.append(labels);
   if (message.via) wrap.append(element("div", "control-via", message.via));
   wrap.append(body);
@@ -133,6 +137,7 @@ function fillSettingsForm() {
   elements.controlBobClassifier.value = settings.classifier;
   elements.controlBobThreshold.value = String(Math.round(settings.threshold * 100));
   elements.controlBobAutoRespond.value = settings.autoRespond;
+  elements.controlBobReviewCheck.value = settings.reviewCheck;
   elements.controlBobAsk.checked = settings.askBeforeSaving;
 }
 
@@ -199,6 +204,7 @@ elements.controlBobModel.addEventListener("change", () => {
 elements.controlBobThinking.addEventListener("change", () => { void saveSettings(chosenAgent()); });
 elements.controlBobClassifier.addEventListener("change", () => { void saveSettings({ classifier: elements.controlBobClassifier.value }); });
 elements.controlBobAutoRespond.addEventListener("change", () => { void saveSettings({ autoRespond: elements.controlBobAutoRespond.value }); });
+elements.controlBobReviewCheck.addEventListener("change", () => { void saveSettings({ reviewCheck: elements.controlBobReviewCheck.value }); });
 elements.controlBobAsk.addEventListener("change", () => { void saveSettings({ askBeforeSaving: elements.controlBobAsk.checked }); });
 elements.controlBobThreshold.addEventListener("change", () => {
   const percent = Number(elements.controlBobThreshold.value);

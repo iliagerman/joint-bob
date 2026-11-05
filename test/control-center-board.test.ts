@@ -14,6 +14,7 @@ const sources = {
   pendingReviews: () => [],
   autoRespondStop: () => null,
   controlledBy: (_projectId: string, conversationId: string) => conversationId === "c-run" ? "you" as const : null,
+  reviewCheck: () => null,
 };
 
 test("the board lists running conversations and ones waiting for review, newest first", () => {
@@ -70,4 +71,22 @@ test("a conversation waiting for the person's OK, or whose auto respond stopped 
   assert.equal(byId.stopped.autoRespondStop?.reason, "A plan waits for approval");
   assert.equal(byId.old, undefined, "a conversation the person already reviewed is not brought back");
   assert.equal(byId.plain.column, "review");
+});
+
+test("a conversation Bob checked and found not done for the person goes to Needs you; one he found done stays ready for review", () => {
+  const check = (needsYou: boolean, verdict: "done" | "continue" | "needs-user") => ({ verdict, reason: "It asks which plan to use", by: "Decision model 94%", pushes: 0, pushPending: false, needsYou });
+  const projects: BoardProject[] = [{ projectId: "p", projectName: "Julian", sessions: [
+    session({ id: "waits", conversationId: "c-waits", running: false, reviewState: "needs_review" }),
+    session({ id: "done", conversationId: "c-done", running: false, reviewState: "needs_review" }),
+    session({ id: "pushed", conversationId: "c-pushed", running: true, turnRunning: true }),
+  ] }];
+  const cards = buildBoard(projects, {
+    ...sources,
+    reviewCheck: (_p, conversationId) => conversationId === "c-waits" ? check(true, "needs-user") : conversationId === "c-done" ? check(false, "done") : { ...check(true, "continue"), pushPending: true },
+  });
+  const byId = Object.fromEntries(cards.map((card) => [card.sessionId, card]));
+  assert.equal(byId.waits.column, "needs-you");
+  assert.equal(byId.waits.reviewCheck?.reason, "It asks which plan to use");
+  assert.equal(byId.done.column, "review");
+  assert.equal(byId.pushed.column, "running", "a conversation Bob pushed on is running again");
 });

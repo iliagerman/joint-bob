@@ -94,10 +94,11 @@ registerCardAction({
   id: "give-back", label: "Give back to Bob", title: "Let Bob and auto respond answer for this agent again",
   order: 5, visible: (card) => card.controlledBy === "you", run: (card) => giveBack(card),
 });
+// The card's own ribbon says when the person is in it; this says when someone else is.
 registerCardDecorator((element, card) => {
-  if (!card.controlledBy) return;
+  if (card.controlledBy !== "someone-else") return;
   const badge = document.createElement("span");
   badge.className = "control-badge control";
-  badge.textContent = card.controlledBy === "you" ? "you're in control" : "someone else is in control";
+  badge.textContent = "someone else is in control";
   element.querySelector(".control-card-top")?.insertBefore(badge, element.querySelector(".control-spacer"));
 });

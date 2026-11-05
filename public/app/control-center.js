@@ -5,12 +5,12 @@ import { openListedSession } from "./reviews.js";
 import { formatDate, toast } from "./shell.js";
 import { state } from "./state.js";
 import { registerControlView } from "./control-views.js";
-import { boardTools, cardActionList, decorateCard } from "./control-cards.js";
+import { boardTools, briefStatus, cardActionList, decorateCard, plainSummary, projectActionList } from "./control-cards.js";
 
 const DEFAULT_COLOR = "#3a3f46";
 const COLUMNS = [
   { id: "needs-you", title: "Needs you", hint: "A step waiting for your OK, or an agent that stopped for you" },
-  { id: "running", title: "Running", hint: "The live line is each conversation's running summary" },
+  { id: "running", title: "Running", hint: "Where each one stands; hover a card for its summary" },
   { id: "review", title: "Done · ready for review", hint: "" },
 ];
 
@@ -20,7 +20,7 @@ let refreshAgain = false;
 
 let saveTimer = null;
 
-// Colors, positions and the filter belong to the account, so they follow the person to every browser.
+// Colors and the filter belong to the account, so they follow the person to every browser.
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => savePreferencesInBackground({ controlCenter: state.controlCenter }), 400);
@@ -74,8 +74,6 @@ function renderCard(card) {
   }
 
   const top = element("div", "control-card-top");
-  const grip = element("span", "control-grip", "⠿");
-  grip.title = "Drag to move (Free layout)";
   const picker = element("input", "control-color");
   picker.type = "color";
   picker.value = color ?? DEFAULT_COLOR;
@@ -88,18 +86,28 @@ function renderCard(card) {
     root.classList.add("colored");
     save();
   });
-  top.append(grip, element("span", "control-project", card.projectName));
-  if (card.startedBy === "bob") top.append(element("span", "control-badge", "started by Bob"));
-  if (card.autoRespondActive) top.append(element("span", "control-badge", "auto respond"));
+  const driver = driverOf(card);
+  root.dataset.driver = driver?.id ?? "you";
+  if (driver) {
+    const ribbon = element("span", `control-driver ${driver.id}`, driver.label);
+    ribbon.title = driver.title;
+    ribbon.dataset.testid = "control-card-driver";
+    top.append(ribbon);
+  }
+  if (card.column === "review") top.append(element("span", "control-badge review", "To review"));
   top.append(element("span", "control-spacer"), picker);
 
   if (card.pendingReviews?.length || card.autoRespondStop) root.append(renderNeed(card));
   const live = element("div", "control-live");
   live.append(element("span", `control-pulse ${card.column === "running" ? "running" : "review"}`));
-  live.append(element("span", "", card.summary ?? (card.column === "running" ? "Working…" : "Finished. Open it to review.")));
+  live.append(element("span", "control-live-text", briefStatus(card.summary) ?? (card.column === "running" ? "Working…" : "Finished. Open it to review.")));
+  if (card.summary) live.title = plainSummary(card.summary);
+  const checked = checkLine(card);
 
   const meta = [card.agentLabel, card.agentModel, card.backgroundRunning && !card.turnRunning ? "background tasks" : null, card.updatedAt ? formatDate(card.updatedAt) : null].filter(Boolean).join(" · ");
-  root.append(top, element("h3", "control-title", card.title), live, element("div", "control-meta", meta));
+  root.append(top, element("h3", "control-title", card.title), live);
+  if (checked) root.append(checked);
+  root.append(element("div", "control-meta", meta));
   const buttons = cardActionList(card);
   if (buttons.length) {
     const row = element("div", "control-card-actions");
@@ -145,67 +153,95 @@ function renderNeed(card) {
   return need;
 }
 
-function renderGrouped(container, cards) {
+/** What Bob found when the conversation stopped: done, told to go on, or waiting for the person. */
+function checkLine(card) {
+  const check = card.reviewCheck;
+  if (!check) return null;
+  const text = check.needsYou && card.column === "needs-you" ? `✋ Not done, waits for you${check.reason ? `: ${check.reason}` : ""}`
+    : check.pushPending && card.column === "running" ? `↻ Bob told it to go on (${check.pushes} of 3)`
+    : check.verdict === "done" && card.column === "review" ? "✓ Bob checked: done"
+    : null;
+  if (!text) return null;
+  const line = element("div", `control-check ${check.needsYou ? "needs" : check.verdict}`, text);
+  line.title = check.by;
+  line.dataset.testid = "control-card-check";
+  return line;
+}
+
+/**
+ * Who moves a conversation forward when the person is not in it: the system answering for the agent (auto respond), or Bob
+ * watching it because he started it. Null for the person's own conversations.
+ */
+function driverOf(card) {
+  if (card.controlledBy === "you") return { id: "you-in", label: "✋ You're in it", title: "You took control; Bob and auto respond stay out" };
+  if (card.autoRespondActive) return { id: "system", label: "⚙ System drives", title: "Auto respond answers this agent for you, and Bob is told when it stops" };
+  if (card.reviewCheck?.pushPending && card.column === "running") return { id: "system", label: "⚙ System drives", title: "It stopped before it was done, so Bob told it to go on" };
+  if (card.startedBy === "bob") return { id: "watched", label: "👁 Bob watches", title: "Bob started this and tells you when it needs you" };
+  return null;
+}
+
+// Each lane groups its conversations by project, projects in name order and the newest conversation first, so a project's work sits together.
+const byProjectThenNewest = (a, b) => a.projectName.localeCompare(b.projectName) || (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+
+function renderProjectGroup(cards) {
+  const [first] = cards;
+  const group = element("div", "control-project-group");
+  group.dataset.testid = "control-project-group";
+  group.dataset.project = first.projectId;
+  const header = element("div", "control-project-head");
+  header.append(element("b", "", first.projectName), element("span", "control-project-count", String(cards.length)));
+  const project = { projectId: first.projectId, projectName: first.projectName };
+  for (const action of projectActionList(project)) {
+    const button = element("button", "control-card-action", action.label);
+    button.type = "button";
+    button.title = action.title;
+    button.dataset.testid = `control-project-action-${action.id}`;
+    button.addEventListener("click", () => Promise.resolve(action.run(project)).catch((error) => toast(error.message)));
+    header.append(button);
+  }
+  const list = element("div", "control-project-cards");
+  list.append(...cards.map(renderCard));
+  group.append(header, list);
+  return group;
+}
+
+function renderLanes(container, cards) {
   for (const column of COLUMNS) {
-    const inColumn = cards.filter((card) => card.column === column.id);
+    const inColumn = cards.filter((card) => card.column === column.id).sort(byProjectThenNewest);
     if (!inColumn.length) continue;
     const heading = element("div", "control-lane");
-    heading.append(element("b", "", column.title), element("span", "", ` ${inColumn.length}${column.hint ? ` · ${column.hint}` : ""}`));
-    const grid = element("div", "control-grid");
-    grid.append(...inColumn.map(renderCard));
-    container.append(heading, grid);
+    heading.dataset.column = column.id;
+    heading.append(element("b", "", column.title), element("span", "control-lane-count", String(inColumn.length)), element("span", "", column.hint));
+    const groups = element("div", "control-lane-groups");
+    for (let index = 0; index < inColumn.length;) {
+      const end = inColumn.findIndex((card, at) => at > index && card.projectId !== inColumn[index].projectId);
+      const stop = end < 0 ? inColumn.length : end;
+      groups.append(renderProjectGroup(inColumn.slice(index, stop)));
+      index = stop;
+    }
+    container.append(heading, groups);
   }
-}
-
-function renderFree(container, cards) {
-  container.classList.add("free");
-  const columns = Math.max(1, Math.floor((container.clientWidth || 900) / 290));
-  cards.forEach((card, index) => {
-    const node = renderCard(card);
-    const saved = state.controlCenter.positions[cardKey(card)] ?? { x: (index % columns) * 290, y: Math.floor(index / columns) * 190 };
-    node.style.left = `${saved.x}px`;
-    node.style.top = `${saved.y}px`;
-    node.querySelector(".control-grip").addEventListener("mousedown", (event) => dragCard(event, node, card));
-    container.append(node);
-  });
-}
-
-function dragCard(event, node, card) {
-  event.preventDefault();
-  event.stopPropagation();
-  const startX = event.clientX - node.offsetLeft;
-  const startY = event.clientY - node.offsetTop;
-  const move = (moveEvent) => {
-    node.style.left = `${Math.max(0, moveEvent.clientX - startX)}px`;
-    node.style.top = `${Math.max(0, moveEvent.clientY - startY)}px`;
-  };
-  const up = () => {
-    removeEventListener("mousemove", move);
-    removeEventListener("mouseup", up);
-    state.controlCenter.positions[cardKey(card)] = { x: node.offsetLeft, y: node.offsetTop };
-    save();
-  };
-  addEventListener("mousemove", move);
-  addEventListener("mouseup", up);
 }
 
 function render() {
   window.dispatchEvent(new CustomEvent("control-center-rendered", { detail: { projects: board.projects, cards: board.cards } }));
   renderFilters();
-  for (const button of elements.controlCenterLayout.querySelectorAll("button")) button.classList.toggle("active", button.dataset.layout === state.controlCenter.layout);
   const container = elements.controlCenterBoard;
   container.replaceChildren();
-  container.classList.remove("free");
   const cards = visibleCards();
   const waiting = cards.filter((card) => card.column === "needs-you").length;
-  elements.controlCenterCount.textContent = `${cards.filter((card) => card.column === "running").length} running${waiting ? ` · ${waiting} need you` : ""}`;
+  const driven = cards.filter((card) => driverOf(card)?.id === "system").length;
+  const watched = cards.filter((card) => driverOf(card)?.id === "watched").length;
+  elements.controlCenterCount.textContent = [
+    `${cards.filter((card) => card.column === "running").length} running`, waiting ? `${waiting} need you` : "",
+    driven ? `${driven} driven by the system` : "", watched ? `${watched} watched by Bob` : "",
+  ].filter(Boolean).join(" · ");
   liveView.setBadge(cards.filter((card) => card.column !== "review").length);
   if (!cards.length) {
     container.append(element("p", "control-empty", board.cards.length ? "Nothing matches the project filter." : "No conversations are running and nothing is waiting for review."));
     return;
   }
-  if (state.controlCenter.layout === "free") renderFree(container, cards);
-  else renderGrouped(container, cards);
+  renderLanes(container, cards);
 }
 
 export function refreshControlCenter() {
@@ -253,9 +289,9 @@ export function closeConversationPopup() {
 
 const openCard = openConversation;
 
-function resetLayout() {
+function resetBoard() {
   const { chatSide, chatWidth } = state.controlCenter;
-  state.controlCenter = { colors: {}, positions: {}, layout: "grouped", filter: [], chatSide, chatWidth };
+  state.controlCenter = { colors: {}, filter: [], chatSide, chatWidth };
   save();
   render();
 }
@@ -274,10 +310,7 @@ export function activateControlCenter() {
 
 const liveView = registerControlView({ id: "live", title: "Live agents", order: 0, element: elements.controlViewLive });
 
-for (const button of elements.controlCenterLayout.querySelectorAll("button")) {
-  button.addEventListener("click", () => { state.controlCenter.layout = button.dataset.layout; save(); render(); });
-}
-elements.controlCenterReset.addEventListener("click", resetLayout);
+elements.controlCenterReset.addEventListener("click", resetBoard);
 function renderBoardTools() {
   for (const old of elements.controlViewLive.querySelectorAll("[data-board-tool]")) old.remove();
   for (const tool of boardTools()) {

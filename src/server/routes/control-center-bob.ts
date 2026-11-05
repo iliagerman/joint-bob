@@ -25,6 +25,7 @@ const settingsSchema = z.object({
   monitoring: z.boolean(),
   askBeforeSaving: z.boolean(),
   autoRespond: z.enum(["bob", "always", "never"]),
+  reviewCheck: z.enum(["push", "ask", "off"]),
 }).partial().strict();
 
 const querySchema = z.object({

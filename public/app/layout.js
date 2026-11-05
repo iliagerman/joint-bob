@@ -183,15 +183,29 @@ elements.openBoardButton.addEventListener("click", () => {
   setMobileView("board");
 });
 elements.openControlCenterButton.addEventListener("click", () => setMobileView("control"));
+const EXIT_PROMPT_MS = 3000;
+let exitPromptTimer = null;
+
+function hideExitPrompt() {
+  clearTimeout(exitPromptTimer);
+  elements.controlExitPrompt.hidden = true;
+}
+
 function leaveControlCenter() {
+  hideExitPrompt();
   setMobileView(state.viewBeforeControl || (state.activeProjectId ? "sessions" : "projects"));
 }
 elements.controlCenterCloseButton.addEventListener("click", leaveControlCenter);
-// Esc is the quick way out; it leaves typing in a field and open dialogs alone.
+elements.controlExitConfirm.addEventListener("click", leaveControlCenter);
+// Esc twice is the quick way out, so one stray press does not leave: the first asks, the second leaves. It leaves typing in a
+// field and open dialogs alone.
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || currentMobileView() !== "control" || event.defaultPrevented) return;
   if (document.querySelector("dialog[open]") || event.target.closest?.("input, textarea, select")) return;
-  leaveControlCenter();
+  if (!elements.controlExitPrompt.hidden) { leaveControlCenter(); return; }
+  elements.controlExitPrompt.hidden = false;
+  clearTimeout(exitPromptTimer);
+  exitPromptTimer = setTimeout(hideExitPrompt, EXIT_PROMPT_MS);
 });
 elements.collapseProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", true));
 
