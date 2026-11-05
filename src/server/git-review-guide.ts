@@ -66,7 +66,7 @@ export async function discoverConversationFiles(project: ProjectRecord, cwd: str
   }
   if (JSON.stringify(candidatePaths).length + transcript.length > 110_000) throw new GitReviewError(413, "Too many pending paths to identify safely");
   const result = await runGitReview({
-    projectId: project.id, cwd, harnessId: lastHarness, provider: "", modelId: "", thinkingLevel: "",
+    projectId: project.id, conversationId, cwd, harnessId: lastHarness, provider: "", modelId: "", thinkingLevel: "",
     selection: { scope: "worktree" }, question: "", diff: `Pending Git paths:\n${JSON.stringify(candidatePaths)}\n\nConversation transcript (recent excerpt):\n${transcript}`,
     instructions: "Read ONLY the supplied conversation transcript. Which pending paths did the coding agent say it changed for this conversation? Return a JSON array of exact paths from the pending list. If unsure, omit the path. Do not infer ownership from filenames. No prose or code fences.",
   });
@@ -99,6 +99,7 @@ export async function pendingReviewDiff(cwd: string, paths: string[], { complete
 
 export interface GenerateReviewGuideInput {
   projectId: string;
+  conversationId?: string;
   cwd: string;
   paths: string[];
   transcript: string;
@@ -117,7 +118,7 @@ export async function generateReviewGuide(input: GenerateReviewGuideInput): Prom
   const names = [...new Set(changes.map(({ path }) => path))];
   if (JSON.stringify(names).length + transcript.slice(-18_000).length + diff.length > 110_000) throw new GitReviewError(413, "Selected review exceeds the model input limit; choose fewer files");
   const result = await runGitReview({
-    projectId, cwd, harnessId, provider, modelId, thinkingLevel,
+    projectId, conversationId: input.conversationId, cwd, harnessId, provider, modelId, thinkingLevel,
     selection: { scope: "worktree" }, question: "", diff: `Allowed paths: ${JSON.stringify(names)}\nCoding conversation (recent excerpt, last harness ${lastHarness}):\n${transcript.slice(-18_000)}\n\nPending diff:\n${diff}`,
     instructions: "Review the pending changes only. Return ONLY JSON: {\"summary\":string,\"items\":[{\"path\":string,\"priority\":\"high\"|\"medium\"|\"low\",\"title\":string,\"explanation\":string,\"checks\":string}]}. Order items by risk first and then by implementation story. Cover every allowed path exactly once. Explain what changed, why it matters, and what to verify. Never claim a bug without evidence. Do not edit files.",
   });

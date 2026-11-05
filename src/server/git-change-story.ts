@@ -396,7 +396,7 @@ export async function generateChangeStory(input: GenerateChangeStoryInput): Prom
   ].filter(Boolean).join("\n\n");
   if (prompt.length > STORY_INPUT_LIMIT) throw new GitReviewError(413, "These changes are too large for one story. Pick fewer commits or files.");
   const result = await runGitReview({
-    projectId: project.id, cwd, harnessId: input.harnessId, provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel,
+    projectId: project.id, conversationId: conversationId ?? undefined, cwd, harnessId: input.harnessId, provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel,
     selection: { scope: "worktree" }, question: "", diff: prompt, instructions: STORY_INSTRUCTIONS,
     onText: scan,
   });

@@ -168,7 +168,7 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
   } else {
     const result = await runGitReview({
       // The home folder, not the project: project instruction files have no place in a summary.
-      projectId: project.id, cwd: getSettings().projects.homePath, harnessId: run.harnessId as HarnessId, provider: run.provider, modelId: run.modelId, thinkingLevel: run.thinkingLevel,
+      projectId: project.id, conversationId, cwd: getSettings().projects.homePath, harnessId: run.harnessId as HarnessId, provider: run.provider, modelId: run.modelId, thinkingLevel: run.thinkingLevel,
       selection: { scope: "context", label: "conversation messages" }, question: "", diff: material, instructions,
     });
     answer = result.answer;

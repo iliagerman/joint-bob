@@ -74,6 +74,14 @@ for (const [name, bad, issue] of [
   });
 }
 
+test("Activity overview keeps the source conversation's subscription scope", async () => {
+  const target = { ...thread(), conversationId: "source-conversation" };
+  const engine = writer(() => JSON.stringify(valid));
+  await engine.generateStoryScript(target, "/fixture", source, settings.DEFAULT_STORY_SETTINGS);
+  assert.equal(engine.calls[0].conversationId, "source-conversation");
+  assert.equal(engine.calls[0].useTools, undefined, "subscription inheritance must not enable tools");
+});
+
 test("valid movie output needs no repair", async () => {
   const engine = writer(() => JSON.stringify(valid));
   const result = await engine.generateStoryScript(thread(), "/fixture", source, settings.DEFAULT_STORY_SETTINGS);

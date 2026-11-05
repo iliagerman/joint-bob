@@ -1,3 +1,4 @@
+import { prepareBackgroundTurn } from "./background-turn.js";
 import { internalSessionId } from "../internal-sessions.js";
 import { asNode } from "../account-context.js";
 import { promises as fs } from "node:fs";
@@ -174,29 +175,33 @@ async function runAgentResolver(input: SyncResolverInput): Promise<void> {
   if (!adapter.runtime) throw new Error(`${adapter.label} cannot run the sync check`);
   const runtime = await getHarnessRuntime(input.settings.harnessId);
   const session = await runtime.open({ projectId: input.projectId, cwd: input.cwd, sessionId: internalSessionId() });
+  let timer: NodeJS.Timeout | undefined;
+  let stop: (() => void) | undefined;
   try {
     const base = session.settings();
     const settings: HarnessModelSettings = { ...base, provider: input.settings.provider || base.provider, modelId: input.settings.modelId || base.modelId, reasoning: input.settings.thinkingLevel || base.reasoning };
-    await runtime.validateSettings(settings);
-    await session.configure(settings);
-    await session.preflight();
+    const turn = await prepareBackgroundTurn({ ...input, harnessId: input.settings.harnessId, runtime, session, settings });
     const done = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         void session.cancel().catch(() => {});
         reject(new Error("The sync fixer timed out"));
       }, AGENT_TIMEOUT_MS);
       timer.unref();
-      const stop = session.subscribe((event) => {
+      if (turn.pooled) return;
+      stop = session.subscribe((event) => {
         if (event.type !== "agent_end" && event.type !== "error") return;
         clearTimeout(timer);
-        stop();
+        stop!();
         if (event.type === "error") reject(new Error(typeof event.error === "string" ? event.error : "The sync fixer failed"));
         else resolve();
       });
     });
-    await session.prompt({ text: input.prompt });
-    await done;
+    done.catch(() => undefined);
+    if (turn.pooled) await Promise.race([turn.prompt({ text: input.prompt }), done]);
+    else await Promise.all([turn.prompt({ text: input.prompt }), done]);
   } finally {
+    clearTimeout(timer);
+    stop?.();
     try { if (session.isBusy()) await session.cancel(); } catch { /* torn down regardless */ }
     session.dispose();
   }

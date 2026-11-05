@@ -1,3 +1,4 @@
+import { prepareBackgroundTurn } from "./background-turn.js";
 import { internalSessionId } from "../internal-sessions.js";
 import { getHarness, getHarnessRuntime } from "../harnesses.js";
 import type { HarnessEvent, HarnessModelSettings } from "../harnesses/runtime.js";
@@ -55,9 +56,8 @@ async function executeAutoResponder(input: AutoRespondRunInput): Promise<string>
   try {
     const base = session.settings();
     const settings: HarnessModelSettings = { ...base, provider: input.config.provider, modelId: input.config.modelId, reasoning: input.config.thinkingLevel };
-    await runtime.validateSettings(settings);
-    await session.configure(settings);
-    await session.preflight();
+    if (!input.config.useTools) settings.enabledTools = [];
+    const turn = await prepareBackgroundTurn({ ...input, harnessId: input.config.harnessId as never, runtime, session, settings });
     // With tools off the responder only judges text; a harness that cannot turn its tools off cannot run that way.
     if (!input.config.useTools) await session.setTools([]);
     const done = new Promise<void>((resolve, reject) => {
@@ -65,6 +65,7 @@ async function executeAutoResponder(input: AutoRespondRunInput): Promise<string>
       timer.unref();
       onAbort = () => { void session.cancel().catch(() => {}); reject(new Error("Auto respond was cancelled")); };
       if (input.signal.aborted) onAbort(); else input.signal.addEventListener("abort", onAbort, { once: true });
+      if (turn.pooled) return;
       const stop = session.subscribe((event: HarnessEvent) => {
         if (event.type === "agent_end") { stop(); resolve(); }
         if (event.type === "error") { stop(); reject(new Error(typeof event.error === "string" ? event.error : "The auto responder failed")); }
@@ -76,7 +77,9 @@ async function executeAutoResponder(input: AutoRespondRunInput): Promise<string>
     // responder is still opening must keep the turn from starting at all.
     const cancelled = () => { if (input.signal.aborted) throw new Error("Auto respond was cancelled"); };
     cancelled();
-    await Promise.all([session.prompt({ text: input.prompt, beforeStart: async () => cancelled() }), done]);
+    const prompt = turn.prompt({ text: input.prompt, beforeStart: async () => cancelled() });
+    if (turn.pooled) await Promise.race([prompt, done]);
+    else await Promise.all([prompt, done]);
     // After tool calls the reply spans several messages; the decision is in the last one.
     const last = [...session.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
     return (last?.text ?? events.join("")).trim();

@@ -1,3 +1,4 @@
+import { prepareBackgroundTurn } from "./background-turn.js";
 import { getHarnessRuntime } from "../harnesses.js";
 import { internalSessionId } from "../internal-sessions.js";
 import { conversationScopeId, setScopeSecretAccounts } from "../secrets.js";
@@ -37,6 +38,7 @@ export async function runChatAgent(input: ChatAgentInput) {
     if (session.file) input.onAgent({ harnessId: input.model.harnessId, sessionId, sessionPath: session.file, cwd: input.cwd, ...(actionTools ? { actionTools } : {}) });
   };
   const unsubscribe = session.subscribe(event => {
+    if (event.type === "agent_start") text = "";
     if (event.type === "textDelta" && typeof event.text === "string") { text += event.text; input.onText(text); }
     if (event.type === "sessionFile") saveAgent();
   });
@@ -51,9 +53,7 @@ export async function runChatAgent(input: ChatAgentInput) {
       reasoning: input.model.thinkingLevel || base.reasoning,
       enabledTools: enabledTools && (available.length ? enabledTools.filter(name => available.some(tool => tool.name === name)) : enabledTools),
     };
-    await runtime.validateSettings(settings);
-    await session.configure(settings);
-    await session.preflight();
+    const turn = await prepareBackgroundTurn({ ...input, harnessId: input.model.harnessId, runtime, session, settings });
     await input.beforeStart();
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
@@ -62,7 +62,7 @@ export async function runChatAgent(input: ChatAgentInput) {
       }, 5 * 60_000);
       timer.unref();
     });
-    await Promise.race([session.prompt({ text: input.prompt, beforeStart: input.beforeStart }), timeout]);
+    await Promise.race([turn.prompt({ text: input.prompt, beforeStart: input.beforeStart }), timeout]);
     if (!text.trim()) throw new Error("Activity Chat produced no answer");
     saveAgent();
     const status = session.status();

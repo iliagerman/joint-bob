@@ -1,3 +1,4 @@
+import { prepareBackgroundTurn } from "../server/background-turn.js";
 import { spawn } from "node:child_process";
 import { getHarnessRuntime } from "../harnesses.js";
 import { internalSessionId } from "../internal-sessions.js";
@@ -55,23 +56,34 @@ async function runHelperAgent(instructions: string, input: string, context: FixC
   const release = exemptFromGuardian(context.projectId, sessionId);
   const session = await runtime.open({ projectId: context.projectId, cwd: context.cwd, sessionId });
   let text = "";
-  const unsubscribe = session.subscribe((event) => { if (event.type === "textDelta" && typeof event.text === "string") text += event.text; });
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "agent_start") text = "";
+    if (event.type === "textDelta" && typeof event.text === "string") text += event.text;
+  });
+  let timer: NodeJS.Timeout | undefined;
+  let stop: (() => void) | undefined;
   try {
+    const turn = await prepareBackgroundTurn({ projectId: context.projectId, harnessId: context.harness, runtime, session,
+      settings: { ...session.settings(), enabledTools: [] } });
     await session.setTools([]);
     const done = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { void session.cancel().catch(() => {}); reject(new Error("The Guardian helper agent timed out")); }, FIX_TIMEOUT_MS);
-      session.subscribe((event) => {
+      timer = setTimeout(() => { void session.cancel().catch(() => {}); reject(new Error("The Guardian helper agent timed out")); }, FIX_TIMEOUT_MS);
+      if (turn.pooled) return;
+      stop = session.subscribe((event) => {
         if (event.type === "agent_end") { clearTimeout(timer); resolve(); }
         if (event.type === "error") { clearTimeout(timer); reject(new Error(typeof event.error === "string" ? event.error : "The Guardian helper agent failed")); }
       });
     });
     done.catch(() => undefined);
-    await session.prompt({ text: `${instructions}\n\nReply with the rewritten content only, nothing before or after it. Keep its format${input.trimStart().startsWith("{") ? " (a JSON object)" : ""}.\n\n<content>\n${input}\n</content>` });
-    await done;
+    const prompt = turn.prompt({ text: `${instructions}\n\nReply with the rewritten content only, nothing before or after it. Keep its format${input.trimStart().startsWith("{") ? " (a JSON object)" : ""}.\n\n<content>\n${input}\n</content>` });
+    if (turn.pooled) await Promise.race([prompt, done]);
+    else await Promise.all([prompt, done]);
     const reply = text.trim().replace(/^```[a-z]*\n([\s\S]*)\n```$/, "$1");
     if (!reply) throw new Error("The Guardian helper agent returned nothing");
     return reply;
   } finally {
+    clearTimeout(timer);
+    stop?.();
     unsubscribe();
     if (session.isBusy()) await session.cancel().catch(() => {});
     session.dispose();

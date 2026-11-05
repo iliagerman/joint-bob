@@ -48,9 +48,19 @@ async function review(t: TestContext, extra: Partial<Review.RunGitReviewInput> =
       getHarness: () => ({ runtime: true }),
       getHarnessRuntime: async () => ({ open: async () => session, validateSettings: async () => {} }),
     },
-    "../conversation-records.js": {}, "../secrets.js": {}, "../store.js": {},
+    "../conversation-records.js": {}, "../secrets.js": {}, "../store.js": { getProject: async () => ({ type: "workspace" }) },
+    "../account-context.js": { actingAccount: () => undefined, asNode: (work: () => unknown) => work() },
+    "../provider-profiles/context.js": { automationProfileContext: () => undefined },
+    "../provider-profiles/pool-execution.js": {},
+    "./harness-chat.js": { resolveSubscriptionPool: async () => undefined },
     "../read-only-tools.js": { readOnlyChatTools: (harnessId: string) => [`read-only-${harnessId}`] },
   };
+  const background = ts.transpileModule(readFileSync(new URL("../src/server/background-turn.ts", import.meta.url), "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const preparation = {};
+  vm.runInThisContext(`(function(require, exports) { ${background}\n})`)((name: string) => dependencies[name], preparation);
+  dependencies["./background-turn.js"] = preparation;
   // Node's mock Timeout.refresh() is a no-op, so reschedule through its clock.
   const schedule = (callback: () => void, delay: number) => {
     const timer = {

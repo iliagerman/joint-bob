@@ -120,7 +120,7 @@ const INPUT_LIMIT = 125_000;
 async function ask(thread: GitReviewThread, cwd: string, instructions: string, prompt: string): Promise<string> {
   if (prompt.length > INPUT_LIMIT) throw new GitReviewError(413, "This story is too large for a podcast. Pick fewer commits or files.");
   const result = await runGitReview({
-    projectId: thread.projectId, cwd, harnessId: thread.harnessId, provider: thread.provider, modelId: thread.modelId, thinkingLevel: thread.thinkingLevel,
+    projectId: thread.projectId, conversationId: thread.conversationId ?? undefined, cwd, harnessId: thread.harnessId, provider: thread.provider, modelId: thread.modelId, thinkingLevel: thread.thinkingLevel,
     selection: { scope: "worktree" }, question: "", diff: prompt, instructions,
   });
   return result.answer;

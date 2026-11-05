@@ -1,3 +1,4 @@
+import { prepareBackgroundTurn } from "./background-turn.js";
 import { internalSessionId } from "../internal-sessions.js";
 import { getHarness, getHarnessRuntime, listHarnessSessions } from "../harnesses.js";
 import { listConversationSegments } from "../conversation-records.js";
@@ -127,7 +128,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
   const accountIds = input.useTools && input.conversationId
     ? await reviewAccountIds(input.projectId, input.conversationId) : undefined;
   const session = await runtime.open({ projectId: input.projectId, cwd: input.cwd, sessionId: internalSessionId(),
-    ...(input.useTools ? { conversationId: input.conversationId, accountIds } : {}),
+    conversationId: input.conversationId, ...(input.useTools ? { accountIds } : {}),
   });
   const events: HarnessEvent[] = [];
   let soFar = "";
@@ -141,6 +142,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
   });
   let turnTimer: NodeJS.Timeout | undefined;
   let timeoutError: GitReviewRunError | undefined;
+  let stopProgress: (() => void) | undefined;
   try {
     const base = session.settings();
     const settings: HarnessModelSettings = {
@@ -149,9 +151,10 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
       modelId: input.modelId || base.modelId,
       reasoning: input.thinkingLevel || base.reasoning,
     };
-    await runtime.validateSettings(settings);
-    await session.configure(settings);
-    await session.preflight();
+    // Keep restrictions in the settings reapplied to every pool member.
+    if (input.readOnlyTools) settings.enabledTools = readOnlyChatTools(input.harnessId);
+    else if (!input.useTools) settings.enabledTools = [];
+    const turn = await prepareBackgroundTurn({ ...input, runtime, session, settings });
     // Tool-enabled Ask AI follows read-only instructions, not an OS-level sandbox.
     if (input.readOnlyTools) await session.setTools(readOnlyChatTools(input.harnessId));
     else if (!input.useTools) await restrictToReadOnly(session);
@@ -159,31 +162,32 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
     const done = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         timeoutError = new GitReviewRunError(504, "Review timed out after five minutes without model progress");
-        stop();
+        stopProgress!();
         reject(timeoutError);
         void session.cancel(timeoutError.message).catch(() => {});
       }, REVIEW_IDLE_TIMEOUT_MS);
       timer.unref();
       turnTimer = timer;
-      const stop = session.subscribe((event) => {
+      stopProgress = session.subscribe((event) => {
         const output = event.type === "textDelta" || event.type === "thinkingDelta" || event.type === "toolUpdate";
         if ((output && typeof event.text === "string" && event.text.length > 0) || event.type === "toolStart" || event.type === "toolEnd") timer.refresh();
+        if (turn.pooled) return; // A failed member ending is not the end of the pool run.
         if (event.type === "agent_end") {
           clearTimeout(timer);
-          stop();
+          stopProgress!();
           resolve();
         }
         if (event.type === "error") {
           clearTimeout(timer);
-          stop();
+          stopProgress!();
           reject(new GitReviewRunError(502, typeof event.error === "string" ? event.error : "Review failed"));
         }
       });
     });
     // A prompt that fails before the turn ends leaves `done` unawaited; its later outcome is moot.
     done.catch(() => undefined);
-    await session.prompt({ text: reviewPrompt(input) });
-    await done;
+    if (turn.pooled) await Promise.race([turn.prompt({ text: reviewPrompt(input) }), done]);
+    else await Promise.all([turn.prompt({ text: reviewPrompt(input) }), done]);
     const answer = collectAnswer(events);
     if (!answer) throw new GitReviewRunError(502, "Review produced no explanation");
     const status = session.status();
@@ -200,6 +204,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
     throw new GitReviewRunError(502, error instanceof Error ? error.message : "Review failed");
   } finally {
     clearTimeout(turnTimer);
+    stopProgress?.();
     unsubscribe();
     try {
       if (session.isBusy()) await session.cancel();
