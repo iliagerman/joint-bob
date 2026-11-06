@@ -97,17 +97,25 @@ function renderCard(card) {
   if (card.column === "review") top.append(element("span", "control-badge review", "To review"));
   top.append(element("span", "control-spacer"), picker);
 
-  if (card.pendingReviews?.length || card.autoRespondStop) root.append(renderNeed(card));
-  const live = element("div", "control-live");
-  live.append(element("span", `control-pulse ${card.column === "running" ? "running" : "review"}`));
-  live.append(element("span", "control-live-text", briefStatus(card.summary) ?? (card.column === "running" ? "Working…" : "Finished. Open it to review.")));
-  if (card.summary) live.title = plainSummary(card.summary);
-  const checked = checkLine(card);
+  // A step waiting for the person takes the status's place, so every card keeps the same size.
+  const body = element("div", "control-card-body");
+  if (card.pendingReviews?.length || card.autoRespondStop) body.append(renderNeed(card));
+  else {
+    const live = element("div", "control-live");
+    live.append(element("span", `control-pulse ${card.column === "running" ? "running" : "review"}`));
+    live.append(element("span", "control-live-text", briefStatus(card.summary) ?? (card.column === "running" ? "Working…" : "Finished. Open it to review.")));
+    if (card.summary) live.title = plainSummary(card.summary);
+    body.append(live);
+    const checked = checkLine(card);
+    if (checked) body.append(checked);
+  }
 
   const meta = [card.agentLabel, card.agentModel, card.backgroundRunning && !card.turnRunning ? "background tasks" : null, card.updatedAt ? formatDate(card.updatedAt) : null].filter(Boolean).join(" · ");
-  root.append(top, element("h3", "control-title", card.title), live);
-  if (checked) root.append(checked);
-  root.append(element("div", "control-meta", meta));
+  const title = element("h3", "control-title", card.title);
+  title.title = card.title;
+  const metaLine = element("div", "control-meta", meta);
+  metaLine.title = meta;
+  root.append(top, title, body, metaLine);
   const buttons = cardActionList(card);
   if (buttons.length) {
     const row = element("div", "control-card-actions");
@@ -129,11 +137,15 @@ function renderCard(card) {
   return root;
 }
 
+/** The first step waiting for the person, in the card's status room: the others follow once it is answered. */
 function renderNeed(card) {
   const need = element("div", "control-need");
   need.dataset.testid = "control-center-need";
-  for (const review of card.pendingReviews ?? []) {
-    need.append(element("div", "control-need-title", review.title), element("div", "control-need-subject", review.subject), element("div", "control-meta", review.detail));
+  const [review] = card.pendingReviews ?? [];
+  if (review) {
+    const more = card.pendingReviews.length - 1;
+    need.title = [review.title, review.subject, review.detail].filter(Boolean).join("\n");
+    need.append(element("div", "control-need-title", more ? `${review.title} · ${more} more` : review.title), element("div", "control-need-subject", review.subject));
     const buttons = element("div", "control-need-actions");
     for (const [decision, label, className] of [["allow", "Allow once", "control-action warn"], ["block", "Block", "control-action"]]) {
       const button = element("button", className, label);
@@ -148,8 +160,11 @@ function renderNeed(card) {
       buttons.append(button);
     }
     need.append(buttons);
+    return need;
   }
-  if (card.autoRespondStop) need.append(element("div", "control-need-title", "Auto respond stopped"), element("div", "control-need-subject", card.autoRespondStop.reason || card.autoRespondStop.kind));
+  const reason = card.autoRespondStop.reason || card.autoRespondStop.kind;
+  need.title = `Auto respond stopped\n${reason}`;
+  need.append(element("div", "control-need-title", "Auto respond stopped"), element("div", "control-need-subject", reason));
   return need;
 }
 

@@ -159,6 +159,18 @@ body.control-popup:not(.control-held) #composer { display: none; }
 .control-project-count { color: var(--muted); font-size: 11px; margin-right: auto; }
 .control-project-cards { display: flex; flex-wrap: wrap; gap: 8px; }
 .control-project-cards .control-card { width: 236px; }
+/* Every card on the board is the same size: each part has fixed room, longer text is cut, and the whole of it is on hover. */
+.control-project-cards .control-card-top { height: 18px; overflow: hidden; white-space: nowrap; }
+.control-project-cards .control-title { height: 34px; line-height: 17px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.control-card-body { height: 68px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.control-card-body .control-live { flex: none; height: 46px; box-sizing: border-box; line-height: 17px; }
+.control-card-body .control-check { line-height: 16px; -webkit-line-clamp: 1; }
+.control-card-body .control-need { flex: none; height: 68px; box-sizing: border-box; padding: 5px 8px; gap: 3px; }
+.control-card-body :is(.control-need-title, .control-need-subject) { line-height: 15px; max-height: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.control-card-body .control-need-actions .control-action { padding: 1px 8px; font-size: 11.5px; line-height: 16px; }
+.control-project-cards .control-card > .control-meta { line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.control-project-cards .control-card-actions { flex-wrap: nowrap; overflow: hidden; }
+.control-project-cards .control-card-action { white-space: nowrap; }
 
 /* Who drives a conversation shows on its card: the system (auto respond), Bob watching what he started, or the person. */
 .control-driver { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }

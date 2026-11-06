@@ -56,6 +56,10 @@ test("a step waiting for your OK shows under Needs you with answer buttons, and 
   assert.match(await review.innerText(), /aws ecs update-service --force-new-deployment/);
   assert.match(await page.locator('[data-key="p1:c2"]').innerText(), /Auto respond stopped[\s\S]*A plan waits for approval/);
   assert.equal(await page.getByTestId("control-tab-live").textContent(), "Live agents3");
+  // A step waiting for you takes the status's place, so these cards are the same size as the others.
+  const heights = await page.getByTestId("control-center-card").evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().height));
+  assert.equal(new Set(heights).size, 1, `card heights: ${heights.join(", ")}`);
+  assert.equal(await review.getByTestId("control-review-allow").isVisible(), true, "the answer buttons are not cut off");
 
   await review.getByTestId("control-review-allow").click();
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-center-card"]').length === 2);
