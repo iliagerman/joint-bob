@@ -272,7 +272,7 @@ export async function handleBobOrganize(turn: BobTurn, decision: BobDecision | n
     return say(turn, `I could not work out what to change: ${error instanceof Error ? error.message.slice(0, 160) : "my agent did not answer"}.`, { via: "Organize · not understood" });
   }
   const intent = parseOrganizeIntent(answer);
-  if (!intent) return say(turn, "I could not tell what you want changed. Say, for example, \"create a project called Billing in Work\", \"rename the slice 10 conversation to Admin overview\" or \"ask the Internal Assistant conversation how to review\".", { via: "Organize · not understood" });
+  if (!intent) return say(turn, "I could not tell what you want changed. Say, for example, \"create a project called Billing in Work\", \"rename the slice 10 conversation to Admin overview\" or \"ask the slice 10 conversation how to review it\".", { via: "Organize · not understood" });
   if (intent.intent === "none") return null;
   const proposal = propose(intent, world);
   if (typeof proposal === "string") return say(turn, proposal, { via: "Organize · nothing to do" });

@@ -5,7 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 2.221.0 — 2026-11-06
 
-- Bob can ask or tell one of your conversations something, such as "ask the Internal Assistant conversation how to review". After you press **Send it**, he sends it to that conversation as you, and its answer comes back to his chat. He can also delete a conversation. He now finds idle conversations you name, not only the ones on the board.
+- Bob can ask or tell one of your conversations something, such as "ask the slice 10 conversation how to review it". After you press **Send it**, he sends it to that conversation as you, and its answer comes back to his chat. He can also delete a conversation. He now finds idle conversations you name, not only the ones on the board.
 - Running cards say what the turn is doing now: the tool and what it runs on (*Bash · npm test*), or the last line the agent wrote. While something runs, the board refreshes every 10 seconds.
 - Finished cards have a blue **Review** button that opens the conversation to read.
 - When the decision model was unsure about a message, Bob no longer skips his workspace, project and conversation actions.
