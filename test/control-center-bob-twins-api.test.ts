@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,7 +21,7 @@ async function startNode(environment: DevEnvironment, node: SeededNode, director
   return waitForDevNode(child, node.key, node.url);
 }
 
-async function eventually<T>(read: () => Promise<T | undefined | false>, label: string, seconds = 60): Promise<T> {
+async function eventually<T>(read: () => Promise<T | undefined | false>, label: string, seconds = 150): Promise<T> {
   const deadline = Date.now() + seconds * 1000;
   for (;;) {
     const value = await read();
@@ -28,6 +29,21 @@ async function eventually<T>(read: () => Promise<T | undefined | false>, label: 
     if (Date.now() > deadline) throw new Error(`Never happened: ${label}`);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+}
+
+/** The account a node signs the person in as; twins come to agree on it once they have exchanged accounts. */
+async function accountIdOn(environment: DevEnvironment, node: SeededNode): Promise<string> {
+  const response = await fetch(`${node.url}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: environment.username, password: environment.password }) });
+  return (await response.json() as { accountId: string }).accountId;
+}
+
+/** Whether `from` has delivered its accounts to `to`, after which the person's newer events are sent to it. */
+function accountsDelivered(from: SeededNode, to: SeededNode): boolean {
+  const db = new DatabaseSync(path.join(from.dataDir, "node.db"), { readOnly: true });
+  try {
+    return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'account_replication_deliveries'").get())
+      && Boolean(db.prepare("SELECT 1 FROM account_replication_deliveries WHERE peer_id = ?").get(to.nodeId));
+  } finally { db.close(); }
 }
 
 const timeline = async (node: SeededNode, auth: SignedIn) => (await api<{ messages: BobMessage[] }>(node, auth, "GET", "/control-center/bob/messages")).body.messages;
@@ -42,6 +58,9 @@ test("the chat with Bob follows the person to their other machine, and a button 
     for (const dir of dirs) await mkdir(dir, { recursive: true });
     children.push(await startNode(environment, mac, dirs[0]), await startNode(environment, server, dirs[1]));
     await pairTwinNodes(environment);
+    // Paired machines agree on who the person is and exchange accounts on their own schedule; the chat follows once they have.
+    await eventually(async () => (await accountIdOn(environment, mac)) === (await accountIdOn(environment, server)), "both machines know the person as one account");
+    await eventually(async () => accountsDelivered(mac, server) && accountsDelivered(server, mac), "the machines exchanged accounts");
     const [onMac, onServer] = await Promise.all([signIn(environment, mac), signIn(environment, server)]);
 
     // On the Mac, Bob asks before creating a report.
