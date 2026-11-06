@@ -44,20 +44,23 @@ const trainAt = lidCloses + 40;
 const merged = launch.from - 6;
 const launched = launch.at + 20;
 
-const keys = { near: [735, 736], far: [800, 730] };
+// He faces us behind his laptop, so his hands are on the keyboard behind the lid and he looks down at it.
+const keys = { near: [615, 728], far: [545, 728], nearHand: "hidden", farHand: "hidden" };
+const down = [0.15, 0.75];
 const atDesk = [
-  { at: 0, lean: 0.1, nod: 0.04, gaze: [1, 0.35], worry: 0, raise: 0, frown: 0, smile: 0.4, open: 0, typing: 1, headphones: 0, ...keys },
-  { at: outOfQuota - 8, worry: 1, smile: -0.5, typing: 0, lean: 0.16 },
+  { at: 0, lean: 0.02, nod: 0.04, gaze: down, worry: 0, raise: 0, frown: 0, smile: 0.4, open: 0, typing: 1, headphones: 0, ...keys },
+  { at: outOfQuota - 8, worry: 1, smile: -0.5, typing: 0, lean: 0.03, gaze: [0.1, 0.55] },
   { at: takesOver, worry: 0, smile: 0.8, raise: 0.4 },
-  { at: cardShown - 6, raise: 1, open: 0.7, typing: 0, lean: 0.04, near: [700, 650] },
-  { at: guardHalf, raise: 0, open: 0, smile: 0.7, near: keys.near, typing: 0.6 },
-  { at: lidCloses - 16, typing: 0, near: [826, 580], smile: 0.6 },
-  { at: lidCloses, near: [826, 726], over: 16 },
-  { at: lidCloses + 24, lean: -0.08, near: [700, 478], far: [470, 488], nearBend: "out", farBend: "out", smile: 1, gaze: [0.2, -0.6], shut: 1, over: 18 },
+  { at: cardShown - 6, raise: 1, open: 0.7, typing: 0, lean: -0.02, gaze: [0.1, 0.3] },
+  { at: guardHalf, raise: 0, open: 0, smile: 0.7, typing: 0.6, gaze: down },
+  // He takes the lid by its top edge and folds it down.
+  { at: lidCloses - 16, typing: 0, near: [640, 634], far: [520, 634], nearHand: "lid", farHand: "lid", nearBend: "straight", farBend: "straight", smile: 0.6 },
+  { at: lidCloses, near: [640, 728], far: [520, 728], over: 16 },
+  { at: lidCloses + 24, lean: -0.02, near: [690, 470], far: [470, 470], nearBend: "out", farBend: "out", nearHand: "fist", farHand: "fist", smile: 1, gaze: [0.1, -0.6], shut: 1, over: 18 },
 ];
 const onTrain = [
-  { at: 0, lean: 0.04, nod: 0.05, gaze: [1, -0.3], smile: 0.4, typing: 0, near: [3316, 758], far: [3290, 770] },
-  { at: launched - 4, smile: 1, open: 0.6, raise: 0.6, far: [3130, 520], farBend: "out", over: 10 },
+  { at: 0, lean: 0.03, nod: 0.1, gaze: [0.1, 0.7], smile: 0.4, typing: 0, near: [3176, 784], far: [3132, 784], nearHand: "phone", farHand: "phone", nearBend: "tucked", farBend: "tucked" },
+  { at: launched - 4, smile: 1, open: 0.6, raise: 0.6, gaze: [0.2, -0.2], far: [3110, 540], farBend: "out", farHand: "fist", over: 10 },
   { at: launch.to - 20, open: 0, raise: 0.2 },
 ];
 // Places this cut never visits are given a start no frame reaches, so they stay blank paper.
@@ -73,6 +76,7 @@ const t = {
   alex: { office: atDesk, cafe: atDesk, train: onTrain },
   maya: atDesk,
   links: { maya: { from: 1e9, gone: 1e9 }, server: { from: 1e9 } },
+  projections: { train: { from: trainAt + 8 } },
   journey: [
     { from: 70, to: 90, points: [[300, 1050], [420, 1062]], label: "9:02 AM", labelAt: [360, 1110] },
     { from: trainAt - 40, to: trainAt - 4, points: [[1220, 1062], [1700, 1110], [2200, 1110], [2560, 1080]], label: "5:40 PM", labelAt: [1290, 1120] },

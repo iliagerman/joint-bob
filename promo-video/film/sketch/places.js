@@ -7,15 +7,23 @@
 // film's frames: when each part is drawn, the poses, the clock, the lid.
 import { alexLook, mayaLook, person, poseAt } from "./people.js";
 import { inkColor, oval, roundRect } from "./ink.js";
-import { backdrop, cat, chairBack, clock, desk, floor, laptop, monitor, mug, phone, plant, serverBox, shadow, sticky, tones, windowView } from "./things.js";
+import { backdrop, cat, clock, desk, floor, framedPrint, laptopBack, menuBoard, monitor, mug, phoneBack, plant, projection, screenProjection, serverBox, shadow, shelf, sticky, stringLights, tones, windowLight, windowView } from "./things.js";
 
-// Where the screens are on the sheet. Cameras look into them, rings are drawn on them.
+// Where the screens are on the sheet. Cameras look into them, rings are drawn on them. A phone's
+// screen is its projection beside the person (`projection` in things.js); the phone they hold is
+// in `held`, at a real phone's size next to their head.
 export const devices = {
-  laptop: { x: 700, y: 566, w: 256, h: 160 },
-  hers: { x: 1560, y: 524, w: 288, h: 180 },
-  lunchPhone: { x: 930, y: -662, w: 92, h: 200 },
+  // Alex and Maya face us behind their laptops, so their screens are shown beside them.
+  laptop: { x: 760, y: 396, w: 360, h: 225 },
+  hers: { x: 1500, y: 396, w: 360, h: 225 },
+  lunchPhone: { x: 1160, y: -800, w: 186, h: 404 },
   server: { x: 3000, y: -640, w: 304, h: 190 },
-  trainPhone: { x: 3262, y: 508, w: 110, h: 239 },
+  trainPhone: { x: 3440, y: 330, w: 196, h: 426 },
+};
+// Held in both hands in front of his chest, where he can look down at it.
+export const held = {
+  lunchPhone: { x: 826, y: -470, w: 38, h: 82 },
+  trainPhone: { x: 3134, y: 742, w: 40, h: 86 },
 };
 // The places, as rectangles of the sheet, for wide shots.
 export const places = {
@@ -55,6 +63,22 @@ function skyAt(minutes) {
   return stops.at(-1)[1];
 }
 
+/** An office chair seen from the front, behind the person sitting in it. */
+function chair(pen, x, y) {
+  pen.shape(roundRect(x - 80, y, 160, 156, 34), { fill: "#55606b", alpha: 0.55, width: 2.8 });
+}
+
+/**
+ * The projection of a held phone's screen, drawn by the pen from `when.from` and gone at
+ * `when.gone`. It is drawn in the measuring pass as well, so the pen knows how much ink it has.
+ */
+function showProjection(pen, frame, id, when, pictures) {
+  if (!when || (frame >= (when.gone ?? Infinity) && !pen.measure)) return;
+  pen.begin(`${id}-projection`, when.from, when.from + 30, 30);
+  projection(pen, held[id], devices[id], pictures(id));
+  pen.end();
+}
+
 export function world(t) {
   const title = (pen, frame) => {
     pen.begin("title", ...t.draw.title, 1);
@@ -70,23 +94,30 @@ export function world(t) {
     pen.begin("desk", ...t.draw.desk, 20);
     desk(pen, 380, 1200, 742, 1000);
     pen.on(22);
-    laptop(pen, devices.laptop, pictures("laptop"), keyed(t.lid, frame, 18));
+    // His laptop, its back to us; its screen drawn large beside him, folding back in as the lid shuts.
+    const lidOpen = keyed(t.lid, frame, 18);
+    const lid = laptopBack(pen, 580, 742, lidOpen);
     mug(pen, 1010, 694, frame, { full: minutes < 780 });
-    plant(pen, 1130, 742, { height: 150 });
+    plant(pen, 1150, 742, { height: 150 });
+    pen.on(26);
+    if (lidOpen > 0.02 || pen.measure) screenProjection(pen, lid, devices.laptop, pictures("laptop"), lidOpen);
     pen.end();
-    // Then Alex, behind it.
+    // Then Alex, behind it, his hands on the keyboard behind the lid.
     pen.begin("alex", ...t.draw.alex, 10);
-    person(pen, { at: [575, 800], look: alexLook, pose: poseAt(t.alex.office, frame), frame, layer: 10, nearLayer: 24 });
+    person(pen, { at: [575, 800], look: alexLook, pose: poseAt(t.alex.office, frame), frame, layer: 10, nearLayer: 13, farLayer: 13, gripLayer: 23 });
     pen.on(9);
-    chairBack(pen, 492, 600, 1);
+    chair(pen, 581, 596);
     pen.end();
     // Then the room behind them both.
     pen.begin("room", ...t.draw.room, 0);
     backdrop(pen, 150, 300, 1180, 760, tones.wall, 3);
     windowView(pen, 190, 380, 300, 250, skyAt(minutes), { sun: minutes < 1060 ? [300, 440 + (minutes - 540) * 0.1, tones.sun] : null });
     pen.on(1);
-    clock(pen, 850, 420, 46, minutes);
-    sticky(pen, 985, 388, ["Release", "6 PM!"], { tilt: 0.06 });
+    windowLight(pen, { x: 190, y: 380, w: 300, h: 250 }, [260, 380]);
+    framedPrint(pen, 560, 360, 120, 96);
+    clock(pen, 940, 330, 44, minutes);
+    sticky(pen, 1140, 300, ["Release", "6 PM!"], { tilt: 0.06 });
+    shelf(pen, 1170, 520, 140);
     floor(pen, 170, 1300, 1004);
     pen.end();
   };
@@ -95,27 +126,28 @@ export function world(t) {
     pen.begin("maya-desk", ...t.draw.mayaDesk, 20);
     desk(pen, 1480, 2140, 742, 1000, { drawers: "left" });
     pen.on(22);
-    monitor(pen, devices.hers, pictures("hers"), { foot: 742 });
-    pen.shape([[1760, 730], [1920, 730], [1928, 742], [1752, 742]], { fill: tones.metal, alpha: 0.6, smooth: false, width: 2.4 });
-    // A desk lamp.
-    pen.shape([[2050, 742], [2110, 742], [2104, 730], [2056, 730]], { fill: tones.device, alpha: 0.6, smooth: false, width: 2.4 });
-    pen.stroke([[2080, 730], [2060, 640], [2010, 610]], { width: 3.4 });
-    pen.shape([[1990, 596], [2034, 600], [2030, 632], [1980, 626]], { fill: tones.sun, alpha: 0.7, smooth: false, width: 2.6 });
+    const hersLid = laptopBack(pen, 2004, 742, 1);
+    // A desk lamp, at the free end of the desk, clear of her.
+    pen.shape([[2096, 742], [2136, 742], [2132, 730], [2100, 730]], { fill: tones.device, alpha: 0.6, smooth: false, width: 2.4 });
+    pen.stroke([[2116, 730], [2124, 640], [2150, 606]], { width: 3.4 });
+    pen.shape([[2140, 592], [2184, 596], [2180, 628], [2132, 622]], { fill: tones.sun, alpha: 0.7, smooth: false, width: 2.6 });
+    pen.on(26);
+    screenProjection(pen, hersLid, devices.hers, pictures("hers"));
     pen.end();
     pen.begin("maya", ...t.draw.maya, 10);
-    person(pen, { at: [2010, 800], look: mayaLook, dir: -1, pose: poseAt(t.maya, frame), frame, layer: 10, nearLayer: 24 });
+    person(pen, { at: [2010, 800], look: mayaLook, dir: -1, pose: poseAt(t.maya, frame), frame, layer: 10, nearLayer: 13, farLayer: 13, gripLayer: 23 });
     pen.on(9);
-    chairBack(pen, 2090, 600, -1);
+    chair(pen, 2004, 596);
     pen.end();
     pen.begin("maya-room", ...t.draw.mayaRoom, 0);
     backdrop(pen, 1380, 300, 880, 760, tones.wall, 8);
     pen.on(1);
-    pen.shape([[1620, 330], [1800, 330], [1800, 460], [1620, 460]], { fill: tones.cream, alpha: 0.6, smooth: false, width: 3 });
-    pen.stroke([[1640, 440], [1690, 380], [1720, 412], [1750, 370], [1782, 440]], { width: 2.4, color: "#4f9c72" });
-    pen.shape(oval(1760, 362, 12, 12, 10), { fill: tones.sun, alpha: 0.8, width: 2 });
+    pen.shape([[1940, 270], [2100, 270], [2100, 380], [1940, 380]], { fill: tones.cream, alpha: 0.6, smooth: false, width: 3 });
+    pen.stroke([[1958, 364], [2004, 312], [2032, 340], [2060, 304], [2084, 364]], { width: 2.4, color: "#4f9c72" });
+    pen.shape(oval(2064, 296, 11, 11, 10), { fill: tones.sun, alpha: 0.8, width: 2 });
     plant(pen, 2200, 1000, { height: 230 });
     floor(pen, 1390, 2250, 1004);
-    pen.text("Maya", 2010, 470, { size: 54, align: "center", color: "#0f8a6c" });
+    pen.text("Maya", 2004, 448, { size: 54, align: "center", color: "#0f8a6c" });
     pen.end();
     // Her conversation is his conversation: a dashed line between the two screens.
     const linked = t.links.maya;
@@ -124,10 +156,10 @@ export function world(t) {
       for (let k = 0; k < 12; k++) {
         const a = k / 12;
         const b = a + 0.045;
-        const along = (u) => [lerp(950, 1580, u), 540 - Math.sin(u * Math.PI) * 170];
+        const along = (u) => [lerp(1120, 1500, u), 500 - Math.sin(u * Math.PI) * 130];
         pen.stroke([along(a), along((a + b) / 2), along(b)], { width: 4, color: "#0f8a6c" });
       }
-      pen.text("same conversation, live", 1265, 352, { size: 44, align: "center", color: "#0f8a6c" });
+      pen.text("same conversation, live", 1310, 330, { size: 44, align: "center", color: "#0f8a6c" });
     }
     pen.end();
   };
@@ -145,15 +177,17 @@ export function world(t) {
     mugAt(pen, 1012, -432, frame);
     pen.end();
     pen.begin("cafe-alex", ...t.draw.cafeAlex, 10);
-    person(pen, { at: [840, -300], look: alexLook, pose: poseAt(t.alex.cafe, frame), frame, layer: 10, legs: true });
+    person(pen, { at: [840, -300], look: alexLook, pose: poseAt(t.alex.cafe, frame), frame, layer: 10, legs: true, holding: held.lunchPhone });
     pen.on(12.5);
-    phone(pen, devices.lunchPhone, pictures("lunchPhone"));
+    phoneBack(pen, held.lunchPhone);
     pen.on(9);
     pen.stroke([[760, -300], [720, -520], [746, -540]], { width: 4 });
     pen.stroke([[770, -300], [760, -150]], { width: 4 });
     pen.stroke([[860, -300], [880, -150]], { width: 4 });
     pen.stroke([[740, -300], [900, -300]], { width: 5 });
     pen.end();
+    // When the story looks at his phone, its screen is drawn large beside him, until the story moves on.
+    showProjection(pen, frame, "lunchPhone", t.projections?.lunch, pictures);
     pen.begin("cafe-room", ...t.draw.cafeRoom, 0);
     backdrop(pen, 420, -980, 1080, 890, tones.warm, 5);
     // The awning, striped, with a scalloped edge.
@@ -162,6 +196,8 @@ export function world(t) {
     for (let i = 1; i < 8; i++) pen.line([470 + i * 122, -900], [470 + i * 122, -800], { width: 1.8, over: 0 });
     pen.on(1);
     windowView(pen, 540, -760, 430, 260, "#d8ecf5", { skyline: false });
+    stringLights(pen, [480, -796], [1440, -796], 12);
+    menuBoard(pen, 990, -760, 140, 130);
     pen.text("café", 755, -560, { size: 82, align: "center", color: "#c4561f" });
     plant(pen, 1370, -150, { height: 190 });
     floor(pen, 450, 1470, -142);
@@ -202,10 +238,11 @@ export function world(t) {
     pen.stroke([[3600, 900], [3600, 1000]], { width: 4 });
     pen.end();
     pen.begin("train-alex", ...t.draw.trainAlex, 10);
-    person(pen, { at: [3150, 860], look: alexLook, pose: poseAt(t.alex.train, frame), frame, layer: 10, legs: true });
+    person(pen, { at: [3150, 860], look: alexLook, pose: poseAt(t.alex.train, frame), frame, layer: 10, legs: true, holding: held.trainPhone });
     pen.on(12.5);
-    phone(pen, devices.trainPhone, pictures("trainPhone"));
+    phoneBack(pen, held.trainPhone);
     pen.end();
+    showProjection(pen, frame, "trainPhone", t.projections?.train, pictures);
     pen.begin("train-room", ...t.draw.trainRoom, 0);
     backdrop(pen, 2480, 260, 1480, 830, tones.train, 17);
     pen.on(1);

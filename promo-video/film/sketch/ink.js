@@ -138,7 +138,8 @@ const boundsOf = (points) => {
  * on the canvas until `finish()`.
  */
 export function createPen(ctx, { frame, zoom, view, paper, totals, measure = false }) {
-  const boil = Math.floor(frame / 4) % 3;
+  // The boil changes five times a second, as a drawing re-traced on every sixth frame would.
+  const boil = Math.floor(frame / 6) % 3;
   const groups = new Map();
   const queue = [];
   let group = null;
@@ -176,8 +177,8 @@ export function createPen(ctx, { frame, zoom, view, paper, totals, measure = fal
     const shown = Math.min(length, (laid(g) - before) * speed);
     if (shown <= 0) return;
     const partial = shown < length;
-    // The boil is about a pixel on the frame, however close the camera is.
-    const line = wobble(partial ? cutAt(path, shown) : path, seed * 13, amount, amount > 0 ? 0.9 / zoom : 0, boil);
+    // The boil is just over half a pixel on the frame, however close the camera is: alive, not shaking.
+    const line = wobble(partial ? cutAt(path, shown) : path, seed * 13, amount, amount > 0 ? 0.6 / zoom : 0, boil);
     if (partial) tip = line.at(-1);
     if (!visible(boundsOf(points), 40)) return;
     put(() => {
@@ -360,13 +361,23 @@ export function createPen(ctx, { frame, zoom, view, paper, totals, measure = fal
   return { begin, end, on, stroke, line, box, ellipse, wash, knock, shape, text, dot, paint, colored, started, finish, ctx, frame, zoom, measure, tip: () => tip };
 }
 
-/** The corners of a rounded rectangle, as points for a closed smooth stroke. */
+/**
+ * A rounded rectangle, as points for a closed smooth stroke. Each corner is a quarter circle, and the
+ * straight edges are split into steps about as long as the corner's, because the smooth pen
+ * overshoots into a spike where a long edge meets a short corner.
+ */
 export function roundRect(x, y, w, h, r) {
-  const k = 0.3;
-  return [
-    [x + r, y], [x + w - r, y], [x + w - r * k, y + r * k], [x + w, y + r], [x + w, y + h - r], [x + w - r * k, y + h - r * k],
-    [x + w - r, y + h], [x + r, y + h], [x + r * k, y + h - r * k], [x, y + h - r], [x, y + r], [x + r * k, y + r * k],
-  ];
+  const corners = [[x + w - r, y + r, -Math.PI / 2], [x + w - r, y + h - r, 0], [x + r, y + h - r, Math.PI / 2], [x + r, y + r, Math.PI]];
+  const points = [];
+  for (const [index, [cx, cy, start]] of corners.entries()) {
+    for (let k = 0; k <= 3; k++) points.push([cx + Math.cos(start + (k / 3) * (Math.PI / 2)) * r, cy + Math.sin(start + (k / 3) * (Math.PI / 2)) * r]);
+    const [nx, ny, next] = corners[(index + 1) % 4];
+    const from = points.at(-1);
+    const to = [nx + Math.cos(next) * r, ny + Math.sin(next) * r];
+    const parts = Math.max(1, Math.round(Math.hypot(to[0] - from[0], to[1] - from[1]) / Math.max(4, r * 0.8)));
+    for (let k = 1; k < parts; k++) points.push([from[0] + ((to[0] - from[0]) * k) / parts, from[1] + ((to[1] - from[1]) * k) / parts]);
+  }
+  return points;
 }
 
 /** Points around an ellipse, for shapes. */

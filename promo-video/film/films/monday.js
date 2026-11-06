@@ -75,35 +75,39 @@ const merged = shipped.from - 24;
 const launched = shipped.from + 30;
 
 // Alex at his desk: where his hands are, where he looks, how he feels, beat by beat.
-const keys = { near: [735, 736], far: [800, 730] };
+// He faces us behind his laptop, so his hands are on the keyboard behind the lid and he looks down at it.
+const keys = { near: [615, 728], far: [545, 728], nearHand: "hidden", farHand: "hidden" };
+const down = [0.15, 0.75];
 const atDesk = [
-  { at: 0, lean: 0.1, nod: 0.04, gaze: [1, 0.35], worry: 0, raise: 0, frown: 0, smile: 0.4, open: 0, typing: 1, headphones: 0, ...keys },
-  { at: open.at + 200, typing: 0.3, smile: 0.6, gaze: [0.2, 0] },
-  { at: outOfQuota - 10, worry: 1, smile: -0.5, typing: 0, gaze: [1, 0.3], lean: 0.16 },
+  { at: 0, lean: 0.02, nod: 0.04, gaze: down, worry: 0, raise: 0, frown: 0, smile: 0.4, open: 0, typing: 1, headphones: 0, ...keys },
+  { at: open.at + 200, typing: 0.3, smile: 0.6, gaze: [0.1, 0.2] },
+  { at: outOfQuota - 10, worry: 1, smile: -0.5, typing: 0, gaze: [0.1, 0.55], lean: 0.03 },
   { at: takesOver, worry: 0, smile: 0.8, raise: 0.4 },
-  { at: limit.to - 30, raise: 0, smile: 0.5, typing: 1 },
-  { at: cardShown - 6, raise: 1, open: 0.7, typing: 0, lean: 0.04, near: [700, 650] },
-  { at: blocked - 20, raise: 0, open: 0, frown: 0.7, near: [735, 712] },
-  { at: archived, frown: 0, smile: 0.9, near: keys.near },
-  { at: dash.from + 20, smile: 0.3, typing: 1, lean: 0.18, gaze: [1, 0.3] },
+  { at: limit.to - 30, raise: 0, smile: 0.5, typing: 1, gaze: down },
+  { at: cardShown - 6, raise: 1, open: 0.7, typing: 0, lean: -0.02, gaze: [0.1, 0.3] },
+  { at: blocked - 20, raise: 0, open: 0, frown: 0.7, gaze: down },
+  { at: archived, frown: 0, smile: 0.9 },
+  { at: dash.from + 20, smile: 0.3, typing: 1, lean: 0.03, gaze: down },
   { at: dash.to - 70, smile: 0.7, typing: 0.2 },
   { at: maya.from, smile: 0.5, typing: 0.4 },
-  { at: maya.at + 150, smile: 0.9, raise: 0.3, typing: 0 },
-  { at: story.from, raise: 0, headphones: 1, typing: 0, lean: 0.02, smile: 0.5, nod: 0.08, near: [720, 744], far: [790, 740] },
-  { at: handoff.from, headphones: 0, typing: 1, lean: 0.12, nod: 0.04, ...keys },
-  { at: lidCloses - 16, typing: 0, near: [826, 580], smile: 0.6 },
-  { at: lidCloses, near: [826, 726], over: 18 },
-  { at: lidCloses + 30, lean: -0.08, near: [700, 478], far: [470, 488], nearBend: "out", farBend: "out", smile: 1, gaze: [0.2, -0.6], shut: 1, over: 22 },
+  { at: maya.at + 150, smile: 0.9, raise: 0.3, typing: 0, gaze: [0.3, 0.1] },
+  { at: story.from, raise: 0, headphones: 1, typing: 0, lean: 0.01, smile: 0.5, nod: 0.08, gaze: [0.1, 0.3] },
+  { at: handoff.from, headphones: 0, typing: 1, lean: 0.03, nod: 0.04, gaze: down, ...keys },
+  // He takes the lid by its top edge and folds it down.
+  { at: lidCloses - 16, typing: 0, near: [640, 634], far: [520, 634], nearHand: "lid", farHand: "lid", nearBend: "straight", farBend: "straight", smile: 0.6 },
+  { at: lidCloses, near: [640, 728], far: [520, 728], over: 18 },
+  { at: lidCloses + 30, lean: -0.02, near: [690, 470], far: [470, 470], nearBend: "out", farBend: "out", nearHand: "fist", farHand: "fist", smile: 1, gaze: [0.1, -0.6], shut: 1, over: 22 },
 ];
-const atCafe = [{ at: 0, lean: 0.06, nod: 0.06, gaze: [1, -0.4], smile: 0.6, open: 0, typing: 0, near: [976, -454], far: [984, -392] }, { at: lunch.at + 120, smile: 0.9, raise: 0.4 }];
+// At the café he holds his phone in both hands in front of him and looks down at it.
+const atCafe = [{ at: 0, lean: 0.03, nod: 0.1, gaze: [0.1, 0.7], smile: 0.6, open: 0, typing: 0, near: [866, -430], far: [824, -430], nearHand: "phone", farHand: "phone", nearBend: "tucked", farBend: "tucked" }, { at: lunch.at + 120, smile: 0.9, raise: 0.4 }];
 const onTrain = [
-  { at: 0, lean: 0.04, nod: 0.05, gaze: [1, -0.3], smile: 0.4, typing: 0, near: [3316, 758], far: [3290, 770] },
-  { at: launched - 4, smile: 1, open: 0.6, raise: 0.6, far: [3130, 520], farBend: "out", over: 10 },
+  { at: 0, lean: 0.03, nod: 0.1, gaze: [0.1, 0.7], smile: 0.4, typing: 0, near: [3176, 784], far: [3132, 784], nearHand: "phone", farHand: "phone", nearBend: "tucked", farBend: "tucked" },
+  { at: launched - 4, smile: 1, open: 0.6, raise: 0.6, gaze: [0.2, -0.2], far: [3110, 540], farBend: "out", farHand: "fist", over: 10 },
   { at: shipped.to - 40, open: 0, raise: 0.2 },
 ];
-const mayaKeys = { near: [1872, 734], far: [1812, 728] };
+const mayaKeys = { near: [1975, 728], far: [2045, 728], nearHand: "hidden", farHand: "hidden" };
 const mayaPose = [
-  { at: 0, lean: 0.08, nod: 0.04, gaze: [1, 0.35], smile: 0.5, typing: 1, ...mayaKeys },
+  { at: 0, lean: 0.02, nod: 0.04, gaze: [0.15, 0.75], smile: 0.5, typing: 1, ...mayaKeys },
   { at: maya.at + 120, typing: 0, smile: 0.8, raise: 0.4 },
   { at: maya.at + 160, typing: 1, raise: 0 },
 ];
@@ -121,6 +125,8 @@ const t = {
   alex: { office: atDesk, cafe: atCafe, train: onTrain },
   maya: mayaPose,
   links: { maya: { from: maya.from + 96, gone: story.from - 6 }, server: { from: lidCloses + 20 } },
+  // The phones' screens, drawn large beside him while the story looks at them.
+  projections: { lunch: { from: lunch.from + 44, gone: maya.from - 4 }, train: { from: train.from + 64 } },
   journey: [
     { from: 150, to: 176, points: [[300, 1050], [420, 1062]], label: "9:02 AM", labelAt: [360, 1110] },
     { from: lunch.from - 46, to: lunch.from - 4, points: [[290, 1060], [130, 760], [110, 300], [190, -150], [420, -190]], label: "12:30 PM", labelAt: [320, -232] },
