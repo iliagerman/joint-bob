@@ -5,7 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 2.220.1 — 2026-11-06
 
-- The changes from 2.220.0 now ship, since 2.220.0 did not release because a test failed. They add files and pasted images in Bob's chat, keep a taken-over conversation's message box in the window, make board cards the same size, and let Bob's agent read project files with Claude again.
+- Ships 2.220.0 and the browser sign-in form from 2.219.2, which did not release: a test still expected the review runner's old read-only check. 2.220.0 adds files and pasted images in Bob's chat, keeps a taken-over conversation's message box in the window, makes board cards the same size, and lets Bob's agent read project files with Claude again.
 
 ## 2.220.0 — 2026-11-06
 
