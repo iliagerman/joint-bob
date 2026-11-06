@@ -36,7 +36,8 @@ const defaults = () => ({ theme: "", global: 1, sections: Object.fromEntries(SEC
 function clampScale(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 1;
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round(number / STEP) * STEP));
+  // Rounded after snapping, so 23 steps of 0.05 is 1.15 and not 1.1500000000000001.
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round(Math.round(number / STEP) * STEP * 1e6) / 1e6));
 }
 
 function load() {
