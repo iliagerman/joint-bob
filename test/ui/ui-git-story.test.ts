@@ -835,7 +835,7 @@ test("Story saves as one HTML file with the walkthrough and the review notes", {
   assert.deepEqual(errors, []);
 });
 
-test("Activity overview plays the stick-figure movie from the activity panel without a story, and the phone menu offers Story and Overview", { timeout: 120_000 }, async (t) => {
+test("Activity overview plays the drawn movie from the activity panel without a story, and the phone menu offers Story and Overview", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const overviewPosts: Array<Record<string, unknown>> = [];
   const storyCalls: string[] = [];

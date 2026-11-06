@@ -1,4 +1,4 @@
-// Activity overview: a movie where two stick-figure hosts explain what a conversation did. It is its own feature.
+// Activity overview: a movie, drawn on paper like the landing page's films, where two hosts explain what a conversation did. It is its own feature.
 // It keeps its own record, reads the conversation and its changes directly, and never writes or shows the change story.
 import { api, apiBlob, apiLines } from "./api.js";
 import { elements } from "./elements.js";

@@ -30,9 +30,12 @@ export function sequence(seed) {
   };
 }
 
-const clamp = (value) => Math.min(1, Math.max(0, value));
-const progress = (frame, from, to) => clamp((frame - from) / (to - from));
-const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+/** Frames a second: the films are drawn at 30, and the app counts its clock in the same frames. */
+export const FPS = 30;
+export const clamp = (value) => Math.min(1, Math.max(0, value));
+export const progress = (frame, from, to) => clamp((frame - from) / (to - from));
+export const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+export const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 /** A dense polyline through `points`: a Catmull-Rom curve when `smooth`, straight segments when not. */
 export function trace(points, { closed = false, smooth = true, step = 4 } = {}) {
@@ -445,4 +448,19 @@ export function paperTile(size = 768) {
     }
   }
   return canvas;
+}
+
+/** The pencil that draws, as SVG: its point at the origin and its length running up and to the right. */
+export function pencilSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="560" viewBox="0 0 560 560" style="overflow:visible">
+    <g transform="rotate(38)">
+      <ellipse cx="18" cy="-250" rx="30" ry="270" fill="rgba(60,40,20,0.13)" transform="translate(26 20)"/>
+      <path d="M0 0 L-13 -46 L13 -46 Z" fill="#e9c9a1" stroke="#2b2621" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M0 0 L-4.5 -15 L4.5 -15 Z" fill="#2b2621"/>
+      <path d="M-13 -46 Q-6 -52 0 -46 Q6 -52 13 -46 L16 -400 L-16 -400 Z" fill="#f6c445" stroke="#2b2621" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M-3 -50 L-4 -400" stroke="#d9a520" stroke-width="5"/>
+      <path d="M-17 -400 L17 -400 L17 -446 L-17 -446 Z" fill="#c9ccd0" stroke="#2b2621" stroke-width="2.5"/>
+      <path d="M-17 -416 L17 -416 M-17 -430 L17 -430" stroke="#8d9297" stroke-width="2"/>
+      <path d="M-17 -446 L17 -446 L17 -478 Q0 -492 -17 -478 Z" fill="#f29a9a" stroke="#2b2621" stroke-width="2.5" stroke-linejoin="round"/>
+    </g></svg>`;
 }

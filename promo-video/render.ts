@@ -122,7 +122,9 @@ try {
   await writeFile(path.join(work, "manifest.json"), JSON.stringify(manifest));
 
   // 2. Serve the page, its modules and the extracted frames on a loopback port.
-  const roots: Array<[string, string]> = [["/film/", path.join(here, "film")], ["/public/", path.join(here, "public")], ["/three/", path.join(here, "node_modules/three/build")], ["/work/", work]];
+  // The drawing kit (pen, people, props) lives in the app, which draws its Activity overview with it; the films import it
+  // by the path that leads there from film/, which a page resolves to /public/app/sketch/.
+  const roots: Array<[string, string]> = [["/film/", path.join(here, "film")], ["/public/app/sketch/", path.join(here, "../public/app/sketch")], ["/public/", path.join(here, "public")], ["/three/", path.join(here, "node_modules/three/build")], ["/work/", work]];
   const types: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".ttf": "font/ttf" };
   server.on("request", async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost").pathname;

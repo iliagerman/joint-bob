@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
-// Real player, stick figures and browser audio; only the voice-generation service is held back.
+// Real player, drawn hosts and browser audio; only the voice-generation service is held back.
 test("narrated mouths wait for audio between lines and resume without skipping speech", { timeout: 90_000 }, async (t) => {
   const { page, node, environment } = await nativeUiFixture(t);
   await page.goto(node.url);
@@ -44,23 +44,24 @@ test("narrated mouths wait for audio between lines and resume without skipping s
     });
   })()`);
   const caption = page.locator(".gsp-caption > span:last-child");
-  const mouths = page.locator('.gsp-actors ellipse[rx="3.5"]');
+  // The stage draws the hosts on a canvas and says which of them is talking, so a mouth moves only while they are.
+  const speaking = () => page.locator(".gsp-stage").getAttribute("data-speaking");
   const voiceNote = page.locator(".gsp-voice-note");
   await page.locator(".gsp-play").click();
   await voiceNote.waitFor({ state: "visible" });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.deepEqual(await mouths.evaluateAll((elements) => elements.map((element) => Number(element.getAttribute("ry")))), [0.7, 0.7], "Mouths must stay closed while the first clip is being generated");
+  assert.equal(await speaking(), "", "Mouths must stay closed while the first clip is being generated");
   assert.equal(await caption.innerText(), "The first complete line.");
 
   await page.evaluate("window.__releaseVoice('The first complete line.')");
   await page.waitForFunction(() => (window as unknown as { __heard: string[] }).__heard.length === 1);
-  await page.waitForFunction(() => Number(document.querySelector('.gsp-actors ellipse[rx="3.5"]')!.getAttribute("ry")) >= 1);
+  await page.waitForFunction(() => document.querySelector(".gsp-stage")!.getAttribute("data-speaking") === "host");
   assert.equal(await voiceNote.isVisible(), false);
 
   // A real pause stops mouth movement and resumes the same line, not the next one.
   await page.locator(".gsp-play").click();
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.deepEqual(await mouths.evaluateAll((elements) => elements.map((element) => Number(element.getAttribute("ry")))), [0.7, 0.7]);
+  assert.equal(await speaking(), "");
   assert.equal(await caption.innerText(), "The first complete line.");
   await page.locator(".gsp-play").click();
   await page.waitForFunction(() => !(window as unknown as { __audio: HTMLAudioElement }).__audio.paused);
@@ -70,12 +71,12 @@ test("narrated mouths wait for audio between lines and resume without skipping s
   await page.waitForFunction(() => document.querySelector(".gsp-caption > span:last-child")!.textContent === "The second complete line.");
   await voiceNote.waitFor({ state: "visible" });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.deepEqual(await mouths.evaluateAll((elements) => elements.map((element) => Number(element.getAttribute("ry")))), [0.7, 0.7], "Mouths must stop between clips, rather than silently acting out the next line");
+  assert.equal(await speaking(), "", "Mouths must stop between clips, rather than silently acting out the next line");
   assert.deepEqual(await page.evaluate("window.__heard"), ["The first complete line."]);
 
   await page.evaluate("window.__releaseVoice('The second complete line.')");
   await page.waitForFunction(() => (window as unknown as { __heard: string[] }).__heard.length === 2);
-  await page.waitForFunction(() => Number(document.querySelectorAll('.gsp-actors ellipse[rx="3.5"]')[1].getAttribute("ry")) >= 1);
+  await page.waitForFunction(() => document.querySelector(".gsp-stage")!.getAttribute("data-speaking") === "cohost");
   assert.equal(await voiceNote.isVisible(), false);
   assert.equal(await caption.innerText(), "The second complete line.");
   await page.evaluate("window.__audio.currentTime = window.__audio.duration - 0.05");

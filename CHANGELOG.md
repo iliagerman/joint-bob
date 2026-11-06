@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- The Activity overview is now drawn on paper, like the film on the landing page: Maya and Jonah are storybook characters who talk, point at the slide and react, each chapter's place is drawn by a pencil as the camera travels to it, and every slide is drawn on a board between them, step by step as it is explained.
+
 ## 2.217.0 — 2026-11-06
 
 - Bob's chat now follows you to your other machines: every message, yours and Bob's, with its buttons, so you can go on from any of them; a button pressed on one machine runs on the machine that wrote the message, and its buttons go away everywhere. Each machine sends its recent chat once.

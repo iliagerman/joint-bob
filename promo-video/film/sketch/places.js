@@ -5,9 +5,9 @@
 //
 // with a pencil line through the day joining them. `world(t)` draws it for a film; `t` holds the
 // film's frames: when each part is drawn, the poses, the clock, the lid.
-import { alexLook, mayaLook, person, poseAt } from "./people.js";
-import { inkColor, oval, roundRect } from "./ink.js";
-import { backdrop, cat, clock, desk, floor, framedPrint, laptopBack, menuBoard, monitor, mug, phoneBack, plant, projection, screenProjection, serverBox, shadow, shelf, sticky, stringLights, tones, windowLight, windowView } from "./things.js";
+import { alexLook, mayaLook, person, poseAt } from "../../../public/app/sketch/people.js";
+import { inkColor, oval, roundRect } from "../../../public/app/sketch/ink.js";
+import { backdrop, cat, clock, desk, floor, framedPrint, laptopBack, menuBoard, monitor, mug, phoneBack, plant, projection, screenProjection, serverBox, shadow, shelf, sticky, stringLights, tones, windowLight, windowView } from "../../../public/app/sketch/things.js";
 
 // Where the screens are on the sheet. Cameras look into them, rings are drawn on them. A phone's
 // screen is its projection beside the person (`projection` in things.js); the phone they hold is

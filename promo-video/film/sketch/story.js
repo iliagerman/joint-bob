@@ -5,12 +5,11 @@
 import { captionWords, clamp, element, fade, fill, sequence } from "../overlay.js";
 import { easeInOut, easeOut, FPS, HEIGHT, pop, progress, WIDTH } from "../timeline.js";
 import { screenSources } from "../feature.js";
-import { createPen, inkColor, noise, paperColor, paperTile } from "./ink.js";
+import { createPen, inkColor, noise, paperColor, paperTile, pencilSvg } from "../../../public/app/sketch/ink.js";
+import { between, drift, frameRect, project as projectFrom, view } from "../../../public/app/sketch/camera.js";
 
-/** Where the camera is: the point of the sheet at the middle of the frame, how close, and a slight turn. */
-export const view = (x, y, zoom, tilt = 0) => ({ x, y, zoom, tilt });
-/** A view that fits a rectangle of the sheet, with a margin around it. */
-export const frameRect = (x, y, w, h, margin = 0.06) => view(x + w / 2, y + h / 2, Math.min(WIDTH / (w * (1 + margin)), HEIGHT / (h * (1 + margin))));
+export { frameRect, view };
+
 /**
  * A view into a screen drawn on the sheet: `u`, `v` is the point of the screen to look at, in
  * fractions from its top left, and `span` how much of the screen's width fills the frame. The
@@ -25,17 +24,6 @@ export const part = (device, u1, v1, u2, v2) => ({ device, u1, v1, u2, v2 });
 
 const lerp = (a, b, t) => a + (b - a) * t;
 
-function between(a, b, t) {
-  const zoom = Math.exp(lerp(Math.log(a.zoom), Math.log(b.zoom), t));
-  // Pushing in keeps the point it pushes towards gliding steadily to the middle; pulling out does the same for the point it leaves.
-  const x = b.zoom >= a.zoom ? b.x - (1 - t) * (b.x - a.x) * (a.zoom / zoom) : a.x + t * (b.x - a.x) * (b.zoom / zoom);
-  const y = b.zoom >= a.zoom ? b.y - (1 - t) * (b.y - a.y) * (a.zoom / zoom) : a.y + t * (b.y - a.y) * (b.zoom / zoom);
-  // A long move rises off the paper and comes down again, so the eye can follow where it goes.
-  const travel = (Math.hypot(b.x - a.x, b.y - a.y) * Math.min(a.zoom, b.zoom)) / WIDTH;
-  const hop = Math.max(0, travel - 0.45) * 0.8;
-  return { x, y, zoom: zoom / (1 + hop * Math.sin(Math.PI * t)), tilt: lerp(a.tilt ?? 0, b.tilt ?? 0, t) };
-}
-
 function createCamera(shots) {
   const pose = (shot, frame) => between(shot.start, shot.end ?? shot.start, (shot.ease ?? easeInOut)(progress(frame, shot.from, shot.to)));
   return (frame) => {
@@ -46,43 +34,10 @@ function createCamera(shots) {
     // A new shot never jumps: the camera glides from where the last one left it.
     const glide = shot.glide ?? 30;
     if (index > 0 && glide > 0 && frame < shot.from + glide) at = between(pose(shots[index - 1], shots[index - 1].to), at, easeInOut(progress(frame, shot.from, shot.from + glide)));
-    // A hand-held drift, so a held shot breathes.
-    return { x: at.x + (Math.sin(frame / 37) * 5 + Math.sin(frame / 13) * 1.2) / at.zoom, y: at.y + (Math.sin(frame / 29) * 4) / at.zoom, zoom: at.zoom * (1 + Math.sin(frame / 61) * 0.004), tilt: at.tilt + Math.sin(frame / 53) * 0.0025 };
+    return drift(at, frame);
   };
 }
 
-/** A recording inside a screen drawn on the sheet: the frame it shows, the one it is leaving, and how dark the glass is. */
-export function drawScreen(pen, rect, picture, { power = 1, glass = "#1d2226", radius = 6 } = {}) {
-  const lit = pen.colored();
-  const on = lit * power;
-  pen.paint(() => {
-    const { ctx } = pen;
-    ctx.beginPath();
-    ctx.roundRect(rect.x, rect.y, rect.w, rect.h, radius);
-    ctx.clip();
-    ctx.fillStyle = glass;
-    ctx.globalAlpha = Math.min(1, lit * 1.4);
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.imageSmoothingQuality = "high";
-    const show = (image, alpha) => {
-      if (!image || alpha <= 0) return;
-      ctx.globalAlpha = alpha;
-      // Cover the screen, keeping the recording's shape.
-      const scale = Math.max(rect.w / image.width, rect.h / image.height);
-      const w = image.width * scale;
-      const h = image.height * scale;
-      ctx.drawImage(image, rect.x + (rect.w - w) / 2, rect.y + (rect.h - h) / 2, w, h);
-    };
-    if (picture?.previous) { show(picture.previous, on); show(picture.image, on * picture.mix); } else show(picture?.image, on);
-    // A soft sheen across the glass.
-    ctx.globalAlpha = 0.07 * lit;
-    const sheen = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w * 0.6, rect.y + rect.h);
-    sheen.addColorStop(0, "#ffffff");
-    sheen.addColorStop(0.5, "rgba(255,255,255,0)");
-    ctx.fillStyle = sheen;
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-  });
-}
 
 /** A ring in marker pen around part of a screen: drawn in a quick loop, then held. */
 function drawRing(ctx, ring, frame, zoom) {
@@ -129,21 +84,6 @@ const notePaints = {
   pink: { background: "#ffc9c2", color: "#4a1712" },
   paper: { background: "#fffaf0", color: inkColor },
 };
-
-function pencilSvg() {
-  // A yellow pencil, drawn with its point at the origin and its length running up and to the right.
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="560" viewBox="0 0 560 560" style="overflow:visible">
-    <g transform="rotate(38)">
-      <ellipse cx="18" cy="-250" rx="30" ry="270" fill="rgba(60,40,20,0.13)" transform="translate(26 20)"/>
-      <path d="M0 0 L-13 -46 L13 -46 Z" fill="#e9c9a1" stroke="#2b2621" stroke-width="2.5" stroke-linejoin="round"/>
-      <path d="M0 0 L-4.5 -15 L4.5 -15 Z" fill="#2b2621"/>
-      <path d="M-13 -46 Q-6 -52 0 -46 Q6 -52 13 -46 L16 -400 L-16 -400 Z" fill="#f6c445" stroke="#2b2621" stroke-width="2.5" stroke-linejoin="round"/>
-      <path d="M-3 -50 L-4 -400" stroke="#d9a520" stroke-width="5"/>
-      <path d="M-17 -400 L17 -400 L17 -446 L-17 -446 Z" fill="#c9ccd0" stroke="#2b2621" stroke-width="2.5"/>
-      <path d="M-17 -416 L17 -416 M-17 -430 L17 -430" stroke="#8d9297" stroke-width="2"/>
-      <path d="M-17 -446 L17 -446 L17 -478 Q0 -492 -17 -478 Z" fill="#f29a9a" stroke="#2b2621" stroke-width="2.5" stroke-linejoin="round"/>
-    </g></svg>`;
-}
 
 function createOverlay(spec, root) {
   // A soft band of paper under the subtitles, so they read over anything behind them.
@@ -286,7 +226,7 @@ export function defineSketch(spec) {
       const overlay = createOverlay(spec, root);
       const logo = Object.assign(new Image(), { src: "/public/icon.svg" });
       const totals = new Map();
-      const font = new FontFace("Caveat", "url(/public/fonts/caveat.ttf)", { weight: "400 700" });
+      const font = new FontFace("Caveat", "url(/public/app/sketch/caveat.ttf)", { weight: "400 700" });
       document.fonts.add(font);
 
       const draw = (frame, textures, mixes, measure) => {
@@ -332,11 +272,7 @@ export function defineSketch(spec) {
           ctx.restore();
         }
         const cardTip = frame >= spec.end || measure ? drawCard(ctx, spec, frame, logo, totals, measure) : null;
-        const project = ([x, y]) => {
-          const dx = (x - at.x) * at.zoom;
-          const dy = (y - at.y) * at.zoom;
-          return { x: WIDTH / 2 + dx * Math.cos(at.tilt) - dy * Math.sin(at.tilt), y: HEIGHT / 2 + dx * Math.sin(at.tilt) + dy * Math.cos(at.tilt) };
-        };
+        const project = (point) => projectFrom(at, point);
         const tip = cardTip ? { x: cardTip[0], y: cardTip[1] } : worldTip ? project(worldTip) : null;
         if (!measure) overlay.draw(frame, project, tip && tip.x > -100 && tip.x < WIDTH + 100 && tip.y > -100 && tip.y < HEIGHT + 100 ? tip : null);
       };

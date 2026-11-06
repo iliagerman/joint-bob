@@ -2,7 +2,39 @@
 // and where to stand, and draws itself in ink and watercolour. Devices draw a recording into
 // their screen through `drawScreen`.
 import { inkColor, noise, oval, roundRect } from "./ink.js";
-import { drawScreen } from "./story.js";
+
+/** A recording inside a screen drawn on the sheet: the frame it shows, the one it is leaving, and how dark the glass is. */
+export function drawScreen(pen, rect, picture, { power = 1, glass = "#1d2226", radius = 6 } = {}) {
+  const lit = pen.colored();
+  const on = lit * power;
+  pen.paint(() => {
+    const { ctx } = pen;
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, rect.w, rect.h, radius);
+    ctx.clip();
+    ctx.fillStyle = glass;
+    ctx.globalAlpha = Math.min(1, lit * 1.4);
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.imageSmoothingQuality = "high";
+    const show = (image, alpha) => {
+      if (!image || alpha <= 0) return;
+      ctx.globalAlpha = alpha;
+      // Cover the screen, keeping the recording's shape.
+      const scale = Math.max(rect.w / image.width, rect.h / image.height);
+      const w = image.width * scale;
+      const h = image.height * scale;
+      ctx.drawImage(image, rect.x + (rect.w - w) / 2, rect.y + (rect.h - h) / 2, w, h);
+    };
+    if (picture?.previous) { show(picture.previous, on); show(picture.image, on * picture.mix); } else show(picture?.image, on);
+    // A soft sheen across the glass.
+    ctx.globalAlpha = 0.07 * lit;
+    const sheen = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w * 0.6, rect.y + rect.h);
+    sheen.addColorStop(0, "#ffffff");
+    sheen.addColorStop(0.5, "rgba(255,255,255,0)");
+    ctx.fillStyle = sheen;
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  });
+}
 
 export const tones = {
   wood: "#e2b98b", woodDark: "#b98a5e", metal: "#c4c9ce", device: "#9aa3ab", leaf: "#7cc49a", leafDark: "#4f9c72",

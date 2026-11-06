@@ -62,14 +62,17 @@ No video framework: plain JavaScript, Three.js, headless Chrome and ffmpeg.
    `stage.js` and `overlay.js`. Each use-case film is a description in `film/films/`: the
    devices in the room, which stretch of which recording each shows, the camera's shots, and
    the captions, stickers, rings and sounds. `feature.js` turns a description into a film.
-   `films.js` lists them all. The drawn films are built differently, in `film/sketch/`: `ink.js`
-   is a pen that lays down wobbly ink lines, watercolour washes and handwriting (Caveat, in
-   `public/fonts/`, OFL) on a 2D canvas over a paper texture, revealing each group of them over a
-   stretch of frames, ink first in the order the lines are made, then colour, with a pencil at the
-   tip; `people.js` is Alex and Maya, posed by where their hands go; `things.js` the furniture and
-   devices; `places.js` the sheet of the day (desk, café, Maya's desk, home, train, and the pencil
-   line through them); `story.js` the camera that travels over the sheet and pushes into the drawn
-   screens, the sticky notes, the marker rings, the subtitles and the end card.
+   `films.js` lists them all. The drawn films are built differently, with the drawing kit in the
+   app's `public/app/sketch/`, which the app's Activity overview draws with too: `ink.js` is a pen
+   that lays down wobbly ink lines, watercolour washes and handwriting (Caveat, `caveat.ttf`, OFL)
+   on a 2D canvas over a paper texture, revealing each group of them over a stretch of frames, ink
+   first in the order the lines are made, then colour, with a pencil at the tip; `camera.js` the
+   camera's views and glides; `people.js` is Alex, Maya and Jonah, posed by where their hands go;
+   `things.js` the furniture and devices. The films' own parts are in `film/sketch/`: `places.js`
+   the sheet of the day (desk, café, Maya's desk, home, train, and the pencil line through them)
+   and `story.js` the shots over the sheet and into the drawn screens, the sticky notes, the marker
+   rings, the subtitles and the end card. `render.ts` serves the kit to the page at
+   `/public/app/sketch/`, the path the films' imports lead to.
 4. **Render** (`render.ts`). Extracts the recording frames a film shows, serves the page on a
    loopback port, photographs every frame in headless Chrome on the GPU, then has ffmpeg encode
    them and mix the sound. `--scale 2` photographs at 3840×2160 (the drawn films: about thirteen

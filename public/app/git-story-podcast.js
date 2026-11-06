@@ -1,9 +1,10 @@
-import { h, s } from "./git-story-dom.js";
-import { PLACES, actorColor, drawScene, H, W } from "./git-story-places.js";
-import { Stick } from "./git-story-stick.js";
+import { h } from "./git-story-dom.js";
+import { ROOMS } from "./git-story-rooms.js";
+import { createSketchStage } from "./git-story-sketch.js";
 import { diffClass, renderSlide, revealSlide } from "./git-story-slides.js";
 
-// The story as a podcast: two stick-figure hosts talk in a place that follows each chapter, while its slide builds.
+// The story as a podcast: Maya and Jonah talk in a room drawn on paper for each chapter, while its slide is drawn on the
+// board between them (git-story-sketch.js). The slide is also kept as text, out of sight, for screen readers.
 // Like the video it needs nothing from the rest of the app. The app supplies:
 //   narrate(text, who) -> Promise<Blob>   a clip of one line, absent when no voice is available
 //   ask(question, onProgress) -> Promise<script>   appends the answer to the story as new chapters, absent when asking is off
@@ -18,6 +19,9 @@ const CLIP_START_MS = 6000;
 const NAMES = { host: "Maya", cohost: "Jonah" };
 const OTHER = { host: "cohost", cohost: "host" };
 const STUDIO = "podcast";
+// The stage is laid out at this size and scaled to fit the window.
+const STAGE_W = 960;
+const STAGE_H = 540;
 const END = -1;
 
 const wordCount = (text) => text.split(/\s+/).length;
@@ -27,21 +31,21 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   const player = {
     script: first, chapters: [], lines: [], index: -1, chapter: -1, playing: false, finished: false, speed: 1, muted: false,
     voice: Boolean(narrate), clips: new Map(), urls: [], busy: false, token: 0, frame: 0, lastFrame: 0, silentLeft: 0,
-    view: { scene: STUDIO, mood: "calm", progress: 0, storyP: 0, sunP: 0, scroll: 0, playing: false, who: null, handsAt: -1e9 },
-    sceneAt: 0, place: PLACES[STUDIO], actors: null, slide: null,
+    view: { mood: "calm", progress: 0, sunP: 0, playing: false, who: null },
+    place: ROOMS[STUDIO], slide: null,
     // Questions asked and not yet answered (the first is with the writer), answers to play, and where the story resumes
     // once an answer has played: a line index, END, or null when nothing is waiting to be resumed.
     waiting: [], step: "", answering: false, answers: [], resume: null, mainEnd: 0, seen: new Set(), hidden: false, gone: false,
   };
 
-  const canvas = h("canvas", { class: "gsp-backdrop", width: W, height: H });
-  const g = canvas.getContext("2d");
-  const actorLayer = s("svg", { class: "gsp-actors", viewBox: `0 0 ${W} ${H}` });
+  const canvas = h("canvas", { class: "gsp-backdrop", width: STAGE_W, height: STAGE_H });
+  const pencil = h("div", { class: "gsp-pencil", hidden: true, "aria-hidden": "true" });
   const titleChip = h("div", { class: "gsp-chip gsp-title-chip" });
   const sceneChip = h("div", { class: "gsp-chip gsp-scene-chip" });
   const visual = h("div", { class: "gsp-vis" });
   const travel = h("div", { class: "gsp-travel" });
-  const stage = h("div", { class: "gsp-stage" }, canvas, titleChip, sceneChip, visual, actorLayer, travel);
+  const stage = h("div", { class: "gsp-stage" }, canvas, titleChip, sceneChip, visual, pencil, travel);
+  const sketch = createSketchStage(canvas, pencil);
   const progress = h("div", { class: "gsp-progress", role: "status", hidden: true });
   const wrap = h("div", { class: "gsp-stage-wrap" }, stage, progress);
   const chapterStrip = h("div", { class: "gsp-chapters", "aria-label": "Story so far" });
@@ -78,7 +82,7 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   link();
   host.append(overlay, dock);
   overlay.focus();
-  const resize = new ResizeObserver(() => { stage.style.transform = `scale(${wrap.clientWidth / W})`; });
+  const resize = new ResizeObserver(() => { stage.style.transform = `scale(${wrap.clientWidth / STAGE_W})`; sketch.resize(wrap.clientWidth); });
   resize.observe(wrap);
   load(first, 0);
   showMute();
@@ -90,7 +94,8 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     document.head.append(h("link", { id: "gspStyles", rel: "stylesheet", href: new URL("../git-story-podcast.css", import.meta.url).href }));
   }
 
-  function placeOf(chapter) { return PLACES[settings.backdrops && settings.locations.includes(chapter.location) ? chapter.location : STUDIO]; }
+  function placeKey(chapter) { return settings.backdrops && settings.locations.includes(chapter.location) ? chapter.location : STUDIO; }
+  function placeOf(chapter) { return ROOMS[placeKey(chapter)]; }
   function moodOf(chapter) { return settings.moods ? chapter.mood : "calm"; }
 
   // Chapters and lines are rebuilt whenever the script changes. Code chapters drop out when code slides are off.
@@ -111,11 +116,7 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     Object.assign(player, build(script), { answers: [], resume: null, seen: new Set() });
     player.mainEnd = player.lines.length;
     player.clips.clear();
-    actorLayer.replaceChildren();
-    player.actors = {
-      host: new Stick(actorLayer, { home: 190, face: 1, color: actorColor(player.place, "host"), label: NAMES.host, seed: 1 }),
-      cohost: new Stick(actorLayer, { home: 770, face: -1, color: actorColor(player.place, "cohost"), label: NAMES.cohost, seed: 2 }),
-    };
+    sketch.reset();
     titleChip.textContent = script.title;
     renderChapters();
     renderWriteup();
@@ -139,46 +140,42 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     chapterStrip.querySelectorAll("button.gsp-chap").forEach((chip, seg) => { chip.classList.toggle("is-done", player.seen.has(seg) && seg !== player.chapter); chip.classList.toggle("is-on", seg === player.chapter); });
   }
 
-  // Entering a chapter: draw its slide, move to its place, and show the travel card.
+  // Entering a chapter: write its slide out of sight, move to its room on the sheet, and show the travel card.
   function enter(seg) {
     const chapter = player.chapters[seg];
     if (player.chapter >= 0) player.seen.add(player.chapter);
     player.chapter = seg;
     player.slide = renderSlide(chapter.visual);
     visual.replaceChildren(player.slide);
-    const place = placeOf(chapter);
+    const key = placeKey(chapter);
+    const place = ROOMS[key];
     player.place = place;
-    player.view.scene = Object.keys(PLACES).find((key) => PLACES[key] === place);
     player.view.mood = moodOf(chapter);
     player.view.sunP = 0;
-    player.sceneAt = performance.now();
-    stage.className = `gsp-stage gsp-scene-${player.view.scene}`;
-    for (const key of ["host", "cohost"]) player.actors[key].setLook({ home: place.homes[key], face: place.faces[key], color: actorColor(place, key), treadmill: Boolean(place.treadmill), cup: Boolean(place.cup), glow: Boolean(place.glow) });
+    stage.className = `gsp-stage gsp-scene-${key}`;
+    sketch.enter(seg, chapter, key, player.view.mood);
     travel.textContent = `${place.icon}  ${place.label} · ${chapter.title}`;
     travel.classList.remove("is-go");
     void travel.offsetWidth;
     travel.classList.add("is-go");
   }
 
-  // Who moves, who gestures and who reacts for this line; the chapter's mood colours the reactions.
-  function direct(line, moved) {
-    const speaker = player.actors[line.who];
-    const listener = player.actors[OTHER[line.who]];
+  // Who gestures and who reacts for this line; the chapter's mood colours the reactions.
+  function direct(line) {
     const previous = player.lines[player.index - 1];
     const next = player.lines[player.index + 1];
     const question = line.text.trim().endsWith("?");
     const newSlide = !previous || previous.seg !== line.seg || line.reveal > previous.reveal;
     const closing = !next || next.seg !== line.seg;
     const peak = Math.max(...player.chapters[line.seg].lines.map((item) => item.reveal));
-    const now = performance.now();
-    if (moved) for (const actor of Object.values(player.actors)) actor.x = actor.home - actor.face * 150;
-    speaker.act(question ? "ask" : newSlide ? "pointThenExplain" : "explain", speaker.home + speaker.face * (question ? 30 : newSlide ? 100 : 60) * player.place.reach);
     let reaction = question ? "think" : "listen";
     if (player.view.mood === "tension" && newSlide && !question) reaction = "worry";
     if (closing && (player.view.mood === "resolved" || !next)) reaction = "cheer";
-    listener.act(reaction, listener.home);
-    if (question) { speaker.emote("?", now); player.view.handsAt = now / 1000; } else if (player.view.mood === "insight" && newSlide && line.reveal === peak) speaker.emote("💡", now);
-    if (reaction === "cheer") listener.emote("!", now);
+    const marks = [];
+    if (question) marks.push({ who: line.who, text: "?" });
+    else if (player.view.mood === "insight" && newSlide && line.reveal === peak) marks.push({ who: line.who, text: "💡" });
+    if (reaction === "cheer") marks.push({ who: OTHER[line.who], text: "!" });
+    sketch.line({ seg: line.seg, reveal: line.reveal, speaker: line.who, action: question ? "ask" : newSlide ? "pointThenExplain" : "explain", reaction, marks, question });
   }
 
   function answerAt(index) { return player.answers.find((answer) => index >= answer.start && index <= answer.end); }
@@ -224,12 +221,11 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     if (moved) enter(line.seg);
     const inChapter = player.lines.filter((item) => item.seg === line.seg);
     player.view.progress = inChapter.length > 1 ? inChapter.indexOf(line) / (inChapter.length - 1) : 1;
-    player.view.storyP = player.lines.length > 1 ? index / (player.lines.length - 1) : 1;
     player.view.who = line.who;
     player.index = index;
     player.finished = false;
     revealSlide(player.slide, line.reveal);
-    direct(line, moved);
+    direct(line);
     who.textContent = NAMES[line.who];
     who.className = `gsp-who${line.who === "cohost" ? " is-cohost" : ""}`;
     caption.lastChild.textContent = line.text;
@@ -305,18 +301,16 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     const dt = Math.min(64, now - player.lastFrame || 16);
     player.lastFrame = now;
     const { view } = player;
-    view.scroll += dt * 0.055 * (player.playing ? 1 : 0.15);
     const sunGoal = view.mood === "resolved" ? 0.35 + 0.65 * view.progress : 0.12 + 0.2 * view.progress;
     view.sunP += (sunGoal - view.sunP) * (1 - Math.exp(-dt / 900));
-    g.clearRect(0, 0, W, H);
-    drawScene(g, player.place, now / 1000, dt, view);
-    const fade = 1 - Math.min(1, (now - player.sceneAt) / 700);
-    if (fade > 0) { g.fillStyle = `rgba(0,0,0,${fade})`; g.fillRect(0, 0, W, H); }
     const speaker = player.lines[player.index]?.who;
     const voiceReady = audio.hasAttribute("src") && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
     voiceNote.hidden = !player.voice || voiceReady;
     const speaking = player.playing && (!player.voice || (voiceReady && !audio.paused && !audio.ended));
-    for (const [key, actor] of Object.entries(player.actors)) actor.update(now, dt, speaking && key === speaker, player.playing);
+    sketch.draw(now, { speaking: speaking ? speaker : null, sunP: view.sunP });
+    // Who is talking, for anything outside the canvas that needs to know (the tests read it too).
+    const talking = speaking ? speaker : "";
+    if (stage.dataset.speaking !== talking) stage.dataset.speaking = talking;
     if (player.playing && !player.voice && !player.busy) {
       player.silentLeft -= dt / 1000 * player.speed;
       if (player.silentLeft <= 0) advance();

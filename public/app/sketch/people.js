@@ -1,12 +1,12 @@
-// The people of the films, drawn with the pen: Alex and Maya, nearly facing us and turned a little
-// the way they face (`dir`). The faces follow the usual rules for an appealing cartoon: a rounded
-// head with a short soft chin, the eyes at mid-height as dark ovals with a catch-light, thin relaxed
-// brows, a small nose with the mouth close under it, ears level with the eyes. Alex wears a hoodie
-// and round glasses, Maya a jumper, earrings and her hair in a bun. Arms reach for whatever their
-// hands are placed on. A pose is a set of numbers (lean, where the eyes look, brows, smile) and the
-// points the hands go to; `poseAt` blends a list of poses over time.
-import { easeInOut, FPS, progress } from "../timeline.js";
-import { oval } from "./ink.js";
+// The people of the films and of the Activity overview, drawn with the pen: Alex, Maya and Jonah,
+// nearly facing us and turned a little the way they face (`dir`). The faces follow the usual rules
+// for an appealing cartoon: a rounded head with a short soft chin, the eyes at mid-height as dark
+// ovals with a catch-light, thin relaxed brows, a small nose with the mouth close under it, ears
+// level with the eyes. Alex wears a hoodie and round glasses, Maya a jumper, earrings and her hair
+// in a bun, Jonah a jumper, short curly hair and a beard. Arms reach for whatever their hands are
+// placed on. A pose is a set of numbers (lean, where the eyes look, brows, smile) and the points
+// the hands go to; `poseAt` blends a list of poses over time.
+import { easeInOut, FPS, oval, progress } from "./ink.js";
 
 export const alexLook = {
   name: "alex", skin: "#f6cdae", skinShade: "#e3a888", blush: "#f4a296", hair: "#5a3a2a", hairShade: "#43291d", hairLight: "#87604a",
@@ -15,6 +15,11 @@ export const alexLook = {
 export const mayaLook = {
   name: "maya", skin: "#c98f6b", skinShade: "#a96f4f", blush: "#e3826f", hair: "#2c201b", hairShade: "#1b1410", hairLight: "#5b463b",
   top: "#f7bd5d", topShade: "#df9a3c", eye: "#22180f", lips: "#9c4a3e", glasses: false, earring: "#37cfab", legs: "#5f6f8f", legsShade: "#4a5875", shoes: "#3b3532",
+};
+
+export const jonahLook = {
+  name: "jonah", skin: "#efc4a2", skinShade: "#d49c7c", blush: "#ee9a88", hair: "#8a4f2c", hairShade: "#653619", hairLight: "#b77a4f",
+  top: "#9dbcf0", topShade: "#7397d6", eye: "#2a1d14", lips: "#a85546", glasses: false, legs: "#56627a", legsShade: "#434d62", shoes: "#3b3532",
 };
 
 const arm = { upper: 80, fore: 74, width: 29 };
@@ -259,6 +264,15 @@ function drawFist(pen, look, wrist, along, scale) {
 }
 
 function drawHair(pen, look, H) {
+  if (look.name === "jonah") {
+    // Short hair, curly on top, and a trimmed beard along the jaw that leaves the mouth clear.
+    pen.shape(H(turned([[-100, -10], [-106, -58], [-96, -100], [-70, -128], [-36, -146], [4, -152], [44, -144], [80, -122], [102, -88], [108, -44], [100, -10], [92, -40], [70, -66], [40, -76], [10, -70], [-22, -78], [-54, -70], [-80, -52], [-94, -30]])), { fill: look.hair, alpha: 0.92, width: 3 });
+    pen.wash(H(turned([[-100, -10], [-106, -58], [-92, -104], [-70, -124], [-82, -76], [-90, -36]])), look.hairShade, { alpha: 0.6 });
+    for (const [cx, cy] of [[-56, -118], [-14, -136], [30, -132], [68, -110]]) pen.stroke(H(turned([[cx - 12, cy + 6], [cx, cy - 6], [cx + 12, cy + 4]])), { width: 2.2, color: look.hairLight, alpha: 0.9 });
+    pen.shape(H(turned([[-98, 6], [-88, 50], [-66, 86], [-34, 108], [0, 116], [34, 108], [66, 86], [88, 50], [98, 6], [86, 26], [70, 58], [46, 76], [20, 82], [0, 84], [-20, 82], [-46, 76], [-70, 58], [-86, 26]])), { fill: look.hair, alpha: 0.85, width: 2.4 });
+    pen.wash(H(turned([[-98, 6], [-88, 50], [-66, 86], [-40, 104], [-52, 80], [-74, 52], [-88, 22]])), look.hairShade, { alpha: 0.5 });
+    return;
+  }
   if (look.name === "alex") {
     pen.shape(H(turned([[-102, -6], [-108, -58], [-92, -108], [-52, -138], [0, -148], [54, -140], [96, -110], [110, -62], [106, -12], [96, -36], [76, -58], [46, -58], [18, -72], [-8, -60], [-38, -68], [-68, -52], [-92, -28]])), { fill: look.hair, alpha: 0.92, width: 3 });
     pen.wash(H(turned([[-102, -6], [-108, -58], [-92, -108], [-66, -124], [-80, -80], [-84, -40], [-92, -28]])), look.hairShade, { alpha: 0.6 });
