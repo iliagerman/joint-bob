@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { actingAccountFromSession, runAsAccount, type ActingAccount } from "../account-context.js";
 import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import { BobActionError, bobSays, registerBobAction } from "../control-center/bob-actions.js";
-import { appendBobMessage, bobDatabase, listBobAccounts, readBobSettings, type BobSettings } from "../control-center/bob-store.js";
+import { appendBobMessage, bobDatabase, listBobAccounts, readBobSettings, setBobActions, type BobSettings } from "../control-center/bob-store.js";
 import { recordBobStart } from "../control-center/started.js";
 import { investigationBrief } from "../control-center/triggers-brief.js";
 import { describeCall, oneLine } from "../control-center/triggers-describe.js";
@@ -164,7 +164,7 @@ registerBobAction(INVESTIGATE, ({ db, session, action }) => runAsAccount(actingA
 registerBobAction(OPEN, async ({ db, session, message, action }) => {
   const trigger = triggerOf(db, session.accountId, action.data);
   markTriggersSeen(db, session.accountId, [trigger.id]);
-  db.prepare("UPDATE control_center_bob_messages SET actions = ? WHERE account_id = ? AND id = ?").run(JSON.stringify(message.actions), session.accountId, message.id);
+  setBobActions(db, session.accountId, message.id, message.actions);
 });
 
 registerBobAction(SNOOZE, async ({ db, session, action }) => {

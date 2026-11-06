@@ -1,6 +1,6 @@
 import { actingAccountFromSession, runAsAccount, type ActingAccount } from "../account-context.js";
 import { bobSays, registerBobAction } from "../control-center/bob-actions.js";
-import { appendBobMessage, bobDatabase, listBobAccounts, onBobMessage, readBobSettings } from "../control-center/bob-store.js";
+import { appendBobMessage, bobDatabase, listBobAccounts, onBobMessage, onBobTimelineChanged, readBobSettings } from "../control-center/bob-store.js";
 import { disableAutoRespond, enableAutoRespond, getAutoRespond, onAutoRespondStopped, type AutoRespondState } from "../conversation-auto-respond.js";
 import { allPendingGuardianReviews, decideGuardianReview, onGuardianEvent, type GuardianReview } from "../guardian/reviews.js";
 import { isLeased } from "../control-center/leases.js";
@@ -94,6 +94,7 @@ export function startControlCenterWatch(): void {
   started = true;
   // Open pages learn at once that Bob has something new, instead of asking on a timer.
   onBobMessage((accountId) => broadcastToAllClients({ type: "controlCenterChanged" }, accountId));
+  onBobTimelineChanged((accountId) => broadcastToAllClients({ type: "controlCenterChanged" }, accountId));
   onGuardianEvent((event) => {
     broadcastToAllClients({ type: "controlCenterChanged" });
     if (event.type !== "reviews" || !allPendingGuardianReviews().some((review) => review.id === event.review.id)) return;

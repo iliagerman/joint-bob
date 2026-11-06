@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Bob's chat now follows you to your other machines: every message, yours and Bob's, with its buttons, so you can go on from any of them; a button pressed on one machine runs on the machine that wrote the message, and its buttons go away everywhere. Each machine sends its recent chat once.
+
 ## 2.216.0 — 2026-11-06
 
 - Bob's review check now works on each of your machines: using Bob on one is enough, your Bob settings (including pausing him) follow you, and every machine's board shows what the check found.

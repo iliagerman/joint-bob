@@ -176,9 +176,17 @@ In Bob's settings, **Telegram** connects Bob's own bot: paste the token from @Bo
 
 The canvas panes, pages and split layouts, the conversation shortcuts you could give a pane, the **Add to canvas** actions, and the saved canvas layout are gone. Other keyboard shortcuts stay, in Settings → Shortcuts; the pane and page commands are no longer listed. A saved canvas view opens the control center. Older machines in a cluster that still send canvas shortcuts are ignored.
 
+## On your other machines
+
+Your chat with Bob is yours, not the machine's: it follows you to each of your machines (twins), and to a machine you are signed in on as a visitor, so you can stop on the Mac and go on from the homeserver or your phone. Nobody else's machine gets it.
+
+- **What follows you:** every message, yours and Bob's, with its labels and buttons, in the order it was said; that you use Bob, with your Bob settings (pausing Bob on one machine pauses him on all); Bob's memory topics; and what Bob's review checks found, so every machine's board shows it. When the chat first starts to follow you, each machine sends its last 500 messages once.
+- **Answers continue.** Bob on the machine you are using reads the whole chat when he decides what you mean, so "that one" still means the conversation you talked about on the other machine.
+- **Buttons work anywhere.** A button acts on something that lives on the machine that wrote the message (a Guardian review, a scheduled report, a running conversation). Pressed on another machine, the press is carried to that one and run there, as you; the answer shows at once, and the buttons go away on every machine. Only your own machines can carry a press. If that machine is off, Bob says so; press again when it is back.
+
 ## Limits
 
-- These follow you to your other machines: Bob's memory topics, that you use Bob together with Bob's settings (pausing Bob on one machine pauses him on all), and what Bob's review checks found, so every machine's board shows it. Bob's chat messages, reports, triggers and the Telegram link stay on the machine where they were made: a review check that needs you shows on every board, and its chat message is on the machine that runs the conversation. A Telegram bot is answered from one machine only, because two machines reading the same bot take each other's messages.
+- Bob's reports, incoming triggers and the Telegram link stay on the machine where they were set up (their messages reach all your machines, see **On your other machines**). A Telegram bot is answered from one machine only, because two machines reading the same bot take each other's messages; it shows what Bob says on every machine.
 - Bob answers for an agent through auto respond (with Bob's own agent and stop instructions), or tells a stopped agent to go on after a review check. When auto respond stops, Bob brings the conversation to you with buttons and the review check stays out of that turn; Bob does not turn auto respond on again by himself, because every stop reason is one where you decide.
 - Bob's own actions (moving jobs, stopping turns, changing or deleting automations) do not go to Guardian: each one waits for your button in the chat, whatever Guardian would have said. Pausing or resuming an automation you named happens at once.
 - Webhooks are created from the Automations tab, so their secret address is never in the chat.

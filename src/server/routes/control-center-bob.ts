@@ -6,6 +6,8 @@ import { GitReviewRunError, handleBobMessage } from "../bob.js";
 import { sendError } from "../http-auth.js";
 import { QuickNoteLaunchError } from "../quick-note-dispatch.js";
 import { app } from "../state.js";
+// A press of a message another of the person's machines wrote is run there.
+import "../control-center-bob-remote.js";
 
 const messageSchema = z.object({
   message: z.string().trim().min(1).max(8000),

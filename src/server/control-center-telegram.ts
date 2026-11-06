@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { actingAccountFromSession, runAsAccount } from "../account-context.js";
 import { telegramBotInUse } from "../assistant-telegram.js";
-import { listLocalUsers, type AuthSession } from "../auth.js";
+import type { AuthSession } from "../auth.js";
+import { bobSessionFor } from "./control-center-session.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { getClusterNode } from "../cluster.js";
 import { runBobAction } from "../control-center/bob-actions.js";
@@ -41,10 +42,7 @@ async function telegramDatabase(): Promise<DatabaseSync> {
 }
 
 /** The person as a session here. Null when they have no account on this machine, or it is switched off. */
-export function sessionForTelegram(accountId: string): AuthSession | null {
-  const user = listLocalUsers().find((candidate) => candidate.accountId === accountId && !candidate.disabled);
-  return user ? { id: `bob-telegram:${accountId}`, userId: user.userId, username: user.username, accountId, email: user.email, role: user.role, csrfToken: "", mustChangePassword: false, isRemoteLogin: false, homeNodeId: null } : null;
-}
+export const sessionForTelegram = (accountId: string): AuthSession | null => bobSessionFor(accountId, "telegram");
 
 const asPerson = <T>(session: AuthSession, work: () => Promise<T>): Promise<T> => runAsAccount(actingAccountFromSession(session), work);
 

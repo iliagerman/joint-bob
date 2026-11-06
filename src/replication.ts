@@ -10,7 +10,7 @@ import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } f
 import { applyConversationNotificationDeliveredEvent, applyConversationNotificationEvent, ensureConversationNotificationSchema } from "./conversation-notifications.js";
 import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
 import { applyMemoryEvent } from "./control-center/memory-sync.js";
-import { applyBobEvent, applyReviewCheckEvent } from "./control-center/bob-sync.js";
+import { applyBobEvent, applyBobMessageEvent, applyReviewCheckEvent } from "./control-center/bob-sync.js";
 import { applyConversationGoalEvent, ensureConversationGoalSchema } from "./conversation-goals.js";
 import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
 import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
@@ -409,6 +409,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "control.memory": applyMemoryEvent,
   "control.bob": applyBobEvent,
   "control.reviewCheck": applyReviewCheckEvent,
+  "control.bobMessage": applyBobMessageEvent,
   "user.pin": applyUserPinEvent,
   "user.recent": applyUserRecentSessionEvent,
   "model.usage": applyUsageEvent,
