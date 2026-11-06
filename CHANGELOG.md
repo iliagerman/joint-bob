@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.218.2 — 2026-11-06
+
+- Fixed the Activity overview's pencil drawing, which stopped this release from building.
+
 ## 2.218.1 — 2026-11-06
 
 - Fixed a button pressed right after Bob wrote the message sometimes staying on your other machines.
