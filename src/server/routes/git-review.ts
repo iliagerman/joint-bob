@@ -116,7 +116,6 @@ async function proxyGitJson(response: Response, peer: ClusterPeer, clusterRoute:
     response.end();
     return;
   }
-  if (routed.ok && contentType?.startsWith("audio/")) { response.status(routed.status).send(Buffer.from(await routed.arrayBuffer())); return; }
   response.status(routed.status).send(await routed.text());
 }
 
@@ -850,68 +849,36 @@ app.post("/api/projects/:projectId/git/story-podcast", async (request, response,
 const narrationRequest = z.object({ text: z.string().trim().min(1).max(NARRATION_LIMIT), who: z.enum(["host", "cohost"]), settings: storySettingsSchema.optional() }).strict();
 const voiceProviderQuery = z.enum(VOICE_PROVIDER_CHOICES).optional();
 
-// Which engine narrates this project's stories, if any: this node's Kokoro, or the project's own ElevenLabs key.
+// Narration runs on the computer serving the viewer's page, not on the one that owns the project: speaking a line
+// needs only its text, and the viewer's computer is the one whose voice settings apply. A movie written on a slow
+// or distant machine is then still spoken at the viewer's own speed.
+// Which engine narrates here, if any: this node's Kokoro, or the project's ElevenLabs key.
 function storyVoiceView(projectId: string, voiceProvider?: z.infer<typeof voiceProviderQuery>) {
   updateLocalVoice();
   const { provider, reason } = narrationProvider(projectId, { ...getStorySettings(), ...(voiceProvider ? { voiceProvider } : {}) });
-  // `local` is the narrating computer's own Kokoro, which is what the first-use voice choice offers to install.
+  // `local` is this computer's own Kokoro, which is what the first-use voice choice offers to install.
   return { provider, available: provider !== null, reason, local: localVoiceStatus() };
 }
 
-// Installs Kokoro on the computer that narrates this project, which may not be the one the viewer is using.
-async function installProjectVoice() {
-  await startLocalVoiceInstall();
-  return { local: localVoiceStatus() };
-}
-
-async function sendNarration(response: Response, projectId: string, input: z.infer<typeof narrationRequest>): Promise<void> {
-  pruneStoryFiles();
-  const audio = await narrateStoryText(projectId, input.text, input.who, input.settings);
-  response.type(audio.mime).send(audio.bytes);
-}
-
-app.get("/api/cluster/git/story-voice", (request, response, next) => {
+app.get("/api/projects/:projectId/git/story-voice", (request, response, next) => {
   try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    response.json(storyVoiceView(queryString(request, "projectId"), voiceProviderQuery.parse(queryOptional(request, "voiceProvider"))));
-  } catch (error) { handleGitError(response, error, next); }
-});
-
-app.get("/api/projects/:projectId/git/story-voice", async (request, response, next) => {
-  try {
-    const voiceProvider = voiceProviderQuery.parse(queryOptional(request, "voiceProvider"));
-    await withOwningNode(request, response, "/api/cluster/git/story-voice", { voiceProvider }, async () => storyVoiceView(request.params.projectId, voiceProvider));
-  } catch (error) { handleGitError(response, error, next); }
-});
-
-app.post("/api/cluster/git/story-voice/install", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    response.status(202).json(await installProjectVoice());
+    response.json(storyVoiceView(request.params.projectId, voiceProviderQuery.parse(queryOptional(request, "voiceProvider"))));
   } catch (error) { handleGitError(response, error, next); }
 });
 
 app.post("/api/projects/:projectId/git/story-voice/install", async (request, response, next) => {
   try {
-    await withOwningNode(request, response, "/api/cluster/git/story-voice/install", {}, installProjectVoice, request);
-  } catch (error) { handleGitError(response, error, next); }
-});
-
-app.post("/api/cluster/git/story-voice", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    await sendNarration(response, queryString(request, "projectId"), narrationRequest.parse(request.body));
+    await startLocalVoiceInstall();
+    response.json({ local: localVoiceStatus() });
   } catch (error) { handleGitError(response, error, next); }
 });
 
 app.post("/api/projects/:projectId/git/story-voice", async (request, response, next) => {
   try {
-    const { projectId } = request.params;
     const input = narrationRequest.parse(request.body);
-    await withOwningNode(request, response, "/api/cluster/git/story-voice", {}, async () => {
-      await sendNarration(response, projectId, input);
-      return SENT;
-    }, request);
+    pruneStoryFiles();
+    const audio = await narrateStoryText(request.params.projectId, input.text, input.who, input.settings);
+    response.type(audio.mime).send(audio.bytes);
   } catch (error) { handleGitError(response, error, next); }
 });
 

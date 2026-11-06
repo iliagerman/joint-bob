@@ -287,6 +287,12 @@ test("story mode settings, narration status and podcast routes answer what a pro
     const speak = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-voice`, { method: "POST", headers, body: JSON.stringify({ text: "Hello", who: "host" }) });
     assert.equal(speak.status, 409);
     assert.match((await jsonBody(speak) as { error: string }).error, /ElevenLabs secret/);
+    // A story written on another machine is still voiced here, by the computer serving the page: a peer's nodeId is not followed.
+    const elsewhere = `${node.baseUrl}/api/projects/${project.id}/git/story-voice?nodeId=00000000-0000-4000-8000-000000000001`;
+    assert.equal((await jsonBody(await fetch(elsewhere, { headers })) as { available: boolean }).available, false);
+    const speakElsewhere = await fetch(elsewhere, { method: "POST", headers, body: JSON.stringify({ text: "Hello", who: "host" }) });
+    assert.equal(speakElsewhere.status, 409);
+    assert.match((await jsonBody(speakElsewhere) as { error: string }).error, /ElevenLabs secret/);
 
     const missing = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-podcast?threadId=unknown`, { headers });
     assert.equal(missing.status, 404);

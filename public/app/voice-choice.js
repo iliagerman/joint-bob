@@ -11,7 +11,7 @@ const LOCAL_INSTALL = "It installs once, about 500 MB, and needs no key.";
 export async function voiceForThisNode() {
   const { settings } = await api("/api/story-settings");
   if (settings.voiceChosen) return settings;
-  // The project's own computer narrates, so its Kokoro and the project's ElevenLabs key are what can be offered.
+  // This computer narrates whatever the project's node wrote, so its own Kokoro and the project's ElevenLabs key are offered.
   const target = { projectId: state.activeProjectId, nodeId: state.activeNodeId, taskId: state.activeTaskId };
   const url = (route, params) => projectGitUrl(target, route, params);
   const [local, eleven] = await Promise.all([api(url("story-voice", { voiceProvider: "kokoro" })), api(url("story-voice", { voiceProvider: "elevenlabs" }))]);
@@ -20,7 +20,7 @@ export async function voiceForThisNode() {
     message: "Stories and Activity overviews are spoken by two hosts. Your choice is saved on this computer; change it later in Settings → Activity overview.",
     options: [
       { value: "kokoro", label: "Open-source voice (Kokoro)", disabled: !local.local.allowed,
-        hint: !local.local.allowed ? local.local.reason : local.local.installed ? "Free and private. Already installed on the computer that narrates this project." : `Free and private. ${LOCAL_INSTALL}` },
+        hint: !local.local.allowed ? local.local.reason : local.local.installed ? "Free and private. Already installed on this computer." : `Free and private. ${LOCAL_INSTALL}` },
       { value: "elevenlabs", label: "ElevenLabs", hint: eleven.available ? "Uses this project's ElevenLabs account." : eleven.reason },
       { value: "none", label: "No voice", hint: "Play silently, with captions." },
     ],
