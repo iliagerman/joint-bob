@@ -106,6 +106,18 @@ export const REVIEW_QUESTION: SystemOneQuestion = {
   criteria: CRITERIA,
 };
 
+/** How Bob's own push to go on starts, so it is never taken for what the person asked. */
+export const PUSH_PREFIX = "Continue with the task: you stopped before it was done";
+
+/**
+ * What the person last asked for: their latest message, passing over Bob's own pushes. A long conversation's first message was
+ * settled long ago; judging the last answer against it pushes finished work on.
+ */
+export function latestRequest(messages: ReadonlyArray<{ role: string; text?: string }>): string {
+  const asked = messages.filter((message) => message.role === "user" && message.text?.trim());
+  return [...asked].reverse().find((message) => !message.text!.startsWith(PUSH_PREFIX))?.text ?? asked.at(-1)?.text ?? "";
+}
+
 export const verdictOf = (choice: string): ReviewVerdict | null => choice === "done" ? "done" : choice === "continue" ? "continue" : choice === "needs_user" ? "needs-user" : null;
 
 const REQUEST_CHARACTERS = 1500;

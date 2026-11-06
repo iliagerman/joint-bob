@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  MAX_PUSHES, nextStep, parseAgentVerdict, pushesSoFar, readReviewCheck, reasonFromAnswer, REVIEW_QUESTION, reviewState, verdictOf, writeReviewCheck, type ReviewCheck,
+  latestRequest, MAX_PUSHES, nextStep, parseAgentVerdict, PUSH_PREFIX, pushesSoFar, readReviewCheck, reasonFromAnswer, REVIEW_QUESTION, reviewState, verdictOf, writeReviewCheck, type ReviewCheck,
 } from "../src/control-center/review-check.js";
 
 const check = (overrides: Partial<ReviewCheck> = {}): ReviewCheck => ({
@@ -50,4 +50,19 @@ test("a check is kept per conversation and replaced by the next one", () => {
   writeReviewCheck(db, check());
   writeReviewCheck(db, check({ verdict: "needs-user", needsYou: true, pushPending: false, answerHash: "h2" }));
   assert.deepEqual(readReviewCheck(db, "p", "c"), check({ verdict: "needs-user", needsYou: true, pushPending: false, answerHash: "h2" }));
+});
+
+test("the answer is judged against what the person asked last, not the conversation's first message or Bob's own push", () => {
+  const messages = [
+    { role: "user", text: "Make sure the code is from main and pull it" },
+    { role: "assistant", text: "Done: on main and up to date." },
+    { role: "user", text: "Now add the control center" },
+    { role: "assistant", text: "Built and released." },
+    { role: "user", text: `${PUSH_PREFIX} (tests are left). Keep going until it is done.` },
+    { role: "assistant", text: "The tests pass now." },
+  ];
+  assert.equal(latestRequest(messages), "Now add the control center");
+  assert.equal(latestRequest(messages.slice(0, 2)), "Make sure the code is from main and pull it");
+  assert.equal(latestRequest([{ role: "user", text: `${PUSH_PREFIX}.` }]), `${PUSH_PREFIX}.`, "only Bob's push: it is what there is");
+  assert.equal(latestRequest([]), "");
 });

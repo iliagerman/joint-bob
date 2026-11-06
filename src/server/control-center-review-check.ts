@@ -7,7 +7,7 @@ import { appendBobMessage, bobDatabase, listBobAccounts, readBobSettings, type B
 import { isLeased } from "../control-center/leases.js";
 import { bobStarter } from "../control-center/started.js";
 import {
-  answerHash, MAX_PUSHES, nextStep, parseAgentVerdict, pushesSoFar, readReviewCheck, reasonFromAnswer, REVIEW_INSTRUCTIONS, REVIEW_QUESTION, reviewState,
+  answerHash, latestRequest, MAX_PUSHES, nextStep, PUSH_PREFIX, parseAgentVerdict, pushesSoFar, readReviewCheck, reasonFromAnswer, REVIEW_INSTRUCTIONS, REVIEW_QUESTION, reviewState,
   verdictOf, writeReviewCheck, type ReviewCheck, type ReviewVerdict,
 } from "../control-center/review-check.js";
 import { getAutoRespond } from "../conversation-auto-respond.js";
@@ -33,7 +33,7 @@ export function setReviewCheckDelay(ms: number): void { checkDelayMs = ms; }
 const pending = new Map<string, NodeJS.Timeout>();
 
 const pushText = (reason: string): string => [
-  `Continue with the task: you stopped before it was done${reason ? ` (${reason.replace(/\.$/, "")})` : ""}.`,
+  `${PUSH_PREFIX}${reason ? ` (${reason.replace(/\.$/, "")})` : ""}.`,
   "Keep going until it is done, then say what you did. If you need something only I can decide, ask me.",
 ].join(" ");
 
@@ -93,7 +93,7 @@ async function check(shared: SharedHarnessSession, actor: ActingAccount, turnEnd
   if (previous?.answerHash === hash) return;
   const project = await getProject(shared.projectId);
   if (!project || !await runAsAccount(actor, () => projectVisible(project.id))) return;
-  const request = messages.find((message) => message.role === "user")?.text ?? "";
+  const request = latestRequest(messages);
   const conversation: Conversation = {
     projectId: project.id, projectName: project.name, conversationId: shared.conversationId, engine: shared.engine, sessionId: shared.session.id,
     title: (await sessionTitleOverrides())[shared.session.id] ?? titleOf(request || answer),
