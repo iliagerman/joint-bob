@@ -142,7 +142,8 @@ export function createSketchStage(canvas, pencil) {
   let lastDraw = 0;
   let handwriting = false;
   for (const host of Object.values(hosts)) host.pose = targetPose(host, 0, false, "calm");
-  pencil.innerHTML = pencilSvg();
+  // Parsed into real SVG nodes; the app never assigns markup strings to elements.
+  pencil.replaceChildren(document.importNode(new DOMParser().parseFromString(pencilSvg(), "image/svg+xml").documentElement, true));
   loadHandwriting().then(() => {
     handwriting = true;
     for (const room of rooms.values()) prepare(room, frameAt(performance.now()));
