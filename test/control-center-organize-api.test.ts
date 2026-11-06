@@ -100,3 +100,51 @@ test("Bob creates, renames, moves and removes workspaces and projects, each only
     await rm(root, { recursive: true, force: true });
   }
 });
+
+async function eventually<T>(read: () => Promise<T | undefined>, label: string): Promise<T> {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const value = await read();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Never happened: ${label}`);
+}
+
+test("Bob starts a conversation, asks it something and brings back its answer, then deletes it, each after the button", { timeout: 180_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "control-organize-conversations-"));
+  let child: ChildProcess | undefined;
+  try {
+    const environment = await seedDevEnvironment(root, 1);
+    const node = environment.nodes[0];
+    const [project] = node.projects;
+    const directory = path.join(root, "stubs");
+    await mkdir(directory, { recursive: true });
+    child = await startNode(environment, node, directory);
+    const auth = await signIn(environment, node);
+    const sessionsOf = async () => (await api<{ sessions: Array<{ id: string; title: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`)).body.sessions;
+    const messages = async () => (await api<{ messages: BobMessage[] }>(node, auth, "GET", "/control-center/bob/messages")).body.messages;
+
+    await press(node, auth, await say(node, auth, directory, `start a conversation in ${project.name} to check the menu`, { intent: "start-conversation", projectId: project.id, message: "check the menu" }));
+    const started = await eventually(async () => (await sessionsOf()).find((session) => session.title === "check the menu"), "the conversation was started");
+
+    // Asking a conversation, even an idle one off the board, waits for the button; its answer comes back to Bob's chat.
+    const ask = await say(node, auth, directory, "ask the check the menu conversation how to review it", { intent: "message-conversation", conversation: "conversation-titled:check the menu", message: "how do I review this?" });
+    assert.match(ask.text, /^Send this to "check the menu" in .+\? I'll bring you its answer here\.\nhow do I review this\?$/);
+    assert.deepEqual(ask.actions.map((action) => action.label), ["Send it", "Cancel"]);
+    assert.match((await press(node, auth, ask)).text, /^Sent to "check the menu"\. I'll bring you its answer here when it is done\.$/);
+    const answered = await eventually(async () => (await messages()).find((message) => message.text.startsWith('"check the menu" answered:')), "the answer came back to Bob's chat");
+    assert.match(answered.text, /stubbed response/);
+    assert.equal(answered.importance, "report");
+    assert.deepEqual(answered.actions.map((action) => action.id), ["open"]);
+
+    // Deleting it is a warning button, and it is gone from the project afterwards.
+    const remove = await say(node, auth, directory, "delete the check the menu conversation", { intent: "delete-conversation", conversation: "conversation-titled:check the menu" });
+    assert.match(remove.text, /Delete the conversation "check the menu" in .+\? Its whole history goes/);
+    assert.equal(remove.actions[0].style, "warn");
+    assert.match((await press(node, auth, remove)).text, /Deleted the conversation "check the menu"/);
+    assert.equal((await sessionsOf()).some((session) => session.id === started.id), false);
+  } finally {
+    if (child) await stopDevNode(child);
+    await rm(root, { recursive: true, force: true });
+  }
+});

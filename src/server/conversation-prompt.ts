@@ -31,6 +31,8 @@ export interface ConversationPromptOptions {
   queueSettings?: (status: ReadyStatus) => PromptQueueSettings | undefined;
   /** "started" returns once the turn runs; the turn continues after the socket closes. */
   until: "started" | "completed";
+  /** The conversation accepted the prompt into its queue; a busy one starts it after the current turn. */
+  onQueued?: () => void;
   onStarted?: () => void;
   onCompleted?: () => void;
 }
@@ -76,6 +78,7 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
       if (event.type === "userMessage" && event.queued && event.requestId === options.requestId) {
         queueId = event.queueId;
         clearTimeout(timer);
+        options.onQueued?.();
       }
       if (event.type === "promptStarted" && event.queueId === queueId) {
         options.onStarted?.();

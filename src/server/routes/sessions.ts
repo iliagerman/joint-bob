@@ -938,27 +938,31 @@ export async function deleteLocalConversation(project: ProjectRecord, engine: Co
   broadcastToProject(project.id, { type: "sessionsChanged" });
 }
 
+/** Deletes a conversation where it lives: on this machine, or through the machine that owns it. Bob's delete runs it too. */
+export async function deleteConversationAsActor(project: ProjectRecord, payload: z.infer<typeof sessionDeleteSchema>): Promise<void> {
+  const local = await getClusterNode();
+  const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
+  if (ownership && ownership.ownerNodeId !== local.id) {
+    const peer = await getRuntimePeer(ownership.ownerNodeId);
+    if (!peer) throw new ConversationDeleteError(409, "Conversation owner is unavailable");
+    const routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/delete`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(30_000),
+    });
+    if (routed.status === 204) return;
+    const body = await routed.json().catch(() => null) as { error?: unknown } | null;
+    throw new ConversationDeleteError(routed.status, typeof body?.error === "string" ? body.error : "Conversation owner delete failed");
+  }
+  await deleteLocalConversation(project, payload.engine, payload.sessionId, payload.taskId);
+}
+
 app.delete("/api/projects/:projectId/sessions", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const payload = sessionDeleteSchema.parse({ projectId: project.id, engine: request.query.engine, sessionId: request.query.sessionId, taskId: request.query.taskId });
-    const local = await getClusterNode();
-    const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
-    if (ownership && ownership.ownerNodeId !== local.id) {
-      const peer = await getRuntimePeer(ownership.ownerNodeId);
-      if (!peer) throw new ConversationDeleteError(409, "Conversation owner is unavailable");
-      const routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/delete`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload), signal: AbortSignal.timeout(30_000),
-      });
-      if (routed.status === 204) { response.status(204).send(); return; }
-      const body = await routed.json().catch(() => null) as { error?: unknown } | null;
-      sendError(response, routed.status, typeof body?.error === "string" ? body.error : "Conversation owner delete failed");
-      return;
-    }
-    await deleteLocalConversation(project, payload.engine, payload.sessionId, payload.taskId);
+    await deleteConversationAsActor(project, payload);
     response.status(204).send();
   } catch (error) {
     if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
