@@ -89,8 +89,8 @@ One timer serves all of Bob's reports: it waits for the earliest report that is 
 
 A conversation that stops and waits for review is not always finished: the agent may have listed next steps, asked whether to go on, or stopped after an error it could fix. So when a turn ends, Bob checks.
 
-- **When.** About 20 seconds after the turn ends, on the machine that runs the conversation, if nothing else moves it: no message waits in its queue, auto respond is off (auto respond already answers for the agent, and Bob is told when it stops), and you have not taken control. A scheduled task's conversation is left to its own settings.
-- **Whose.** The person whose conversation it is: who sent the turn, or, for a conversation Bob started or pushed on, the person he did it for. Nobody else's Bob acts on it, and nothing happens while Bob is paused.
+- **When.** About 20 seconds after the turn ends, on the machine that runs the conversation, if nothing else moves it: no message waits in its queue, auto respond is off (auto respond already answers for the agent, and when it stops on that turn it has already brought the conversation to you), and you have not taken control. A scheduled task's conversation is left to its own settings.
+- **Whose.** The person whose conversation it is: who sent the turn, or, for a conversation Bob started or pushed on, the person he did it for. Nobody else's Bob acts on it, and nothing happens while Bob is paused. It works on each of your machines: using Bob on one is enough, and your Bob settings follow you.
 - **How it is decided.** The decision model reads the request, the conversation's summary and the end of the agent's last answer, and judges one of three: **done**, **not done** (work the agent can carry on with by itself), or **waits for you** (a decision, a plan to approve, credentials or access, or a go-ahead for a production or destructive step). When the model is missing, cannot answer, or is less sure than your threshold, Bob's own agent reads the same and decides. The line under Bob's message and the card's hover say which.
 - **What Bob does.**
   - *Done*: nothing; the card stays in review, marked **✓ Bob checked: done**.
@@ -178,8 +178,8 @@ The canvas panes, pages and split layouts, the conversation shortcuts you could 
 
 ## Limits
 
-- Bob's saved timeline, settings, reports, triggers and Telegram link live on the machine where they were made; only memory topics are copied to your other machines, as the design asks. A Telegram bot is answered from one machine only, because two machines reading the same bot take each other's messages.
-- Bob answers for an agent through auto respond (with Bob's own agent and stop instructions). When auto respond stops, Bob brings the conversation to you with buttons; it does not turn auto respond on again or answer by itself, because every stop reason is one where you decide.
+- These follow you to your other machines: Bob's memory topics, that you use Bob together with Bob's settings (pausing Bob on one machine pauses him on all), and what Bob's review checks found, so every machine's board shows it. Bob's chat messages, reports, triggers and the Telegram link stay on the machine where they were made: a review check that needs you shows on every board, and its chat message is on the machine that runs the conversation. A Telegram bot is answered from one machine only, because two machines reading the same bot take each other's messages.
+- Bob answers for an agent through auto respond (with Bob's own agent and stop instructions), or tells a stopped agent to go on after a review check. When auto respond stops, Bob brings the conversation to you with buttons and the review check stays out of that turn; Bob does not turn auto respond on again by himself, because every stop reason is one where you decide.
 - Bob's own actions (moving jobs, stopping turns, changing or deleting automations) do not go to Guardian: each one waits for your button in the chat, whatever Guardian would have said. Pausing or resuming an automation you named happens at once.
 - Webhooks are created from the Automations tab, so their secret address is never in the chat.
 - Bob's Telegram bot reads text only. A voice message gets a request to type it, until the assistants' speech to text is released.

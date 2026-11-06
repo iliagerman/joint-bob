@@ -10,6 +10,7 @@ import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } f
 import { applyConversationNotificationDeliveredEvent, applyConversationNotificationEvent, ensureConversationNotificationSchema } from "./conversation-notifications.js";
 import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
 import { applyMemoryEvent } from "./control-center/memory-sync.js";
+import { applyBobEvent, applyReviewCheckEvent } from "./control-center/bob-sync.js";
 import { applyConversationGoalEvent, ensureConversationGoalSchema } from "./conversation-goals.js";
 import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
 import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
@@ -268,7 +269,7 @@ export function replicationInvalidations(events: ReplicationEvent[]): Replicatio
   const entityTypes = new Set(events.map((event) => event.entityType));
   const invalidations = new Set<ReplicationInvalidation>();
   if (entityTypes.has("name.override") || entityTypes.has("project.lock") || entityTypes.has("model.usage") || entityTypes.has("usage.difficulty")) invalidations.add("projectsChanged");
-  if (["name.override", "task", "conversation.ownership", "conversation.record", "conversation.queue", "conversation.goal", "conversation.review", "conversation.notification", "model.usage", "usage.difficulty"].some((type) => entityTypes.has(type))) invalidations.add("sessionsChanged");
+  if (["name.override", "task", "conversation.ownership", "conversation.record", "conversation.queue", "conversation.goal", "conversation.review", "conversation.notification", "model.usage", "usage.difficulty", "control.reviewCheck"].some((type) => entityTypes.has(type))) invalidations.add("sessionsChanged");
   if (entityTypes.has("task")) invalidations.add("tasksChanged");
   if (entityTypes.has("user.pin")) invalidations.add("pinsChanged");
   if (entityTypes.has("user.recent")) invalidations.add("recentsChanged");
@@ -406,6 +407,8 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "canvas.shortcut": () => undefined,
   "instructions.global": applyGlobalInstructionsEvent,
   "control.memory": applyMemoryEvent,
+  "control.bob": applyBobEvent,
+  "control.reviewCheck": applyReviewCheckEvent,
   "user.pin": applyUserPinEvent,
   "user.recent": applyUserRecentSessionEvent,
   "model.usage": applyUsageEvent,

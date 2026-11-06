@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Bob's review check now works on each of your machines: using Bob on one is enough, your Bob settings (including pausing him) follow you, and every machine's board shows what the check found.
+- Fixed the review check messaging you about a turn on which auto respond had already stopped and brought the conversation to you.
+
 ## 2.215.0 — 2026-11-05
 
 - Added a check when a conversation stops for review: the decision model, or Bob's agent below your threshold, judges whether the task is really done; Bob tells an unfinished one to go on (up to three times in a row), brings one that waits for you to Needs you, and marks a finished one as checked. A setting chooses push, ask first, or leave it.

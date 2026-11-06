@@ -57,7 +57,21 @@ export function listReviewChecks(db: DatabaseSync): ReviewCheck[] {
   return (db.prepare("SELECT * FROM control_center_review_checks").all() as unknown as Row[]).map(fromRow);
 }
 
+const writeListeners = new Set<(check: ReviewCheck) => void>();
+
+/** Hears each check made on this machine, so the person's other machines can show it too. */
+export function onReviewCheckWritten(listener: (check: ReviewCheck) => void): () => void {
+  writeListeners.add(listener);
+  return () => writeListeners.delete(listener);
+}
+
 export function writeReviewCheck(db: DatabaseSync, check: ReviewCheck): void {
+  storeReviewCheck(db, check);
+  for (const listener of writeListeners) listener(check);
+}
+
+/** Keeps a check without telling anyone: for one made on the person's other machine. */
+export function storeReviewCheck(db: DatabaseSync, check: ReviewCheck): void {
   ensureReviewCheckSchema(db);
   db.prepare(`INSERT INTO control_center_review_checks (project_id, conversation_id, account_id, verdict, reason, decided_by, answer_hash, pushes, push_pending, needs_you, checked_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, conversation_id) DO UPDATE SET account_id = excluded.account_id, verdict = excluded.verdict, reason = excluded.reason,

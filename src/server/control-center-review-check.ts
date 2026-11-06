@@ -73,14 +73,17 @@ const openAction = (conversation: Conversation): BobAction => ({ id: "open", lab
 const pushAction = (conversation: Conversation): BobAction => ({ id: "review.push", label: "Push it on", style: "primary", data: { ...conversation } });
 
 /** Checks one conversation whose turn ended, as the person whose conversation it is, and acts on what is found. "busy" means the turn is still settling. */
-async function check(shared: SharedHarnessSession, actor: ActingAccount): Promise<"busy" | void> {
+async function check(shared: SharedHarnessSession, actor: ActingAccount, turnEndedAt: number): Promise<"busy" | void> {
   const db = await bobDatabase();
   const settings = readBobSettings(db, actor.accountId);
   if (!settings.monitoring || settings.reviewCheck === "off") return;
   if (shared.turnInFlight > 0 || harnessSessionBusy(shared)) return "busy";
   // Something else is moving it, or the person is in it: nothing to judge.
   if (listQueuedPrompts(`${shared.projectId}:${shared.conversationId}`).length) return;
-  if ((await getAutoRespond(shared.projectId, shared.conversationId))?.status === "active" || isLeased(shared.projectId, shared.conversationId)) return;
+  if (isLeased(shared.projectId, shared.conversationId)) return;
+  // Auto respond answers for the agent; when it stopped on this turn, it already brought the conversation to the person.
+  const responder = await getAutoRespond(shared.projectId, shared.conversationId);
+  if (responder?.status === "active" || (responder?.status === "stopped" && Date.parse(responder.updatedAt) >= turnEndedAt - AUTO_RESPOND_SLACK_MS)) return;
   const messages = shared.session.messages;
   const answer = [...messages].reverse().find((message) => message.role === "assistant")?.text?.trim();
   if (!answer) return;
@@ -123,6 +126,8 @@ async function check(shared: SharedHarnessSession, actor: ActingAccount): Promis
 }
 
 const BUSY_RETRIES = 5;
+/** Auto respond stops a moment after the turn it judged; a stop this close to the turn's end is about that turn. */
+const AUTO_RESPOND_SLACK_MS = 5_000;
 
 /**
  * Whose conversation it is decides whose Bob checks it; nobody else's Bob acts on it. The person who sent the turn, or, for a
@@ -134,14 +139,14 @@ async function ownerOf(shared: SharedHarnessSession, turnAccountId: string | nul
   return accountId ? listBobAccounts(db).find((candidate) => candidate.accountId === accountId) : undefined;
 }
 
-function schedule(shared: SharedHarnessSession, turnAccountId: string | null, attempt: number): void {
+function schedule(shared: SharedHarnessSession, turnAccountId: string | null, turnEndedAt: number, attempt: number): void {
   const key = `${shared.projectId}:${shared.conversationId}`;
   clearTimeout(pending.get(key));
   pending.set(key, setTimeout(() => {
     pending.delete(key);
     void (async () => {
       const owner = await ownerOf(shared, turnAccountId);
-      if (owner && await check(shared, owner) === "busy" && attempt < BUSY_RETRIES) schedule(shared, turnAccountId, attempt + 1);
+      if (owner && await check(shared, owner, turnEndedAt) === "busy" && attempt < BUSY_RETRIES) schedule(shared, turnAccountId, turnEndedAt, attempt + 1);
     })().catch((error) => console.warn("Bob's review check failed", error instanceof Error ? error.message : error));
   }, checkDelayMs).unref());
 }
@@ -156,7 +161,7 @@ export function startReviewChecks(): void {
     if (shared.scheduledTurn || shared.internalTurn) return;
     // Read now: the turn's person is forgotten once it ends.
     const turnAccountId = shared.turnAccountId ?? null;
-    schedule(shared, turnAccountId, 0);
+    schedule(shared, turnAccountId, Date.now(), 0);
   });
 }
 

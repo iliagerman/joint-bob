@@ -94,10 +94,25 @@ function clean(value: Partial<BobSettings>): BobSettings {
   };
 }
 
-/** Remembers who uses Bob, so Bob can tell them about things that happen while they are away. */
-export function rememberBobAccount(db: DatabaseSync, actor: ActingAccount): void {
+const changeListeners = new Set<(accountId: string) => void>();
+
+/** Hears when a person starts using Bob on this machine or changes Bob's settings here, so their other machines can follow. */
+export function onBobAccountChanged(listener: (accountId: string) => void): () => void {
+  changeListeners.add(listener);
+  return () => changeListeners.delete(listener);
+}
+
+/** Records a person as a Bob user without telling anyone: for an account that arrives from the person's other machine. */
+export function storeBobAccount(db: DatabaseSync, actor: ActingAccount): boolean {
+  const known = Boolean(db.prepare("SELECT 1 FROM control_center_bob_accounts WHERE account_id = ?").get(actor.accountId));
   db.prepare("INSERT INTO control_center_bob_accounts (account_id, actor, seen_at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET actor = excluded.actor, seen_at = excluded.seen_at")
     .run(actor.accountId, JSON.stringify(actor), new Date().toISOString());
+  return !known;
+}
+
+/** Remembers who uses Bob, so Bob can tell them about things that happen while they are away, here and on their other machines. */
+export function rememberBobAccount(db: DatabaseSync, actor: ActingAccount): void {
+  if (storeBobAccount(db, actor)) for (const listener of changeListeners) listener(actor.accountId);
 }
 
 export function listBobAccounts(db: DatabaseSync): ActingAccount[] {
@@ -110,10 +125,21 @@ export function readBobSettings(db: DatabaseSync, accountId: string): BobSetting
   try { return clean(JSON.parse(row.settings) as Partial<BobSettings>); } catch { return { ...DEFAULT_BOB_SETTINGS }; }
 }
 
+/** When the settings were last written, here or on the person's other machine; null when they never were. */
+export function bobSettingsUpdatedAt(db: DatabaseSync, accountId: string): string | null {
+  return (db.prepare("SELECT updated_at FROM control_center_bob_settings WHERE account_id = ?").get(accountId) as { updated_at: string } | undefined)?.updated_at ?? null;
+}
+
+/** Writes settings as they were written elsewhere, at the time they were written there, without telling anyone. */
+export function storeBobSettings(db: DatabaseSync, accountId: string, settings: Partial<BobSettings>, updatedAt: string): void {
+  db.prepare("INSERT INTO control_center_bob_settings (account_id, settings, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET settings = excluded.settings, updated_at = excluded.updated_at")
+    .run(accountId, JSON.stringify(clean(settings)), updatedAt);
+}
+
 export function writeBobSettings(db: DatabaseSync, accountId: string, change: Partial<BobSettings>): BobSettings {
   const next = clean({ ...readBobSettings(db, accountId), ...change });
-  db.prepare("INSERT INTO control_center_bob_settings (account_id, settings, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET settings = excluded.settings, updated_at = excluded.updated_at")
-    .run(accountId, JSON.stringify(next), new Date().toISOString());
+  storeBobSettings(db, accountId, next, new Date().toISOString());
+  for (const listener of changeListeners) listener(accountId);
   return next;
 }
 
