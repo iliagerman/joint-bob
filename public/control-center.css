@@ -139,7 +139,8 @@ button.control-overview-row { cursor: pointer; }
 
 /* A conversation opened from the board shows over it. Watching hides the message box until the person takes control. */
 .control-popup-bar { display: none; }
-body.view-control.control-popup .shell > #chatPanel { display: flex; position: fixed; inset: 48px max(16px, 5vw) 16px; z-index: 40; border-radius: 12px; box-shadow: 0 18px 60px rgb(0 0 0 / 45%); }
+/* The panel's own height: 100% would win over the bottom inset and push the message box off the window. */
+body.view-control.control-popup .shell > #chatPanel { display: flex; position: fixed; inset: 48px max(16px, 5vw) 16px; height: auto; z-index: 40; border-radius: 12px; box-shadow: 0 18px 60px rgb(0 0 0 / 45%); }
 body.view-control.control-popup #controlCenterPanel::after { content: ""; position: fixed; inset: 0; z-index: 39; background: rgb(0 0 0 / 40%); }
 body.view-control.control-popup .control-popup-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .control-popup-project { font-weight: 650; }

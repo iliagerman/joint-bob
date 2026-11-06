@@ -65,6 +65,9 @@ test("a card opens its conversation over the board to watch; taking control lets
   await composer.waitFor({ state: "visible" });
   assert.match(await mode.innerText(), /You're in it/);
   assert.equal(await page.getByTestId("control-popup-take").isVisible(), false);
+  // The whole message box fits in the window: the popup is never taller than the space under its top edge.
+  const fit = await page.evaluate(() => ({ composer: document.querySelector("#composer")!.getBoundingClientRect().bottom, panel: document.querySelector("#chatPanel")!.getBoundingClientRect().bottom, window: innerHeight }));
+  assert.ok(fit.composer <= fit.panel && fit.panel <= fit.window, `composer ${fit.composer}, panel ${fit.panel}, window ${fit.window}`);
   await page.getByTestId("control-lease-give-back").click();
   await page.getByTestId("control-lease-banner").waitFor({ state: "hidden" });
   await composer.waitFor({ state: "hidden" });
