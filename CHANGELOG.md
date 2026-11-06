@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.216.0 — 2026-11-06
 
 - Bob's review check now works on each of your machines: using Bob on one is enough, your Bob settings (including pausing him) follow you, and every machine's board shows what the check found.
 - Fixed the review check messaging you about a turn on which auto respond had already stopped and brought the conversation to you.
