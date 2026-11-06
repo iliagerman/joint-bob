@@ -6,6 +6,7 @@ import { GitReviewRunError, handleBobMessage } from "../bob.js";
 import { sendError } from "../http-auth.js";
 import { QuickNoteLaunchError } from "../quick-note-dispatch.js";
 import { fileAttachmentSchema, imageAttachmentSchema } from "../schemas.js";
+import { appearanceContextSchema } from "../control-center-display.js";
 import { app } from "../state.js";
 // A press of a message another of the person's machines wrote is run there.
 import "../control-center-bob-remote.js";
@@ -19,6 +20,8 @@ const messageSchema = z.object({
   /** Pasted or picked images and files, with the same limits as a conversation's message box. */
   images: z.array(imageAttachmentSchema).max(4).optional(),
   files: z.array(fileAttachmentSchema).max(6).optional(),
+  /** The page's own display settings and what it allows, so Bob's display agent can change them there. */
+  appearance: appearanceContextSchema.optional(),
 }).strict();
 
 const settingsSchema = z.object({

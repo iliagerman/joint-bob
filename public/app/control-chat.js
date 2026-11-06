@@ -1,6 +1,7 @@
 import { harnessOption } from "../harness-metadata.js";
 import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
+import { appearanceContext, applyAppearance } from "./appearance.js";
 import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
 import { openConversation, refreshControlCenter, saveControlCenter } from "./control-center.js";
@@ -84,8 +85,9 @@ async function loadMessages() {
 }
 
 async function runAction(message, action, button) {
-  // Opening a conversation happens in the page; every other button is answered by the server.
+  // Opening a conversation and undoing a display change happen in the page; every other button is answered by the server.
   if (action.data?.open) { openConversation(action.data.open).catch((error) => toast(error.message)); return; }
+  if (action.data?.appearance) { applyAppearance(action.data.appearance); toast("Display settings put back"); return; }
   button.disabled = true;
   try {
     const result = await api("/api/control-center/bob/action", { method: "POST", body: JSON.stringify({ messageId: message.id, actionId: action.id }) });
@@ -129,8 +131,10 @@ async function send(text, sent, answerOnly) {
   elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
   const files = sent.length ? { images: ofKind(sent, "image"), files: ofKind(sent, "file") } : {};
   try {
-    const result = await api("/api/control-center/bob/message", { method: "POST", body: JSON.stringify({ message: text, ...files, ...(projectId ? { projectId } : {}), ...(answerOnly ? { answerOnly: true } : {}) }) });
+    // The display settings go along, so Bob's display agent can change them in this page.
+    const result = await api("/api/control-center/bob/message", { method: "POST", body: JSON.stringify({ message: text, ...files, appearance: appearanceContext(), ...(projectId ? { projectId } : {}), ...(answerOnly ? { answerOnly: true } : {}) }) });
     waiting.remove();
+    if (result.appearance) applyAppearance(result.appearance);
     for (const message of [result.user, result.reply]) if (matchesFilter(message)) messages.push(message);
     renderMessages();
     if (result.action === "started") void refreshControlCenter().catch(() => undefined);

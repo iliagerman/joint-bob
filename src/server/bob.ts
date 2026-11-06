@@ -19,6 +19,7 @@ import { saveBobAttachments, startBobConversation, titleOf, type BobAttachments 
 import { promptTextWithAttachments } from "./chat.js";
 import { handleBobAutomation } from "./control-center-automation-chat.js";
 import { handleBobOrganize } from "./control-center-organize.js";
+import { askDisplayAgent, type AppearanceContext, type AppearanceSettings } from "./control-center-display.js";
 import { bobDashboardRequest } from "./control-center-dashboard-request.js";
 import { GitReviewRunError, runGitReview } from "./git-review-run.js";
 import { iconHarnessId } from "./label-icon.js";
@@ -105,14 +106,15 @@ export async function answerWithAgent(args: { message: string; attachments: BobA
   return { text: result.answer.trim(), via: contributed.via };
 }
 
-export interface BobReply { action: "started" | "answer"; user: BobMessage; reply: BobMessage; projectId: string | null; sessionId?: string | null }
+/** `appearance` is the page's new display settings, when Bob's display agent changed them; the page applies them. */
+export interface BobReply { action: "started" | "answer"; user: BobMessage; reply: BobMessage; projectId: string | null; sessionId?: string | null; appearance?: AppearanceSettings }
 
 /**
  * Bob's front door. The person's message and Bob's reply are both kept in Bob's timeline, labelled with the project and
  * how much it matters. The decision model decides what the message is, which project it is about and how big the job is,
  * in one batched request; a confident task starts as a conversation in that project, anything else is answered by Bob's agent.
  */
-export async function handleBobMessage(session: AuthSession, input: { message: string; projectId?: string; answerOnly?: boolean; images?: BobAttachments["images"]; files?: BobAttachments["files"] }): Promise<BobReply> {
+export async function handleBobMessage(session: AuthSession, input: { message: string; projectId?: string; answerOnly?: boolean; images?: BobAttachments["images"]; files?: BobAttachments["files"]; appearance?: AppearanceContext }): Promise<BobReply> {
   const db = await bobDatabase();
   // Attachments reach the agent that reads the message: Bob's when he answers, or the conversation he starts or continues.
   const attachments: BobAttachments = { images: input.images ?? [], files: input.files ?? [] };
@@ -139,6 +141,17 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
   const project = chosen ?? projects.find((candidate) => candidate.id === sure?.projectId);
   const shown = attachedNames.length ? `${input.message}\n\nAttached: ${attachedNames.join(", ")}` : input.message;
   const user = appendBobMessage(db, session.accountId, { role: "user", text: shown, projectId: project?.id ?? null, projectName: project?.name ?? null });
+
+  // How the app looks goes to Joint Bob's display agent, on a lighter model; its change is applied in the page the person wrote from.
+  const display = input.answerOnly ? null : await askDisplayAgent({ message: input.message, recentChat: recent, decision, settings, projects, context: input.appearance });
+  if (display) {
+    const reply = appendBobMessage(db, session.accountId, {
+      role: "bob", text: display.reply, via: display.via, importance: display.kind === "changed" ? "done" : "fyi", projectId: null, projectName: null,
+      ...(display.kind === "changed" ? { actions: [{ id: "display.undo", label: "Undo", data: { appearance: display.previous } }] } : {}),
+    });
+    notifyBobExchange({ session, message: input.message, recentChat: recent, project: null, options, settings }, reply.text);
+    return { action: "answer", user, reply, projectId: null, ...(display.kind === "changed" ? { appearance: display.settings } : {}) };
+  }
 
   // A request for a dashboard for a project or for the person goes to the dashboard-creator agent, not to a project conversation.
   const dashboards = input.answerOnly ? null : await bobDashboardRequest({ session, db, settings, message: input.message, recentChat: recent, project, projects, decision: sure, model });

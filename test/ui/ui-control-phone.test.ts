@@ -269,7 +269,9 @@ test("on a phone the control center is Bob's chat, with chips, an agents sheet a
   await page.getByTestId("control-chat-input").fill("what is running?");
   await page.getByTestId("control-chat-send").click();
   await page.getByTestId("control-chat-messages").getByText("Two agents are running.").waitFor();
-  assert.deepEqual(await page.evaluate("window.__sent"), [{ message: "what is running?", projectId: "p1" }]);
+  const sent = await page.evaluate("window.__sent") as Array<{ message: string; projectId: string; appearance?: { settings: unknown } }>;
+  assert.deepEqual(sent.map(({ message, projectId }) => ({ message, projectId })), [{ message: "what is running?", projectId: "p1" }]);
+  assert.ok(sent[0].appearance?.settings, "the display settings go along, for Bob's display agent");
 
   // The back button leaves the control center, and the app icon's shortcut comes straight to it.
   await page.getByTestId("control-phone-back").click();

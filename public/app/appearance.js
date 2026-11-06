@@ -184,5 +184,28 @@ dialog.querySelector("#appearanceResetButton").addEventListener("click", () => {
   render();
 });
 
+/** The display settings and what they allow, for Bob's display agent, which may change them from Bob's chat. */
+export function appearanceContext() {
+  return {
+    settings: structuredClone(settings),
+    themes: THEMES.map(({ id, label }) => ({ id, label })),
+    sections: SECTIONS.map(({ id, label }) => ({ id, label })),
+    scale: { min: MIN_SCALE, max: MAX_SCALE, step: STEP },
+  };
+}
+
+/** Applies display settings chosen elsewhere (Bob's display agent, or its Undo), kept to what this page allows, as the dialog would. */
+export function applyAppearance(next) {
+  settings = {
+    theme: THEMES.some((theme) => theme.id === next.theme) ? next.theme : "",
+    global: clampScale(next.global),
+    sections: Object.fromEntries(SECTIONS.map((section) => [section.id, clampScale(next.sections?.[section.id])])),
+  };
+  applyTheme();
+  applyScales();
+  save();
+  if (dialog.open) render();
+}
+
 applyTheme();
 applyScales();

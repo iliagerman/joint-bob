@@ -32,6 +32,13 @@ test("the control center shows the live board, filters by project, colors cards 
         const body = JSON.parse(args[1].body);
         window.__bobRequests = [...(window.__bobRequests || []), body];
         const started = body.message.startsWith('fix');
+        if (body.message.startsWith('make it')) {
+          const user = { id: 'm' + window.__timeline.length, role: 'user', text: body.message, via: null, importance: 'fyi', actions: [], createdAt: new Date().toISOString(), projectId: null, projectName: null };
+          const reply = { id: 'm' + (window.__timeline.length + 1), role: 'bob', text: 'Switched to Midnight and made everything larger.', via: 'Display agent · haiku · TypeSafe (Jev) chose level 1', importance: 'done', projectId: null, projectName: null, createdAt: new Date().toISOString(),
+            actions: [{ id: 'display.undo', label: 'Undo', data: { appearance: body.appearance.settings } }] };
+          window.__timeline.push(user, reply);
+          return new Response(JSON.stringify({ action: 'answer', user, reply, projectId: null, appearance: { ...body.appearance.settings, theme: 'midnight', global: 1.15 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
         const project = body.projectId === 'p2' ? { projectId: 'p2', projectName: 'DAK Live' } : started ? { projectId: 'p1', projectName: 'Joint Bob' } : { projectId: null, projectName: null };
         const make = (role, text, extra = {}) => ({ id: 'm' + window.__timeline.length, role, text, via: null, importance: 'fyi', actions: [], createdAt: new Date().toISOString(), ...project, ...extra });
         const user = make('user', body.message);
@@ -149,6 +156,19 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.deepEqual(attached.images?.map((image) => [image.name, image.data]), [["screen.png", "iVBORw=="]]);
   assert.deepEqual(attached.files?.map((file) => [file.name, Buffer.from(file.data, "base64").toString()]), [["notes.txt", "the map is wrong"]]);
   assert.equal(await page.locator('[data-testid="control-chat-attachments"] .attachment-chip').count(), 0);
+
+  // A display request carries the page's display settings; Bob's display agent's change is applied here, and Undo puts them back.
+  const before = await page.evaluate(() => ({ palette: document.documentElement.dataset.palette ?? null, zoom: document.documentElement.style.getPropertyValue("--ui-zoom-chat") }));
+  await page.getByTestId("control-chat-input").fill("make it midnight and larger");
+  await page.getByTestId("control-chat-send").click();
+  await page.waitForFunction(() => document.documentElement.dataset.palette === "midnight");
+  const sentDisplay = (await page.evaluate("window.__bobRequests") as Array<{ appearance?: { themes: Array<{ id: string }>; sections: Array<{ id: string }>; settings: { global: number } } }>)[3].appearance!;
+  assert.ok(sentDisplay.themes.some((theme) => theme.id === "midnight") && sentDisplay.sections.some((section) => section.id === "chat"), "the page says what it allows");
+  assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue("--ui-zoom-chat")), "1.15");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("jointBobAppearance")!).theme), "midnight", "kept like a change made in Settings → Appearance");
+  await page.getByTestId("control-chat-messages").getByRole("button", { name: "Undo" }).click();
+  await page.waitForFunction((palette) => (document.documentElement.dataset.palette ?? null) === palette, before.palette);
+  assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue("--ui-zoom-chat")), before.zoom);
 
   // The filters narrow the timeline by importance and by project.
   await page.getByTestId("control-chat-importance-important").click();

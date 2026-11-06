@@ -32,7 +32,7 @@ Colors, the filter, and the chat's side and width are kept with your account. Bo
 
 Bob is the chat beside the board. It acts for you across projects. Drag its edge to make it wider, and use the arrows button to put it on the left or the right.
 
-Each message goes to the decision model first (TypeSafe or Laya, your choice in Bob's settings, with a key from the first project that has one attached). In one request it judges what the message is (a question, a task, an automation or something else), how big the job is, which project it is about, and whether auto respond suits the work; with many projects they are asked in groups at the same time. The line under Bob's replies shows what was decided and how sure the model was.
+Each message goes to the decision model first (TypeSafe or Laya, your choice in Bob's settings, with a key from the first project that has one attached). In one request it judges what the message is (a question, a task, an automation, a change to how the app looks or something else), how big the job is, which project it is about, and whether auto respond suits the work; with many projects they are asked in groups at the same time. The line under Bob's replies shows what was decided and how sure the model was.
 
 - **A task in a project, and the model is at least as sure as your threshold (90% unless you change it):** Bob starts it as a normal conversation in that project, with Bob's agent unless you said otherwise. It is marked **started by Bob** on its card and appears in the project's conversation list. When the work is routine, and your setting **Auto respond** allows it, Bob turns on auto respond for it with stop instructions that always include plans to approve, decisions that change what users see, and production or destructive steps.
 - **A task that belongs to a conversation the project already has** goes there instead of starting a new one, when the decision model is sure which ("also adjust the width" after a menu task). A conversation that runs on another machine, or that you have taken control of, is left alone: Bob says so and starts a new one.
@@ -50,6 +50,15 @@ Bob keeps its conversation: every message and reply is saved with the project it
 **Production and destructive steps always ask you.** Guardian's rule "Production or destructive steps" checks every command with the decision model and asks you before it runs. Bob's settings show whether it is on; an administrator can turn it on there (it also turns Guardian on for the machine). When a step waits, it shows on the board, in Bob's chat (with **Allow once** and **Block**) and in the conversation. Bob never answers these for you; pressing the button is you answering. When no one answers within 10 minutes, the step is blocked.
 
 When auto respond ends (the agent needs you, the limit was reached, or a turn failed), Bob tells you in the chat with the reason and buttons to open the conversation, turn auto respond on again, or take it over.
+
+## How Joint Bob looks
+
+Ask Bob to change how the app looks: "switch to the midnight theme", "make the conversation text bigger", "make everything a bit smaller". Bob hands the request to Joint Bob's display agent, which decides the change and reports back.
+
+- **What it changes** is Settings → Appearance (the logo opens it): the theme, the size of the whole app, and the size of each part (Projects panel, Conversations panel, Conversation, Activity pane, Headers). As when you change them there, they are kept in the browser you asked from, and your other devices keep their own. For anything else, such as fonts, colors or layout, it says it cannot.
+- **It is applied at once.** Bob's reply says what changed, and **Undo** puts the earlier settings back.
+- **It runs on a lighter model.** The display agent is Bob's agent on a model from your routing profile, or Joint Bob's default one when you chose none. The decision model (Jev) picks among the profile's lighter half of levels, so it never gets one of the strongest models. Without a decision model key, the lightest level runs. The line under the reply says which (*Display agent · haiku · TypeSafe (Jev) chose level 1*).
+- **Only from Bob's chat in the app.** From Telegram there are no display settings to change, so Bob says to ask in the app.
 
 ## Bob's memory
 
