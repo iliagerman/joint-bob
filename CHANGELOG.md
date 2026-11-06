@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.220.2 — 2026-11-06
+
+- Activity overviews are spoken on the computer you view them on. A movie written on the homeserver used to be narrated by the homeserver's slower local voice, so playback stalled on "Preparing voice…"; now your own computer's voice narrates it.
+
 ## 2.220.1 — 2026-11-06
 
 - Ships 2.220.0 and the browser sign-in form from 2.219.2, which did not release: a test still expected the review runner's old read-only check. 2.220.0 adds files and pasted images in Bob's chat, keeps a taken-over conversation's message box in the window, makes board cards the same size, and lets Bob's agent read project files with Claude again.
