@@ -293,7 +293,9 @@ test("Bob writes his reports on their time, skips them while paused, and never q
     assert.equal(written.projectId, null, "a report across projects is General");
     const afterRun = await row();
     assert.deepEqual([afterRun.last.state, afterRun.last.detail], ["ok", null]);
-    assert.ok(nextRun() > Date.now() + 3_600_000, "the next report is at its next time, not queued");
+    // At its next 19:00, which is minutes away when this runs just before 19:00, and never due again at once.
+    const next = new Date(nextRun());
+    assert.ok(next.getTime() > Date.now() && next.getUTCHours() === 19 && next.getUTCMinutes() === 0, `the next report is at its next time, not queued: ${next.toISOString()}`);
 
     // When the agent cannot write it, the facts are posted and the note says why.
     await rm(path.join(directory, "report.txt"));
@@ -347,7 +349,8 @@ test("Bob writes his reports on their time, skips them while paused, and never q
     await api(node, auth, "PUT", "/control-center/bob/settings", { monitoring: true });
     await new Promise((resolve) => setTimeout(resolve, 2500));
     assert.equal((await reports()).length, before, "nothing was queued while Bob was paused");
-    assert.ok(nextRun() > Date.now() + 3_600_000);
+    const resumed = new Date(nextRun());
+    assert.ok(resumed.getTime() > Date.now() && resumed.getUTCHours() === 19 && resumed.getUTCMinutes() === 0, `back at its next time: ${resumed.toISOString()}`);
 
     // A report whose time passed while the server was off is missed, not written late.
     await due(-45 * 60_000);
