@@ -7,9 +7,9 @@ const projectActions = [];
 const decorators = [];
 const tools = [];
 
-/** `run(card)` is called when the button is pressed; `visible(card)` hides the button on cards it does not suit. */
-export function registerCardAction({ id, label, title = "", order = 100, visible = () => true, run }) {
-  actions.push({ id, label, title, order, visible, run });
+/** `run(card)` is called when the button is pressed; `visible(card)` hides the button on cards it does not suit; `style` "primary" makes it the card's main button. */
+export function registerCardAction({ id, label, title = "", order = 100, style = "", visible = () => true, run }) {
+  actions.push({ id, label, title, order, style, visible, run });
   actions.sort((a, b) => a.order - b.order);
 }
 

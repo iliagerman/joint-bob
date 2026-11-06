@@ -88,7 +88,8 @@ window.addEventListener("control-popup-closed", () => {
 
 registerCardAction({
   id: "take-control", label: "✋ Take control", title: "Work in this conversation yourself; Bob and auto respond stay out until you give it back",
-  order: 5, visible: (card) => card.controlledBy === null, run: takeControl,
+  // A finished card has Review instead: taking control is in the conversation, once it is open.
+  order: 5, visible: (card) => card.controlledBy === null && card.column !== "review", run: takeControl,
 });
 registerCardAction({
   id: "give-back", label: "Give back to Bob", title: "Let Bob and auto respond answer for this agent again",

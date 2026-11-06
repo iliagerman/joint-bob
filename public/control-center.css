@@ -178,6 +178,8 @@ body.control-popup:not(.control-held) #composer { display: none; }
 .control-live-lines { display: flex; flex-direction: column; min-width: 0; }
 .control-live-now { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--accent); }
 .control-live.has-now .control-live-text { -webkit-line-clamp: 1; }
+.control-card-action[data-style="primary"] { background: #5b6cf0; border-color: #5b6cf0; color: #fff; font-weight: 600; }
+.control-card-action[data-style="primary"]:hover { color: #fff; filter: brightness(1.1); }
 
 /* Who drives a conversation shows on its card: the system (auto respond), Bob watching what he started, or the person. */
 .control-driver { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }

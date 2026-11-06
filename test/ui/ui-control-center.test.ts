@@ -74,11 +74,14 @@ test("the control center shows the live board, filters by project, colors cards 
   const heights = await page.getByTestId("control-center-card").evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().height));
   assert.equal(new Set(heights).size, 1, `card heights: ${heights.join(", ")}`);
   assert.match(await page.locator('[data-key="p2:c2"] .control-title').getAttribute("title") ?? "", /then map it$/);
-  // A running card says what the turn is doing now, over the summary's line.
+  // A running card says what the turn is doing now, over the summary's line; a finished one has a Review button instead of Take control.
   assert.equal(await page.locator('[data-key="p1:c1"]').getByTestId("control-card-activity").textContent(), "Bash · npm run test:ui -- test/ui/menu.test.ts");
   assert.equal(await page.locator('[data-key="p1:c1"] .control-live-text').textContent(), "Running the UI tests");
   assert.match(await page.locator('[data-key="p1:c1"] .control-live').getAttribute("title") ?? "", /Now: Bash · npm run test:ui/);
   assert.equal(await page.locator('[data-key="p2:c2"]').getByTestId("control-card-activity").count(), 0, "no activity known, so the summary line stays");
+  assert.equal(await review.getByTestId("control-card-action-review").isVisible(), true);
+  assert.equal(await review.getByTestId("control-card-action-take-control").count(), 0);
+  assert.equal(await page.locator('[data-key="p1:c1"]').getByTestId("control-card-action-review").count(), 0, "only finished work is reviewed");
 
   // Filter to one project.
   await page.getByTestId("control-center-filters").getByText("DAK Live").click();

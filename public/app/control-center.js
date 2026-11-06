@@ -5,7 +5,7 @@ import { openListedSession } from "./reviews.js";
 import { formatDate, toast } from "./shell.js";
 import { state } from "./state.js";
 import { registerControlView } from "./control-views.js";
-import { boardTools, briefStatus, cardActionList, decorateCard, plainSummary, projectActionList } from "./control-cards.js";
+import { boardTools, briefStatus, cardActionList, decorateCard, plainSummary, projectActionList, registerCardAction } from "./control-cards.js";
 
 const DEFAULT_COLOR = "#3a3f46";
 const COLUMNS = [
@@ -117,6 +117,8 @@ function renderCard(card) {
     const row = element("div", "control-card-actions");
     for (const action of buttons) {
       const button = element("button", "control-card-action", action.label);
+      // Not a class: the app's own `.primary` buttons are taller than a card's row.
+      if (action.style) button.dataset.style = action.style;
       button.type = "button";
       button.title = action.title;
       button.dataset.testid = `control-card-action-${action.id}`;
@@ -320,6 +322,12 @@ export function closeConversationPopup() {
 }
 
 const openCard = openConversation;
+
+// Reviewing a finished conversation is reading it: opening it marks it reviewed, and it leaves the review lane.
+registerCardAction({
+  id: "review", label: "Review", style: "primary", order: 1, title: "Open it to read what it did; once you have looked, it leaves Done · ready for review",
+  visible: (card) => card.column === "review", run: (card) => openConversation(card),
+});
 
 function resetBoard() {
   const { chatSide, chatWidth } = state.controlCenter;
