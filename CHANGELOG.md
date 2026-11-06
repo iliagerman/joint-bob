@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.219.2 — 2026-11-06
+
+- The browser sign-in form from 2.219.1 now ships: 2.219.1 did not build. On phones and desktops, the sign-in shows the site's own fields as a form instead of a cropped live page.
+- A sign-in on a wide screen no longer shows the page as a narrow strip when an earlier sign-in on a phone left it phone-sized.
+
 ## 2.219.1 — 2026-11-06
 
 - The browser sign-in on a phone now shows the site's own Email and Password fields as a form, instead of a cropped live page. Tab, autofill and the phone keyboard work, and the page is filled and submitted behind the scenes.

@@ -337,6 +337,24 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     // a narrow screen — freshly taken or held before this page loaded — shrink
     // the remote page to phone dimensions so the site serves its mobile layout;
     // the runtime restores the desktop size when the handoff ends.
+    // The reverse case: a page left phone-sized by an earlier sign-in would otherwise sit in a
+    // wide window as a narrow strip. Restore a desktop-sized page once per handoff.
+    if (request && canInput() && !disposed && isCurrent() && window.innerWidth >= 700 && frameSize && frameSize.width < 700) {
+      const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
+      const key = `desktop:${target.nodeId}:${target.sessionId}:${target.requestId}`;
+      const entry = requestedPhoneViewport.get(key) || { sent: null, pending: false };
+      requestedPhoneViewport.set(key, entry);
+      const width = Math.min(1600, Math.max(700, Math.round(window.innerWidth)));
+      const height = Math.min(2000, Math.max(480, Math.round(window.innerHeight)));
+      if (!entry.sent && !entry.pending) {
+        entry.pending = true;
+        void operation(async () => {
+          if (disposed || !isCurrent() || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "human" || !running() || !connected) return;
+          await command({ action: "setViewport", width, height });
+          entry.sent = `${width}x${height}`;
+        }).finally(() => { entry.pending = false; });
+      }
+    }
     if (request && canInput() && !disposed && isCurrent() && window.innerWidth < 700) {
       const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
       const key = `${target.nodeId}:${target.sessionId}:${target.requestId}`;
@@ -699,7 +717,9 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     showLoginForm(form && !form.challenge && form.fields.length ? form : null);
   }
   function syncLoginForm() {
-    if (!loginMode || !session?.loginRequest || !canInput() || busy || disposed) { if (!session?.loginRequest) showLoginForm(null); return; }
+    // The ordinary viewer has no sign-in form to draw.
+    if (!loginMode) return;
+    if (!session?.loginRequest || !canInput() || busy || disposed) { if (!session?.loginRequest) showLoginForm(null); return; }
     const tab = session.tabs.find((candidate) => candidate.id === session.activePageId);
     if (loginFormKey !== `${session.loginRequest.id}:${session.activePageId}:${tab?.url}`) void operation(loadLoginForm);
   }
