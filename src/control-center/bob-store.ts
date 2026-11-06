@@ -243,7 +243,10 @@ export function getBobMessage(db: DatabaseSync, accountId: string, id: string): 
 
 /** Sets the buttons on a message this machine wrote (none, once one was pressed), and tells the person's other machines. */
 export function setBobActions(db: DatabaseSync, accountId: string, id: string, actions: BobAction[]): void {
-  const updatedAt = new Date().toISOString();
+  // Every change must be newer than the last, even within the same millisecond, or the other machines keep the older copy.
+  const held = (db.prepare("SELECT updated_at FROM control_center_bob_messages WHERE account_id = ? AND id = ?").get(accountId, id) as { updated_at: string | null } | undefined)?.updated_at;
+  const now = new Date().toISOString();
+  const updatedAt = held && held >= now ? new Date(Date.parse(held) + 1).toISOString() : now;
   db.prepare("UPDATE control_center_bob_messages SET actions = ?, updated_at = ? WHERE account_id = ? AND id = ?").run(JSON.stringify(actions), updatedAt, accountId, id);
   const message = getBobMessage(db, accountId, id);
   if (!message) return;

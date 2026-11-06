@@ -76,8 +76,10 @@ test("the person's chat with Bob reaches their other machine, buttons included, 
     assert.equal(bobMessageOrigin(server, ACCOUNT, ask.id), "mac", "it remembers which machine wrote it");
     assert.equal(bobMessageOrigin(mac, ACCOUNT, ask.id), null);
 
-    // Pressed on the Mac: the buttons go, and the newer copy replaces the server's.
+    // Pressed on the Mac: the buttons go, and the newer copy replaces the server's, even within the millisecond it was written.
+    mac.prepare("UPDATE control_center_bob_messages SET updated_at = ? WHERE id = ?").run(new Date(Date.now() + 60_000).toISOString(), ask.id);
     clearBobActions(mac, ACCOUNT, ask.id);
+    assert.ok(written.at(-1)!.updatedAt > new Date(Date.now() + 59_000).toISOString(), "a change is always newer than the copy before it");
     for (const event of sent(mac)) applyBobMessageEvent(server, event);
     assert.deepEqual(getBobMessage(server, ACCOUNT, ask.id)?.actions, []);
     // An older copy arriving late does not bring them back.
