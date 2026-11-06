@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.221.0 — 2026-11-06
+
+- Bob can ask or tell one of your conversations something, such as "ask the Internal Assistant conversation how to review". After you press **Send it**, he sends it to that conversation as you, and its answer comes back to his chat. He can also delete a conversation. He now finds idle conversations you name, not only the ones on the board.
+- Running cards say what the turn is doing now: the tool and what it runs on (*Bash · npm test*), or the last line the agent wrote. While something runs, the board refreshes every 10 seconds.
+- Finished cards have a blue **Review** button that opens the conversation to read.
+- When the decision model was unsure about a message, Bob no longer skips his workspace, project and conversation actions.
+
 ## 2.220.2 — 2026-11-06
 
 - Activity overviews are spoken on the computer you view them on. A movie written on the homeserver used to be narrated by the homeserver's slower local voice, so playback stalled on "Preparing voice…"; now your own computer's voice narrates it.
