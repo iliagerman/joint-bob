@@ -13,6 +13,7 @@ const compiled = ts.transpileModule(readFileSync(new URL("../src/server/git-revi
 
 async function review(t: TestContext, extra: Partial<Review.RunGitReviewInput> = {}) {
   const toolSets: string[][] = [];
+  const configuredTools: Array<string[] | undefined> = [];
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const listeners = new Set<(event: HarnessEvent) => void>();
   const emit = (event: HarnessEvent) => { for (const listener of [...listeners]) listener(event); };
@@ -26,7 +27,7 @@ async function review(t: TestContext, extra: Partial<Review.RunGitReviewInput> =
     settings: () => ({ provider: "claude", modelId: "fixture", reasoning: "default" }),
     status: () => ({ model: { provider: "claude", id: "fixture" }, thinkingLevel: "default" }),
     subscribe(listener: (event: HarnessEvent) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    configure: async () => {}, preflight: async () => {}, setTools: async (tools: string[]) => { toolSets.push(tools); },
+    configure: async (settings: { enabledTools?: string[] }) => { configuredTools.push(settings.enabledTools); }, preflight: async () => {}, setTools: async (tools: string[]) => { toolSets.push(tools); },
     async prompt() {
       busy = true;
       emit({ type: "agent_start" });
@@ -84,7 +85,7 @@ async function review(t: TestContext, extra: Partial<Review.RunGitReviewInput> =
   result.catch(() => undefined);
   t.after(async () => { response.reject(new Error("Fixture cleanup")); await result.catch(() => undefined); });
   await Promise.race([started.promise, result]);
-  return { emit, result, partials, cancellations, toolSets, disposed: () => disposed, finish: response.resolve, fail: response.reject };
+  return { emit, result, partials, cancellations, toolSets, configuredTools, disposed: () => disposed, finish: response.resolve, fail: response.reject };
 }
 
 for (const event of [
@@ -174,8 +175,11 @@ test("a review is text-only by default", async (t) => {
   assert.deepEqual((await review(t)).toolSets, [[]]);
 });
 
-test("readOnlyTools gives a review the read-only tools instead", async (t) => {
-  assert.deepEqual((await review(t, { readOnlyTools: true })).toolSets, [["read-only-claude"]]);
+test("readOnlyTools gives a review the read-only tools instead, through its settings", async (t) => {
+  const run = await review(t, { readOnlyTools: true });
+  assert.deepEqual(run.configuredTools, [["read-only-claude"]]);
+  // A fresh Claude session refuses setTools with names before it has reported its tools, so none is called.
+  assert.deepEqual(run.toolSets, []);
 });
 
 test("useTools and readOnlyTools cannot be combined", async (t) => {

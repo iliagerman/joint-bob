@@ -155,9 +155,9 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
     if (input.readOnlyTools) settings.enabledTools = readOnlyChatTools(input.harnessId);
     else if (!input.useTools) settings.enabledTools = [];
     const turn = await prepareBackgroundTurn({ ...input, runtime, session, settings });
-    // Tool-enabled Ask AI follows read-only instructions, not an OS-level sandbox.
-    if (input.readOnlyTools) await session.setTools(readOnlyChatTools(input.harnessId));
-    else if (!input.useTools) await restrictToReadOnly(session);
+    // Tool-enabled Ask AI follows read-only instructions, not an OS-level sandbox. The read-only list is applied by `configure`,
+    // here or by the pool for each member: a fresh Claude session refuses `setTools` with names until it has reported its tools.
+    if (!input.useTools && !input.readOnlyTools) await restrictToReadOnly(session);
 
     const done = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
