@@ -1,4 +1,4 @@
-import { DEFAULT_CANVAS_KEYMAP, normalizeCanvasKeymap } from "../keymap.js";
+import { DEFAULT_KEYMAP, normalizeKeymap } from "../keymap.js";
 import { setShortcutKeymap } from "./shortcuts.js";
 import { api } from "./api.js";
 import { applyTerminalDockPreference } from "./terminal.js";
@@ -18,8 +18,8 @@ export async function reloadTravellingPreferences() {
     state.gitReviewer = preferences.gitReviewer;
     setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
     setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
-    state.canvasKeymap = normalizeCanvasKeymap(preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP);
-    setShortcutKeymap(state.canvasKeymap);
+    state.keymap = normalizeKeymap(preferences.canvasKeymap || DEFAULT_KEYMAP);
+    setShortcutKeymap(state.keymap);
     syncShortcutHints();
   } finally {
     state.preferencesLoaded = loaded;

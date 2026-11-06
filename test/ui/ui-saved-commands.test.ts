@@ -14,13 +14,13 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   const instructions = page.getByTestId("saved-commands-instructions");
   assert.match(await instructions.innerText(), /Enter to paste.*Nothing is sent/);
   assert.match(await page.locator("#savedCommandsShortcutHelp").innerText(), /L/);
-  assert.match(await page.locator("#canvasKeymapCommand-savedCommands").locator("..").innerText(), /Saved \/ custom commands.*Settings → Commands/);
+  assert.match(await page.locator("#keymapCommand-savedCommands").locator("..").innerText(), /Saved \/ custom commands.*Settings → Commands/);
   await page.evaluate(async () => {
     const { state } = await import("/app/state.js");
-    const previous = state.canvasKeymap;
-    state.canvasKeymap = { ...previous, commands: { ...previous.commands, savedCommands: null } };
+    const previous = state.keymap;
+    state.keymap = { ...previous, commands: { ...previous.commands, savedCommands: null } };
     await (await import("/app/shortcut-settings.js")).fillShortcutSettings();
-    state.canvasKeymap = previous;
+    state.keymap = previous;
   });
   assert.match(await page.locator("#savedCommandsShortcutHelp").innerText(), /assign a keyboard shortcut/);
   await page.evaluate(async () => (await import("/app/shortcut-settings.js")).fillShortcutSettings());

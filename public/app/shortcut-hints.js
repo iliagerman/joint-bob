@@ -4,11 +4,11 @@
 // square. The badge names the key alone - every command rides the same modifiers, so
 // repeating them on 45 buttons only costs space - and the whole chord stays available as
 // the badge's tooltip and in the shortcuts panel.
-import { CANVAS_COMMAND_MODIFIERS, chordKeyLabel, chordLabel, normalizeCanvasKeymap } from "../keymap.js";
+import { COMMAND_MODIFIERS, chordKeyLabel, chordLabel, normalizeKeymap } from "../keymap.js";
 import { state } from "./state.js";
 
 export function syncShortcutHints() {
-  const keymap = normalizeCanvasKeymap(state.canvasKeymap);
+  const keymap = normalizeKeymap(state.keymap);
   for (const host of document.querySelectorAll("[data-shortcut-hint]")) {
     const chord = keymap.commands[host.dataset.shortcutHint];
     let badge = host.querySelector(".shortcut-hint");
@@ -20,14 +20,14 @@ export function syncShortcutHints() {
       host.append(badge);
     }
     // Shift is the one extra modifier a default adds, so it stays on the badge: ⇧D and D are different keys.
-    const shift = chord.includes("shift") && !CANVAS_COMMAND_MODIFIERS.includes("shift");
+    const shift = chord.includes("shift") && !COMMAND_MODIFIERS.includes("shift");
     badge.textContent = `${shift ? "⇧" : ""}${chordKeyLabel(chord)}`;
     badge.title = chordLabel(chord);
   }
 }
 
 /** Holding Control+Option paints every shortcut-bearing control with its key. */
-const modifiersHeld = (event) => CANVAS_COMMAND_MODIFIERS.every((name) => event[`${name}Key`]);
+const modifiersHeld = (event) => COMMAND_MODIFIERS.every((name) => event[`${name}Key`]);
 const revealShortcuts = (on) => document.body.classList.toggle("shortcuts-revealed", on);
 window.addEventListener("keydown", (event) => revealShortcuts(modifiersHeld(event)));
 window.addEventListener("keyup", (event) => revealShortcuts(modifiersHeld(event)));

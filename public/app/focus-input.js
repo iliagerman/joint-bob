@@ -1,7 +1,6 @@
 // "Put my cursor where I can type." A dialog on top owns the keyboard, so its own
 // field wins; with nothing open, the conversation composer does. Everything here is
-// about the top-level document - a canvas pane is an iframe and the canvas reaches
-// into it separately.
+// about the top-level document; an embedded view (a dashboard, the browser) keeps its own fields.
 
 const FIELDS = 'input:not([type="hidden"]):not([disabled]):not([readonly]), textarea:not([disabled]):not([readonly]), select:not([disabled])';
 
@@ -23,8 +22,7 @@ export function topmostOpenDialog() {
 
 /**
  * Focuses the field the keyboard should reach, and reports whether it found one.
- * A false answer means this document had nowhere to type - on the canvas that is the
- * signal to hand the keystroke to the conversation the user is working in.
+ * A false answer means this document had nowhere to type.
  */
 export function focusTopmostInput() {
   const dialog = topmostOpenDialog();

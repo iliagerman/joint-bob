@@ -159,8 +159,8 @@ function render() {
   host.replaceChildren(panel);
 }
 
-/** Top-level app only. Registered before the canvas, so a handled key never reaches the
- *  canvas's own shortcuts (Ctrl+Alt+1 is also "page 1" while the switcher is open). */
+/** Top-level app only. Registered before the app's other shortcuts, so a key the switcher
+ *  handles while it is open never reaches them. */
 export function installConversationSwitcher() {
   window.addEventListener("keydown", (event) => {
     if (pressSwitcherKey(event)) {

@@ -267,7 +267,7 @@ export function renderRecentSessionsDialog() {
   }
 }
 /** One dialog, several triggers: the projects header, the conversations header, the
- *  chat menu, and the recorded shortcut. Exported for the canvas dispatcher. */
+ *  chat menu, and the recorded shortcut. Exported for the shortcut dispatcher. */
 export function openRecentSessions() {
   elements.recentSessionsSearchInput.value = "";
   renderRecentSessionsDialog();
@@ -290,7 +290,7 @@ attachDigitShortcuts(elements.recentSessionsDialog, () => recentSessionShortcuts
 /** The recorded recents chord reaches the list from any view, including
  * mid-conversation. */
 document.addEventListener("keydown", (event) => {
-  const chord = state.canvasKeymap?.commands?.recents;
+  const chord = state.keymap?.commands?.recents;
   if (!Array.isArray(chord) || shortcutPrefix(chord) || !chordMatches(chord, event)) return;
   event.preventDefault();
   if (elements.recentSessionsDialog.open) {

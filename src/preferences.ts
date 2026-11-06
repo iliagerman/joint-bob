@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { CANVAS_CHORD_MODIFIERS, normalizeCanvasChordTokens, type CanvasChordModifier } from "./canvas-keys.js";
+import { SHORTCUT_CHORD_MODIFIERS, normalizeShortcutChordTokens, type ShortcutChordModifier } from "./shortcut-keys.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 
 /** One conversation the user opened, newest first, capped by the client. */
@@ -18,34 +18,34 @@ export interface RecentSession {
   updatedAt: string | null;
 }
 
-export type CanvasModifier = CanvasChordModifier;
+export type ShortcutModifier = ShortcutChordModifier;
 
-/** Canvas keyboard shortcuts for one account. Every command holds one chord or a
+/** The app's keyboard shortcuts for one account. Every command holds one chord or a
  * two-stroke sequence, at most four physical keys, or null when unbound. Conversation
  * keys ride the `base` modifier chord plus their own single key. */
-export interface CanvasKeymapPreference {
+export interface KeymapPreference {
   version: 4;
-  base: CanvasModifier[];
+  base: ShortcutModifier[];
   commands: Record<string, string[] | null>;
 }
 
-const CANVAS_MODIFIERS: CanvasModifier[] = [...CANVAS_CHORD_MODIFIERS];
+const SHORTCUT_MODIFIERS: ShortcutModifier[] = [...SHORTCUT_CHORD_MODIFIERS];
 // Order matters: a command added later takes its default chord only if no earlier
 // command already holds it, so an existing account never loses a binding it configured.
-const CANVAS_KEYMAP_COMMANDS = [
+const KEYMAP_COMMANDS = [
   "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput", "savedCommands",
   "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat", "newKiroChat", "quickNote", "toggleNotes",
   "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "rename", "browser", "scheduledTasks",
   "backgroundTasks", "chatFiles", "sessionActions", "markDone", "autoRespond", "git", "explainConversation", "costs", "activity",
 ] as const;
 
-/** Mirrors `DEFAULT_CANVAS_KEYMAP` in `public/keymap.js`; every command rides
+/** Mirrors `DEFAULT_KEYMAP` in `public/keymap.js`; every command rides
  * Control+Option (Control+Alt off a Mac) so a button badge can name the key alone.
  * Conversation keys keep their own base chord, which no command may share. */
-const CANVAS_COMMAND_MODIFIERS: CanvasModifier[] = ["ctrl", "alt"];
-const commandChord = (key: string): string[] => [...CANVAS_COMMAND_MODIFIERS, key];
+const COMMAND_MODIFIERS: ShortcutModifier[] = ["ctrl", "alt"];
+const commandChord = (key: string): string[] => [...COMMAND_MODIFIERS, key];
 
-export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
+export const defaultKeymap = (): KeymapPreference => ({
   version: 4,
   base: ["meta", "shift"],
   commands: {
@@ -89,7 +89,7 @@ export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
 });
 
 function shortcutPrefix(shortcut: string[]): string[] | null {
-  return shortcut.filter((token) => !CANVAS_MODIFIERS.includes(token as CanvasModifier)).length === 2 ? shortcut.slice(0, -1) : null;
+  return shortcut.filter((token) => !SHORTCUT_MODIFIERS.includes(token as ShortcutModifier)).length === 2 ? shortcut.slice(0, -1) : null;
 }
 
 function shortcutsConflict(left: string[], right: string[]): boolean {
@@ -101,26 +101,26 @@ function shortcutsConflict(left: string[], right: string[]): boolean {
 }
 
 /**
- * Accepts any stored or posted shape and mirrors the page's `normalizeCanvasKeymap`:
+ * Accepts any stored or posted shape and mirrors the page's `normalizeKeymap`:
  * a shortcut without Command, Control, or Option would swallow ordinary typing, so
  * an unusable one falls back to the default; a shortcut two commands would share goes to
  * the earlier command, and the later one is left unbound. A keymap saved before version
  * 4 describes the old per-command modifier scheme, so its command chords are rebuilt
  * from the defaults and only the conversation base modifiers carry over.
  */
-export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPreference {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return defaultCanvasKeymap();
+export function normalizeKeymapPreference(value: unknown): KeymapPreference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return defaultKeymap();
   const source = value as Record<string, unknown>;
   // Before commands existed the base modifiers were stored as `modifiers`.
-  const base = (normalizeCanvasChordTokens(source.commands ? source.base : source.modifiers, true)
-    ?? [...defaultCanvasKeymap().base]) as CanvasModifier[];
+  const base = (normalizeShortcutChordTokens(source.commands ? source.base : source.modifiers, true)
+    ?? [...defaultKeymap().base]) as ShortcutModifier[];
   const rebuild = !(Number(source.version) >= 4);
   const commands: Record<string, string[] | null> = {};
   const taken: string[][] = [];
-  for (const command of CANVAS_KEYMAP_COMMANDS) {
+  for (const command of KEYMAP_COMMANDS) {
     const stored = (source.commands as Record<string, unknown> | undefined)?.[command];
-    const raw: unknown = rebuild || stored === undefined ? [...defaultCanvasKeymap().commands[command]!] : stored;
-    const chord = raw === null || typeof raw === "string" ? null : normalizeCanvasChordTokens(raw);
+    const raw: unknown = rebuild || stored === undefined ? [...defaultKeymap().commands[command]!] : stored;
+    const chord = raw === null || typeof raw === "string" ? null : normalizeShortcutChordTokens(raw);
     commands[command] = chord && !taken.some((existing) => shortcutsConflict(existing, chord)) ? chord : null;
     if (commands[command]) taken.push(commands[command]!);
   }
@@ -128,11 +128,11 @@ export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPre
 }
 
 /** A hand-edited column must degrade to the default chord, never take the node down. */
-function parseCanvasKeymap(value: string): CanvasKeymapPreference {
+function parseKeymap(value: string): KeymapPreference {
   try {
-    return normalizeCanvasKeymapPreference(JSON.parse(value));
+    return normalizeKeymapPreference(JSON.parse(value));
   } catch {
-    return defaultCanvasKeymap();
+    return defaultKeymap();
   }
 }
 
@@ -160,7 +160,8 @@ export interface UserPreferences {
   projectsPanelCollapsed: boolean;
   chatsPanelCollapsed: boolean;
   lastSeenVersion: string | null;
-  canvasKeymap: CanvasKeymapPreference;
+  /** The keyboard shortcuts. Named for the canvas they once belonged to; the name stays so saved preferences, roaming profiles and older pages still match. */
+  canvasKeymap: KeymapPreference;
   /** Per conversation, the newest message time (epoch ms) the reader has viewed. */
   conversationLastRead: Record<string, number>;
   /** Conversation-list visibility per project. Missing entries use the hidden defaults. */
@@ -408,7 +409,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     projectsPanelCollapsed: row.projects_panel_collapsed === 1,
     chatsPanelCollapsed: row.chats_panel_collapsed === 1,
     lastSeenVersion: row.last_seen_version,
-    canvasKeymap: parseCanvasKeymap(row.canvas_keymap),
+    canvasKeymap: parseKeymap(row.canvas_keymap),
     conversationLastRead: parseConversationLastRead(row.conversation_last_read),
     projectConversationVisibility: parseProjectConversationVisibility(row.project_conversation_visibility),
     controlCenter: parseControlCenter(row.control_center),
@@ -465,7 +466,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["projectsPanelCollapsed", "projects_panel_collapsed", (value) => value ? 1 : 0],
     ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
     ["lastSeenVersion", "last_seen_version", (value) => value as string | null],
-    ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as CanvasKeymapPreference)],
+    ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as KeymapPreference)],
     ["conversationLastRead", "conversation_last_read", (value) => JSON.stringify(boundConversationLastRead(value as Record<string, number>))],
     ["projectConversationVisibility", "project_conversation_visibility", (value) => JSON.stringify(value)],
     // A 2.213 page still sends the free layout's positions and mode; the board has one layout now, so they are not kept.

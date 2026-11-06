@@ -146,11 +146,11 @@ test("a saved chord retitles the badges without a reload", async () => {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
   await page.getByTestId("settings-tab-shortcuts").click();
-  const recents = page.getByTestId("canvas-keymap-recents-input");
+  const recents = page.getByTestId("keymap-recents-input");
   await recents.click();
   await page.keyboard.press("Control+KeyJ");
-  await page.getByTestId("canvas-keymap-save-button").click();
-  await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
+  await page.getByTestId("keymap-save-button").click();
+  await page.getByTestId("keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
   assert.equal(await hint("recent-sessions-open-button").textContent(), "J", "the badge follows the saved chord");
@@ -159,9 +159,9 @@ test("a saved chord retitles the badges without a reload", async () => {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
   await page.getByTestId("settings-tab-shortcuts").click();
-  await page.getByTestId("canvas-keymap-reset-button").click();
-  await page.getByTestId("canvas-keymap-save-button").click();
-  await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
+  await page.getByTestId("keymap-reset-button").click();
+  await page.getByTestId("keymap-save-button").click();
+  await page.getByTestId("keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
   assert.equal(await hint("recent-sessions-open-button").textContent(), "K");
@@ -176,7 +176,7 @@ test("the board stays hidden from navigation and keyboard shortcuts", async () =
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
   await page.getByTestId("settings-tab-shortcuts").click();
-  assert.equal(await page.getByTestId("canvas-keymap-board-input").count(), 0, "shortcut settings omit the board");
+  assert.equal(await page.getByTestId("keymap-board-input").count(), 0, "shortcut settings omit the board");
   await page.getByTestId("settings-cancel-button").click();
 
   await page.keyboard.press("Control+Alt+KeyD");

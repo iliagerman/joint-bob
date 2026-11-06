@@ -1,4 +1,4 @@
-import { CANVAS_MODIFIERS, canvasKeyFromCode, chordFromEvent, chordLabel, normalizeChord } from "../keymap.js";
+import { SHORTCUT_MODIFIERS, shortcutKeyFromCode, chordFromEvent, chordLabel, normalizeChord } from "../keymap.js";
 
 const modifierTokenForCode = (code) => ({ ControlLeft: "ctrl", ControlRight: "ctrl", MetaLeft: "meta", MetaRight: "meta", AltLeft: "alt", AltRight: "alt", ShiftLeft: "shift", ShiftRight: "shift" })[code] || null;
 
@@ -54,12 +54,12 @@ export function captureChordInput(input, { modifierOnly = false } = {}) {
       peak.add(token);
       // Modifiers going down preview the chord they are building, so the field shows
       // the capture happening instead of waiting silently for the key to arrive.
-      const modifiers = CANVAS_MODIFIERS.filter((name) => held.has(name));
+      const modifiers = SHORTCUT_MODIFIERS.filter((name) => held.has(name));
       if (normalizeChord(modifiers, { modifierOnly: true })) input.value = chordLabel(modifiers);
       return;
     }
     const chord = chordFromEvent(event);
-    const key = chord ? null : canvasKeyFromCode(event.code);
+    const key = chord ? null : shortcutKeyFromCode(event.code);
     if (sequencePrefix && key && !event.metaKey && !event.ctrlKey && !event.altKey) {
       const sequence = normalizeChord([...sequencePrefix, key]);
       if (sequence) {
@@ -104,7 +104,7 @@ export function captureChordInput(input, { modifierOnly = false } = {}) {
     // described: the widest set held during the press, so releasing one modifier
     // before the others does not shrink the chord to whatever left last.
     if (!held.size) {
-      const candidate = normalizeChord(CANVAS_MODIFIERS.filter((name) => peak.has(name)), { modifierOnly: true });
+      const candidate = normalizeChord(SHORTCUT_MODIFIERS.filter((name) => peak.has(name)), { modifierOnly: true });
       if (candidate) show(candidate);
       else restore();
       peak = new Set();
@@ -115,12 +115,12 @@ export function captureChordInput(input, { modifierOnly = false } = {}) {
 }
 
 /**
- * Records one key from the conversation-binding vocabulary: the key a canvas
- * conversation holds under the account's base chord. Enter and the punctuation keys
+ * Records one key from the shortcut vocabulary: the key a shortcut ends on under the
+ * account's base chord. Enter and the punctuation keys
  * either type nothing or type something a plain field would mangle, so the field
  * records the key that was pressed. Typing a letter or a symbol still works.
  */
-export function captureCanvasKeyInput(input) {
+export function captureShortcutKeyInput(input) {
   input.addEventListener("keydown", (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.code === "Backspace" || event.code === "Delete") {
@@ -128,7 +128,7 @@ export function captureCanvasKeyInput(input) {
       input.value = "";
       return;
     }
-    const key = canvasKeyFromCode(event.code);
+    const key = shortcutKeyFromCode(event.code);
     if (!key) return;
     event.preventDefault();
     input.value = key;

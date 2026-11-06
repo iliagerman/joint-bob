@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  canonicalCanvasKey, canvasKeyFromCode, chordFromEvent, chordId, chordKeyLabel, chordLabel, chordMatches,
-  conversationChordLabel, CANVAS_KEYMAP_COMMANDS, DEFAULT_CANVAS_KEYMAP,
-  fuzzyMatchScore, normalizeCanvasKeymap, normalizeChord, shortcutsConflict,
+  canonicalShortcutKey, shortcutKeyFromCode, chordFromEvent, chordId, chordKeyLabel, chordLabel, chordMatches,
+  conversationChordLabel, KEYMAP_COMMANDS, DEFAULT_KEYMAP,
+  fuzzyMatchScore, normalizeKeymap, normalizeChord, shortcutsConflict,
 } from "../public/keymap.js";
 
 const event = (code, modifiers = {}) => ({
   code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...modifiers,
 });
 
-import { normalizeCanvasKeymapPreference } from "../src/preferences.js";
+import { normalizeKeymapPreference } from "../src/preferences.js";
 
-for (const normalize of [normalizeCanvasKeymap, normalizeCanvasKeymapPreference]) {
+for (const normalize of [normalizeKeymap, normalizeKeymapPreference]) {
   test(`${normalize.name}: version 4 rebuilds every command onto one modifier pair`, () => {
     assert.deepEqual(normalize({}).commands.notify, ["ctrl", "alt", "Y"]);
     assert.deepEqual(normalize({}).commands.rename, ["ctrl", "alt", "E"]);
@@ -49,12 +49,12 @@ test("chords may use Space, the arrows, and the slashes a binding cannot", () =>
   assert.deepEqual(normalizeChord(["ctrl", "SPACE"]), ["ctrl", "SPACE"]);
   assert.deepEqual(normalizeChord(["meta", "ARROWLEFT"]), ["meta", "ARROWLEFT"]);
   assert.deepEqual(normalizeChord(["alt", "\\"]), ["alt", "\\"]);
-  assert.equal(canonicalCanvasKey(" "), null, "a conversation binding still cannot be Space");
-  assert.equal(canonicalCanvasKey("/"), null);
-  assert.equal(canvasKeyFromCode("Backslash"), "\\");
-  assert.equal(canvasKeyFromCode("Slash"), "/");
-  assert.equal(canvasKeyFromCode("Space"), "SPACE");
-  assert.equal(canvasKeyFromCode("ArrowDown"), "ARROWDOWN");
+  assert.equal(canonicalShortcutKey(" "), null, "a conversation binding still cannot be Space");
+  assert.equal(canonicalShortcutKey("/"), null);
+  assert.equal(shortcutKeyFromCode("Backslash"), "\\");
+  assert.equal(shortcutKeyFromCode("Slash"), "/");
+  assert.equal(shortcutKeyFromCode("Space"), "SPACE");
+  assert.equal(shortcutKeyFromCode("ArrowDown"), "ARROWDOWN");
 });
 
 test("the base chord may hold three modifiers so a conversation key is still the fourth", () => {
@@ -97,8 +97,8 @@ test("the chord label draws the captured modifiers and a readable key", () => {
 // ─── Keymap normalization and migration ────────────────────────────────────────────
 
 test("every command has a default chord, and the defaults never collide", () => {
-  const defaults = DEFAULT_CANVAS_KEYMAP.commands;
-  for (const command of CANVAS_KEYMAP_COMMANDS) {
+  const defaults = DEFAULT_KEYMAP.commands;
+  for (const command of KEYMAP_COMMANDS) {
     assert.ok(Array.isArray(defaults[command]), `${command} has a default chord`);
     assert.notEqual(normalizeChord(defaults[command]), null, `${command}'s default is a valid chord`);
     // One modifier pair everywhere is what lets a button badge name the key alone.
@@ -119,13 +119,13 @@ test("every command has a default chord, and the defaults never collide", () => 
 });
 
 test("a custom chord collision keeps the earlier command and unbinds costs", () => {
-  const keymap = normalizeCanvasKeymap({ version: 4, base: ["meta", "shift"], commands: { browser: ["ctrl", "alt", "shift", "C"], costs: ["ctrl", "alt", "shift", "C"] } });
+  const keymap = normalizeKeymap({ version: 4, base: ["meta", "shift"], commands: { browser: ["ctrl", "alt", "shift", "C"], costs: ["ctrl", "alt", "shift", "C"] } });
   assert.deepEqual(keymap.commands.browser, ["ctrl", "alt", "shift", "C"]);
   assert.equal(keymap.commands.costs, null);
 });
 
 test("new command defaults never steal an existing custom binding", () => {
-  const keymap = normalizeCanvasKeymap({ version: 4, base: ["meta", "shift"], commands: { notify: ["ctrl", "alt", "B"] } });
+  const keymap = normalizeKeymap({ version: 4, base: ["meta", "shift"], commands: { notify: ["ctrl", "alt", "B"] } });
   assert.deepEqual(keymap.commands.notify, ["ctrl", "alt", "B"]);
   assert.equal(keymap.commands.browser, null);
 });
@@ -133,7 +133,7 @@ test("new command defaults never steal an existing custom binding", () => {
 test("a direct shortcut and a sequence using it as a prefix cannot coexist", () => {
   assert.equal(shortcutsConflict(["ctrl", "SPACE"], ["ctrl", "SPACE", "K"]), true);
   assert.equal(shortcutsConflict(["ctrl", "SPACE", "K"], ["ctrl", "SPACE", "L"]), false);
-  const keymap = normalizeCanvasKeymap({
+  const keymap = normalizeKeymap({
     version: 4,
     base: ["meta", "shift"],
     commands: { spotlight: ["ctrl", "SPACE"], recents: ["ctrl", "SPACE", "K"] },
@@ -143,7 +143,7 @@ test("a direct shortcut and a sequence using it as a prefix cannot coexist", () 
 });
 
 test("a stored chord-shape keymap keeps its chords, drops the unbindable, and unbinds duplicates", () => {
-  const keymap = normalizeCanvasKeymap({
+  const keymap = normalizeKeymap({
     version: 4,
     base: ["ctrl", "alt"],
     commands: {
@@ -161,31 +161,31 @@ test("a stored chord-shape keymap keeps its chords, drops the unbindable, and un
   assert.equal(keymap.commands.terminal, null);
   assert.equal(keymap.commands.notify, null);
   // A command the stored keymap never mentions starts on its default.
-  assert.deepEqual(keymap.commands.toggleView, DEFAULT_CANVAS_KEYMAP.commands.toggleView);
+  assert.deepEqual(keymap.commands.toggleView, DEFAULT_KEYMAP.commands.toggleView);
 });
 
 // Every account has a keymap saved from before chords existed. Its modifiers become
 // the base that conversation keys ride; its per-command keys described the old
 // scheme, so every command starts from the current default instead.
 test("a legacy keymap keeps its modifiers as the base and rebuilds its commands", () => {
-  const keymap = normalizeCanvasKeymap({ modifiers: ["ctrl"], recentPane: "a", focusPane: "K", paneSearch: null });
+  const keymap = normalizeKeymap({ modifiers: ["ctrl"], recentPane: "a", focusPane: "K", paneSearch: null });
   assert.deepEqual(keymap.base, ["ctrl"]);
-  assert.deepEqual(keymap.commands.spotlight, DEFAULT_CANVAS_KEYMAP.commands.spotlight);
+  assert.deepEqual(keymap.commands.spotlight, DEFAULT_KEYMAP.commands.spotlight);
   assert.equal("paneSearch" in keymap.commands, false);
-  assert.deepEqual(normalizeCanvasKeymap({ modifiers: ["shift"], recentPane: "E" }).base, DEFAULT_CANVAS_KEYMAP.base,
+  assert.deepEqual(normalizeKeymap({ modifiers: ["shift"], recentPane: "E" }).base, DEFAULT_KEYMAP.base,
     "a shift-only legacy chord falls back to the default base instead of eating capitals");
 });
 
 test("stored keymaps degrade instead of taking the page down", () => {
-  assert.deepEqual(normalizeCanvasKeymap(null).commands.spotlight, DEFAULT_CANVAS_KEYMAP.commands.spotlight);
-  assert.deepEqual(normalizeCanvasKeymap("nope"), normalizeCanvasKeymap(null));
-  assert.deepEqual(normalizeCanvasKeymap({ base: ["bogus"] }).base, DEFAULT_CANVAS_KEYMAP.base);
-  assert.deepEqual(normalizeCanvasKeymap({ version: 4, commands: { notify: ["shift", "Y"] } }).commands.notify, null,
+  assert.deepEqual(normalizeKeymap(null).commands.spotlight, DEFAULT_KEYMAP.commands.spotlight);
+  assert.deepEqual(normalizeKeymap("nope"), normalizeKeymap(null));
+  assert.deepEqual(normalizeKeymap({ base: ["bogus"] }).base, DEFAULT_KEYMAP.base);
+  assert.deepEqual(normalizeKeymap({ version: 4, commands: { notify: ["shift", "Y"] } }).commands.notify, null,
     "a shortcut without a real modifier would swallow ordinary typing");
 });
 
 test("the node and the page normalize keymaps identically", async () => {
-  const { normalizeCanvasKeymapPreference } = await import(`../src/preferences.js?canvas-keymap=${Date.now()}-${Math.random()}`);
+  const { normalizeKeymapPreference } = await import(`../src/preferences.js?keymap=${Date.now()}-${Math.random()}`);
   const samples = [
     null,
     { modifiers: ["ctrl", "alt"], recentPane: "a", focusPane: "K", paneSearch: null },
@@ -196,7 +196,7 @@ test("the node and the page normalize keymaps identically", async () => {
     { version: 2, commands: { spotlight: ["ctrl", "SPACE"], recents: ["ctrl", "SPACE", "K"] } },
   ];
   for (const sample of samples) {
-    assert.deepEqual(normalizeCanvasKeymapPreference(sample), normalizeCanvasKeymap(sample), JSON.stringify(sample));
+    assert.deepEqual(normalizeKeymapPreference(sample), normalizeKeymap(sample), JSON.stringify(sample));
   }
 });
 
@@ -211,13 +211,13 @@ test("fuzzy matching ranks initials and adjacent runs above scattered hits", () 
 // The panel that lists every shortcut is itself reachable by a fixed chord. The bare
 // "/" is left to the terminal and the code editor, which both use it.
 test("the help chord is Command or Control with a question mark, never a bare slash", async () => {
-  const { isCanvasHelpShortcut } = await import("../public/keymap.js");
-  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false }), true);
-  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: false, shiftKey: true, ctrlKey: true, altKey: false }), true);
+  const { isHelpShortcut } = await import("../public/keymap.js");
+  assert.equal(isHelpShortcut({ code: "Slash", key: "?", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false }), true);
+  assert.equal(isHelpShortcut({ code: "Slash", key: "?", metaKey: false, shiftKey: true, ctrlKey: true, altKey: false }), true);
   // A layout that types "?" from another key still answers.
-  assert.equal(isCanvasHelpShortcut({ code: "Minus", key: "?", metaKey: true, shiftKey: false, ctrlKey: false, altKey: false }), true);
-  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "/", metaKey: true, shiftKey: false, ctrlKey: false, altKey: false }), false,
+  assert.equal(isHelpShortcut({ code: "Minus", key: "?", metaKey: true, shiftKey: false, ctrlKey: false, altKey: false }), true);
+  assert.equal(isHelpShortcut({ code: "Slash", key: "/", metaKey: true, shiftKey: false, ctrlKey: false, altKey: false }), false,
     "a bare slash belongs to the terminal and the editor");
-  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: false, shiftKey: true, ctrlKey: false, altKey: false }), false);
-  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: true, shiftKey: true, ctrlKey: false, altKey: true }), false);
+  assert.equal(isHelpShortcut({ code: "Slash", key: "?", metaKey: false, shiftKey: true, ctrlKey: false, altKey: false }), false);
+  assert.equal(isHelpShortcut({ code: "Slash", key: "?", metaKey: true, shiftKey: true, ctrlKey: false, altKey: true }), false);
 });

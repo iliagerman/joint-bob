@@ -278,7 +278,7 @@ export const elements = {
   settingsResourcePromptsBrowse: document.querySelector("#settingsResourcePromptsBrowse"),
   settingsResourceRulesBrowse: document.querySelector("#settingsResourceRulesBrowse"),
   settingsResourcePluginsBrowse: document.querySelector("#settingsResourcePluginsBrowse"),
-  canvasKeymapSearch: document.querySelector("#canvasKeymapSearch"),
+  keymapSearch: document.querySelector("#keymapSearch"),
   clusterSaveButton: document.querySelector("#clusterSaveButton"),
   clusterCanvas: document.querySelector("#clusterCanvas"),
   clusterDetails: document.querySelector("#clusterDetails"),

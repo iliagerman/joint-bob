@@ -3613,10 +3613,10 @@ body.file-view { overflow: auto; }
   color: var(--muted);
   font-size: 12px;
 }
-.canvas-picker-status { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 12px; }
+.picker-status { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 12px; }
 #spotlightDialog .dialog-card { width: min(620px, calc(100vw - 24px)); }
-.canvas-keymap-grid { display: grid; gap: 10px; }
-.canvas-keymap-command {
+.keymap-grid { display: grid; gap: 10px; }
+.keymap-command {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 110px;
   align-items: center;
@@ -3624,8 +3624,8 @@ body.file-view { overflow: auto; }
   font-size: 13px;
 }
 /* Recorder fields show a captured chord, never typed text, so they read as keys. */
-.canvas-keymap-command input { text-align: center; font-family: inherit; cursor: pointer; }
-.canvas-keymap-command input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.keymap-command input { text-align: center; font-family: inherit; cursor: pointer; }
+.keymap-command input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* Settings > Cluster: the cluster list on the left, the open cluster on the right. */
 #settingsPanel-cluster input, #settingsPanel-cluster select { max-width: 100%; }
@@ -4005,11 +4005,11 @@ body.file-view { overflow: auto; }
 .settings-hint { margin: 0; color: var(--muted); font-size: 12px; }
 .settings-actions { display: flex; align-items: center; gap: 10px; }
 .story-locations { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 12px; margin-left: 26px; }
-.canvas-keymap-leader { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 12px; }
-.canvas-keymap-leader h3 { margin: 0 0 6px; color: var(--text); font-size: 13px; }
-.canvas-keymap-leader p { margin: 8px 0 6px; }
-.canvas-keymap-leader ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
-.canvas-keymap-leader kbd {
+.keymap-leader { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 12px; }
+.keymap-leader h3 { margin: 0 0 6px; color: var(--text); font-size: 13px; }
+.keymap-leader p { margin: 8px 0 6px; }
+.keymap-leader ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.keymap-leader kbd {
   padding: 1px 5px;
   border: 1px solid var(--line);
   border-radius: 4px;

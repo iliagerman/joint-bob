@@ -1,5 +1,5 @@
 import {
-  canvasKeyFromCode, chordFromEvent, chordId, DEFAULT_CANVAS_KEYMAP, normalizeCanvasKeymap, shortcutFinalMatches, shortcutPrefix,
+  shortcutKeyFromCode, chordFromEvent, chordId, DEFAULT_KEYMAP, normalizeKeymap, shortcutFinalMatches, shortcutPrefix,
 } from "../keymap.js";
 import { CHAT_SHORTCUT_CONTROLS, runChatShortcut } from "./chat-shortcuts.js";
 
@@ -11,7 +11,7 @@ import { CHAT_SHORTCUT_CONTROLS, runChatShortcut } from "./chat-shortcuts.js";
  */
 const SEQUENCE_MS = 1500;
 
-let keymap = normalizeCanvasKeymap(DEFAULT_CANVAS_KEYMAP);
+let keymap = normalizeKeymap(DEFAULT_KEYMAP);
 let appCommands = {};
 let chordCommands = new Map();
 let sequenceCommands = new Map();
@@ -56,7 +56,7 @@ function handleKey(event) {
   if (pendingSequence) {
     const pending = pendingSequence;
     clearPendingSequence();
-    const ending = sequenceCommands.get(pending.id)?.get(canvasKeyFromCode(event.code));
+    const ending = sequenceCommands.get(pending.id)?.get(shortcutKeyFromCode(event.code));
     if (ending && shortcutFinalMatches(ending.shortcut, event)) return runCommand(ending.command);
   }
   const chord = chordFromEvent(event);
@@ -70,7 +70,7 @@ function handleKey(event) {
 }
 
 export function setShortcutKeymap(next) {
-  keymap = normalizeCanvasKeymap(next);
+  keymap = normalizeKeymap(next);
   rebuildChordCommands();
 }
 

@@ -13,7 +13,7 @@ import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
 import { clearHarnessSessionCache, harnessForSessionPath, listHarnessSessions } from "../../harnesses.js";
 import { ensureManagedHome } from "../../managed-home.js";
-import { getUserPreferences, normalizeCanvasKeymapPreference, readLegacyRecentSessions, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
+import { getUserPreferences, normalizeKeymapPreference, readLegacyRecentSessions, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
 import { listUserRecentSessions, migrateLegacyRecentSessions, removeUserRecentSession, setUserRecentSession, type SyncedRecentSession } from "../../recent-sessions.js";
 import { checkRuntimeSettings, getProjectResourcePaths, getRuntimeDefaults, getSettings, updateProjectResourcePaths, updateSettings } from "../../settings.js";
 import { getProject, listWorkspaces } from "../../store.js";
@@ -126,7 +126,7 @@ app.put("/api/preferences", async (request, response, next) => {
     const parsed = userPreferencesSchema.parse(request.body);
     const { canvasLayout: _removedCanvasLayout, canvasKeymap, ...preferences } = parsed;
     const update: Partial<UserPreferences> = preferences;
-    if (canvasKeymap) update.canvasKeymap = normalizeCanvasKeymapPreference(canvasKeymap);
+    if (canvasKeymap) update.canvasKeymap = normalizeKeymapPreference(canvasKeymap);
     // A visitor's travelling preferences (theme, sounds, keymap…) change at home first.
     if (session.isRemoteLogin) {
       const current = getUserPreferences(session.userId) as unknown as Record<string, unknown>;

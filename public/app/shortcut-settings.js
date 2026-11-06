@@ -3,8 +3,8 @@
 // second stroke, with at most four physical keys total.
 
 import {
-  chordLabel, DEFAULT_CANVAS_KEYMAP, fuzzyMatchScore,
-  normalizeCanvasKeymap, normalizeChord, shortcutsConflict,
+  chordLabel, DEFAULT_KEYMAP, fuzzyMatchScore,
+  normalizeKeymap, normalizeChord, shortcutsConflict,
 } from "../keymap.js";
 import { savePreferences } from "./api.js";
 import { elements } from "./elements.js";
@@ -13,10 +13,10 @@ import { setShortcutKeymap } from "./shortcuts.js";
 import { syncShortcutHints } from "./shortcut-hints.js";
 import { state } from "./state.js";
 
-const commandsHost = document.querySelector("#canvasKeymapCommands");
-const statusLine = document.querySelector("#canvasKeymapStatus");
-const saveButton = document.querySelector("#canvasKeymapSaveButton");
-const resetButton = document.querySelector("#canvasKeymapResetButton");
+const commandsHost = document.querySelector("#keymapCommands");
+const statusLine = document.querySelector("#keymapStatus");
+const saveButton = document.querySelector("#keymapSaveButton");
+const resetButton = document.querySelector("#keymapResetButton");
 
 /** One row per configurable command, in the order the panel lists them. Labels stay
  * here, next to their recorder wiring, so adding a command is adding one line. */
@@ -56,18 +56,18 @@ const COMMAND_ROWS = [
   { command: "toggleView", label: "Open or leave the control center" },
   { command: "costs", label: "Open costs and subscriptions" },
 ];
-const rowTestid = (command) => `canvas-keymap-${command.replace(/[A-Z0-9]/g, (character) => `-${character.toLowerCase()}`)}-input`;
+const rowTestid = (command) => `keymap-${command.replace(/[A-Z0-9]/g, (character) => `-${character.toLowerCase()}`)}-input`;
 
 const commandInputs = new Map();
 const commandRowEntries = [];
 for (const { command, label } of COMMAND_ROWS) {
   const row = document.createElement("label");
-  row.className = "canvas-keymap-command";
-  row.htmlFor = `canvasKeymapCommand-${command}`;
+  row.className = "keymap-command";
+  row.htmlFor = `keymapCommand-${command}`;
   const description = document.createElement("span");
   description.textContent = label;
   const input = document.createElement("input");
-  input.id = `canvasKeymapCommand-${command}`;
+  input.id = `keymapCommand-${command}`;
   input.type = "text";
   input.readOnly = true;
   input.autocomplete = "off";
@@ -89,7 +89,7 @@ function filterShortcutRows(rawQuery) {
   const matches = (text) => terms.every((term) => fuzzyMatchScore(text, term) !== null);
   for (const { row, command, label } of commandRowEntries) row.hidden = !matches(`${label} ${command}`);
 }
-elements.canvasKeymapSearch.addEventListener("input", () => filterShortcutRows(elements.canvasKeymapSearch.value));
+elements.keymapSearch.addEventListener("input", () => filterShortcutRows(elements.keymapSearch.value));
 
 function fillFields(keymap) {
   for (const [command, input] of commandInputs) {
@@ -107,11 +107,11 @@ function syncSavedCommandsHelp(keymap) {
 }
 
 export async function fillShortcutSettings() {
-  const keymap = normalizeCanvasKeymap(state.canvasKeymap);
+  const keymap = normalizeKeymap(state.keymap);
   fillFields(keymap);
   syncSavedCommandsHelp(keymap);
   statusLine.textContent = "";
-  elements.canvasKeymapSearch.value = "";
+  elements.keymapSearch.value = "";
   filterShortcutRows("");
 }
 
@@ -119,7 +119,7 @@ export async function fillShortcutSettings() {
 function keymapFromPanel() {
   // The panel always writes the current scheme, so the draft carries its version -
   // an older one would be treated as stale and rebuilt back to the defaults.
-  const draft = { version: DEFAULT_CANVAS_KEYMAP.version, base: state.canvasKeymap.base, commands: {} };
+  const draft = { version: DEFAULT_KEYMAP.version, base: state.keymap.base, commands: {} };
   const taken = [];
   for (const [command, input] of commandInputs) {
     const raw = input.dataset.chord ? JSON.parse(input.dataset.chord) : null;
@@ -131,7 +131,7 @@ function keymapFromPanel() {
     taken.push({ command, chord });
     draft.commands[command] = chord;
   }
-  return normalizeCanvasKeymap(draft);
+  return normalizeKeymap(draft);
 }
 
 async function saveShortcutSettings() {
@@ -148,7 +148,7 @@ async function saveShortcutSettings() {
     statusLine.textContent = error instanceof Error ? error.message : "Could not save these shortcuts";
     return;
   }
-  state.canvasKeymap = next;
+  state.keymap = next;
   syncSavedCommandsHelp(next);
   setShortcutKeymap(next);
   syncShortcutHints();
@@ -157,6 +157,6 @@ async function saveShortcutSettings() {
 
 saveButton.addEventListener("click", () => { void saveShortcutSettings(); });
 resetButton.addEventListener("click", () => {
-  fillFields(DEFAULT_CANVAS_KEYMAP);
+  fillFields(DEFAULT_KEYMAP);
   statusLine.textContent = "";
 });

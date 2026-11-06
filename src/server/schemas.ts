@@ -3,7 +3,7 @@ import { autoRespondConfigSchema } from "../conversation-auto-respond.js";
 import { conversationDefaultsSchema } from "../harnesses/defaults.js";
 import { queuedSettingsSchema } from "../prompt-queue.js";
 import { z } from "zod";
-import { canonicalCanvasKeyToken } from "../canvas-keys.js";
+import { canonicalShortcutKeyToken } from "../shortcut-keys.js";
 import { listHarnesses } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { classificationSchema, conversationLabelIconsSchema, conversationLabelsInputSchema } from "../conversation-labels.js";
@@ -411,24 +411,24 @@ export const settingsSchema = z.object({
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
 });
-const canvasKeymapKeySchema = z.string().trim().refine((key) => canonicalCanvasKeyToken(key) !== null, "Unsupported canvas key").nullable();
+const keymapKeySchema = z.string().trim().refine((key) => canonicalShortcutKeyToken(key) !== null, "Unsupported shortcut key").nullable();
 // A shortcut is one modified key or a two-stroke sequence. The normalizer decides
 // token semantics and collisions; the schema only caps client input size.
-const canvasChordSchema = z.array(z.string().trim().min(1).max(16)).max(8);
-const canvasKeymapPreferenceSchema = z.object({
+const chordSchema = z.array(z.string().trim().min(1).max(16)).max(8);
+const keymapPreferenceSchema = z.object({
   version: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   // Legacy shape, from a client that predates chords: one modifier set plus one key
   // per command. Still accepted and migrated by the normalizer.
   modifiers: z.array(z.enum(["meta", "ctrl", "alt", "shift"])).max(4).optional(),
-  recentPane: canvasKeymapKeySchema.optional(),
-  focusPane: canvasKeymapKeySchema.optional(),
-  paneSearch: canvasKeymapKeySchema.optional(),
-  toggleView: canvasKeymapKeySchema.optional(),
-  spotlight: canvasKeymapKeySchema.optional(),
-  pendingReviews: canvasKeymapKeySchema.optional(),
+  recentPane: keymapKeySchema.optional(),
+  focusPane: keymapKeySchema.optional(),
+  paneSearch: keymapKeySchema.optional(),
+  toggleView: keymapKeySchema.optional(),
+  spotlight: keymapKeySchema.optional(),
+  pendingReviews: keymapKeySchema.optional(),
   // Current shape: the base chord conversation keys ride, plus one shortcut per command.
-  base: canvasChordSchema.optional(),
-  commands: z.record(z.string().max(24), canvasChordSchema.nullable()).optional(),
+  base: chordSchema.optional(),
+  commands: z.record(z.string().max(24), chordSchema.nullable()).optional(),
 });
 export const userPreferencesSchema = z.object({
   theme: z.enum(["light", "dark"]).nullable().optional(),
@@ -454,7 +454,7 @@ export const userPreferencesSchema = z.object({
   lastSeenVersion: z.string().trim().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
   // Older pages and twins still send the removed canvas layout; it is accepted and dropped.
   canvasLayout: z.unknown().optional(),
-  canvasKeymap: canvasKeymapPreferenceSchema.optional(),
+  canvasKeymap: keymapPreferenceSchema.optional(),
   conversationLastRead: z.record(z.string().min(1).max(200), z.number().int().nonnegative())
     .refine((marks) => Object.keys(marks).length <= 400, "Too many conversation read marks").optional(),
   projectConversationVisibility: z.record(z.string().min(1).max(240), z.object({ done: z.boolean(), scheduled: z.boolean() }).strict())

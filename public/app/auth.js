@@ -1,4 +1,4 @@
-import { DEFAULT_CANVAS_KEYMAP, normalizeCanvasKeymap } from "../keymap.js";
+import { DEFAULT_KEYMAP, normalizeKeymap } from "../keymap.js";
 import { setShortcutKeymap } from "./shortcuts.js";
 import { applyAdminVisibility, showAdminTransferOffer, showTerminalNoticeOnce } from "./node-admin.js";
 import { api, savePreferences, savePreferencesInBackground } from "./api.js";
@@ -200,10 +200,10 @@ export async function initializeApplication() {
   updateInstallButton();
   // The node normalizes on the way out; normalizing again costs nothing and keeps a
   // stale shape (or an older node) from reaching the dispatcher unvalidated.
-  state.canvasKeymap = normalizeCanvasKeymap(preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP);
+  state.keymap = normalizeKeymap(preferences.canvasKeymap || DEFAULT_KEYMAP);
   state.controlCenter = preferences.controlCenter;
   syncShortcutHints();
-  setShortcutKeymap(state.canvasKeymap);
+  setShortcutKeymap(state.keymap);
   setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
   revealApplication();
   void watchVisitorProfile();

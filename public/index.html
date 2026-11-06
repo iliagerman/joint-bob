@@ -574,7 +574,7 @@
           <span class="sr-only">Search conversations and workspace destinations</span>
           <input id="spotlightInput" type="search" role="combobox" aria-autocomplete="list" aria-controls="spotlightResults" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="Search or go to..." data-testid="spotlight-input" />
         </label>
-        <p class="canvas-picker-status" id="spotlightStatus" role="status" data-testid="spotlight-status"></p>
+        <p class="picker-status" id="spotlightStatus" role="status" data-testid="spotlight-status"></p>
         <div class="spotlight-results" id="spotlightResults" role="listbox" data-testid="spotlight-results"></div>
         <div class="dialog-actions">
           <button class="ghost" type="submit" data-testid="spotlight-cancel-button">Close</button>
@@ -1867,12 +1867,12 @@
 
         <section class="settings-panel" id="settingsPanel-shortcuts" role="tabpanel" aria-labelledby="settingsTab-shortcuts" tabindex="0" hidden>
           <p>Every keyboard shortcut in Joint Bob, in one place. Press <kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> anywhere in the app to come straight back here.</p>
-          <label class="canvas-keymap-search" for="canvasKeymapSearch">Find a shortcut
-            <input id="canvasKeymapSearch" type="text" autocomplete="off" spellcheck="false" placeholder="reviews, notes, costs, conversation&hellip;" data-testid="canvas-keymap-search-input" />
+          <label class="keymap-search" for="keymapSearch">Find a shortcut
+            <input id="keymapSearch" type="text" autocomplete="off" spellcheck="false" placeholder="reviews, notes, costs, conversation&hellip;" data-testid="keymap-search-input" />
           </label>
           <p class="settings-hint">Click a field, then press a shortcut. You can follow one modified key with a second key, as in Control Space then Backslash. Shortcuts hold at most four physical keys and need Command, Control, or Option. Backspace clears a shortcut.</p>
-          <div id="canvasKeymapCommands" class="canvas-keymap-grid" data-testid="canvas-keymap-commands"></div>
-          <div class="canvas-keymap-leader" data-testid="canvas-keymap-leader">
+          <div id="keymapCommands" class="keymap-grid" data-testid="keymap-commands"></div>
+          <div class="keymap-leader" data-testid="keymap-leader">
             <h3>Fixed shortcuts</h3>
             <p>These cannot be changed:</p>
             <ul>
@@ -1881,10 +1881,10 @@
               <li><kbd>&uarr;</kbd> <kbd>&darr;</kbd> and <kbd>Enter</kbd> in the search bar &mdash; move and open</li>
             </ul>
           </div>
-          <p class="canvas-picker-status" id="canvasKeymapStatus" role="status" data-testid="canvas-keymap-status"></p>
+          <p class="picker-status" id="keymapStatus" role="status" data-testid="keymap-status"></p>
           <div class="shortcut-actions">
-            <button class="ghost" id="canvasKeymapResetButton" type="button" data-testid="canvas-keymap-reset-button">Reset to defaults</button>
-            <button class="primary" id="canvasKeymapSaveButton" type="button" data-testid="canvas-keymap-save-button">Save shortcuts</button>
+            <button class="ghost" id="keymapResetButton" type="button" data-testid="keymap-reset-button">Reset to defaults</button>
+            <button class="primary" id="keymapSaveButton" type="button" data-testid="keymap-save-button">Save shortcuts</button>
           </div>
         </section>
 

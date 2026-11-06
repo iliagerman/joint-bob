@@ -1,6 +1,6 @@
 // App entry point. The feature modules under ./app register their DOM listeners
 // when they load; this file wires the boot sequence and the keyboard shortcuts.
-import { isCanvasHelpShortcut } from "./keymap.js";
+import { isHelpShortcut } from "./keymap.js";
 import { api } from "./app/api.js";
 import { installConversationSwitcher } from "./app/conversation-switcher.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
@@ -154,7 +154,7 @@ installShortcuts({
 /** One fixed chord opens the shortcuts panel, so the configurable keys are always
  *  findable. */
 document.addEventListener("keydown", (event) => {
-  if (!isCanvasHelpShortcut(event)) return;
+  if (!isHelpShortcut(event)) return;
   event.preventDefault();
   void openSettings("shortcuts");
 });

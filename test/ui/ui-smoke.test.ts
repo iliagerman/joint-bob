@@ -227,13 +227,13 @@ test("settings sub-tabs, shortcut search, and the account panel stay focused", a
 
   // Shortcuts: the search box fuzzy-filters the command rows.
   await page.getByTestId("settings-tab-shortcuts").click();
-  await page.getByTestId("canvas-keymap-search-input").fill("explain");
-  const costsRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "costs and subscriptions" }).first();
-  const explainRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "explain what this conversation did" });
+  await page.getByTestId("keymap-search-input").fill("explain");
+  const costsRow = page.locator("#keymapCommands .keymap-command", { hasText: "costs and subscriptions" }).first();
+  const explainRow = page.locator("#keymapCommands .keymap-command", { hasText: "explain what this conversation did" });
   await explainRow.waitFor();
   assert.equal(await costsRow.isVisible(), false, "non-matching commands hide");
   assert.equal(await explainRow.isVisible(), true, "matching commands stay");
-  await page.getByTestId("canvas-keymap-search-input").fill("");
+  await page.getByTestId("keymap-search-input").fill("");
   assert.equal(await costsRow.isVisible(), true, "clearing the search brings rows back");
 
   // Cluster: a lone node explains clusters and offers to create or join one.
@@ -927,13 +927,13 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   // One fixed chord opens the panel from anywhere, already on the Shortcuts tab.
   await page.keyboard.press("Meta+Shift+Slash");
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
-  await page.getByTestId("canvas-keymap-spotlight-input").waitFor({ state: "visible" });
+  await page.getByTestId("keymap-spotlight-input").waitFor({ state: "visible" });
   await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
 
-  const spotlight = page.getByTestId("canvas-keymap-spotlight-input");
-  const paneSearch = page.getByTestId("canvas-keymap-quick-note-input");
+  const spotlight = page.getByTestId("keymap-spotlight-input");
+  const paneSearch = page.getByTestId("keymap-quick-note-input");
   assert.equal(await spotlight.inputValue(), `${expectedModifiers.ctrlAlt}P`, "the tab shows the chord that is in force");
-  assert.ok(await page.getByTestId("canvas-keymap-leader").isVisible(), "the fixed shortcuts are listed too");
+  assert.ok(await page.getByTestId("keymap-leader").isVisible(), "the fixed shortcuts are listed too");
 
   // Holding modifiers with the key records one chord, exactly as held.
   await paneSearch.click();
@@ -958,14 +958,14 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   // Two commands cannot share one chord, and the panel says so instead of saving.
   await paneSearch.click();
   await page.keyboard.press("Control+Alt+KeyP");
-  await page.getByTestId("canvas-keymap-save-button").click();
-  await page.getByTestId("canvas-keymap-status").filter({ hasText: /cannot share/ }).waitFor();
+  await page.getByTestId("keymap-save-button").click();
+  await page.getByTestId("keymap-status").filter({ hasText: /cannot share/ }).waitFor();
 
   // A recorded chord is accepted and takes effect without a reload.
   await paneSearch.click();
   await page.keyboard.press("Control+BracketLeft");
-  await page.getByTestId("canvas-keymap-save-button").click();
-  await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
+  await page.getByTestId("keymap-save-button").click();
+  await page.getByTestId("keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
 
@@ -975,9 +975,9 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   assert.equal(await paneSearch.inputValue(), `${expectedModifiers.ctrl}[`, "the saved chord survives a reload");
   // Put the defaults back so later tests type the shortcuts they expect.
-  await page.getByTestId("canvas-keymap-reset-button").click();
-  await page.getByTestId("canvas-keymap-save-button").click();
-  await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
+  await page.getByTestId("keymap-reset-button").click();
+  await page.getByTestId("keymap-save-button").click();
+  await page.getByTestId("keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
 });

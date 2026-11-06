@@ -1,4 +1,4 @@
-import { DEFAULT_CANVAS_KEYMAP } from "../keymap.js";
+import { DEFAULT_KEYMAP } from "../keymap.js";
 
 /** Mutable app-wide values shared by several modules. */
 export const shared = {
@@ -22,7 +22,7 @@ export const state = {
   initialAction: bootParams.get("action"),
   initialSessionId: bootParams.get("sessionId"),
   initialNodeId: bootParams.get("nodeId"),
-  canvasKeymap: DEFAULT_CANVAS_KEYMAP,
+  keymap: DEFAULT_KEYMAP,
   // The view the control center was opened from, so the toggle key puts the user back where
   // they were rather than always in the conversation list.
   viewBeforeControl: null,
