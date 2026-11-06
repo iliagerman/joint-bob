@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.220.0 — 2026-11-06
+
+- Bob's chat in the control center takes files and images: attach them with **+**, paste a screenshot, or drop files on the message box. Bob's agent can open them when it answers, and they go to the conversation Bob starts or continues.
+- Taking control of a conversation opened over the board no longer cuts off its message box at the bottom of the window.
+- Every card on the board is the same size. Long titles and statuses are cut, with the full text on hover. On a **Needs you** card, the step waiting for you takes the status's place.
+- Bob's agent can again read a project's files when it answers with Claude. Before this, a fresh Claude session refused the read-only tools and the answer failed.
+
 ## 2.219.2 — 2026-11-06
 
 - The browser sign-in form from 2.219.1 now ships: 2.219.1 did not build. On phones and desktops, the sign-in shows the site's own fields as a form instead of a cropped live page.
