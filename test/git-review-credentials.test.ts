@@ -26,7 +26,7 @@ test("only interactive Ask AI enables checks, on initial questions and follow-up
   assert.match(routes, /useTools: true,\s+conversationId: payload.conversationId \?\? undefined/);
   assert.match(routes, /useTools: true,\s+conversationId: thread.conversationId \?\? undefined/);
   const runner = await readFile(new URL("../src/server/git-review-run.ts", import.meta.url), "utf8");
-  assert.match(runner, /if \(!input.useTools\) await restrictToReadOnly\(session\)/);
+  assert.match(runner, /if \(!input.useTools && !input.readOnlyTools\) await restrictToReadOnly\(session\)/);
   assert.match(runner, /never print or expose secret values/);
   for (const name of ["git-review-guide.ts", "git-change-story.ts"]) {
     const source = await readFile(new URL(`../src/server/${name}`, import.meta.url), "utf8");

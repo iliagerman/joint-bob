@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.220.1 — 2026-11-06
+
+- Ships 2.220.0 and the browser sign-in form from 2.219.2, which did not build: a test still expected the review runner's old read-only check.
+
 ## 2.220.0 — 2026-11-06
 
 - Bob's chat in the control center takes files and images: attach them with **+**, paste a screenshot, or drop files on the message box. Bob's agent can open them when it answers, and they go to the conversation Bob starts or continues.
