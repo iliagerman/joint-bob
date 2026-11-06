@@ -5,7 +5,7 @@ import { nativeUiFixture } from "./native-ui-fixture.js";
 const BOARD = {
   projects: [{ id: "p1", name: "Joint Bob" }, { id: "p2", name: "DAK Live" }],
   cards: [
-    { projectId: "p1", projectName: "Joint Bob", conversationId: "c1", sessionId: "c1", path: "/c1", title: "Mobile menu", column: "running", agentId: "claude", agentLabel: "Claude", agentModel: "sonnet", executionNodeId: null, updatedAt: "2026-11-05T10:00:00Z", turnRunning: true, backgroundRunning: false, summary: "Running the UI tests", autoRespondActive: true },
+    { projectId: "p1", projectName: "Joint Bob", conversationId: "c1", sessionId: "c1", path: "/c1", title: "Mobile menu", column: "running", agentId: "claude", agentLabel: "Claude", agentModel: "sonnet", executionNodeId: null, updatedAt: "2026-11-05T10:00:00Z", turnRunning: true, backgroundRunning: false, summary: "Running the UI tests", activity: "Bash · npm run test:ui -- test/ui/menu.test.ts", autoRespondActive: true },
     { projectId: "p2", projectName: "DAK Live", conversationId: "c2", sessionId: "c2", path: "/c2", title: "Slice 7: stop follow-up nudges while an agent owes the customer an answer, then map it", column: "running", agentId: "pi", agentLabel: "Pi", agentModel: null, executionNodeId: null, updatedAt: "2026-11-05T09:00:00Z", turnRunning: true, backgroundRunning: false, summary: null, autoRespondActive: false, startedBy: "bob" },
     { projectId: "p1", projectName: "Joint Bob", conversationId: "c3", sessionId: "c3", path: "/c3", title: "Review counter", column: "review", agentId: "claude", agentLabel: "Claude", agentModel: null, executionNodeId: null, updatedAt: "2026-11-05T08:00:00Z", turnRunning: false, backgroundRunning: false, summary: "**Goal** — Fix the review counter.\n**Done so far** — The counter counts reviews again.\n**Current state** — Fixed and tested; it waits for your review. The tests ran twice.", autoRespondActive: false, reviewCheck: { verdict: "done", reason: "", by: "Decision model 94%", pushes: 0, pushPending: false, needsYou: false } },
   ],
@@ -74,6 +74,11 @@ test("the control center shows the live board, filters by project, colors cards 
   const heights = await page.getByTestId("control-center-card").evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().height));
   assert.equal(new Set(heights).size, 1, `card heights: ${heights.join(", ")}`);
   assert.match(await page.locator('[data-key="p2:c2"] .control-title').getAttribute("title") ?? "", /then map it$/);
+  // A running card says what the turn is doing now, over the summary's line.
+  assert.equal(await page.locator('[data-key="p1:c1"]').getByTestId("control-card-activity").textContent(), "Bash · npm run test:ui -- test/ui/menu.test.ts");
+  assert.equal(await page.locator('[data-key="p1:c1"] .control-live-text').textContent(), "Running the UI tests");
+  assert.match(await page.locator('[data-key="p1:c1"] .control-live').getAttribute("title") ?? "", /Now: Bash · npm run test:ui/);
+  assert.equal(await page.locator('[data-key="p2:c2"]').getByTestId("control-card-activity").count(), 0, "no activity known, so the summary line stays");
 
   // Filter to one project.
   await page.getByTestId("control-center-filters").getByText("DAK Live").click();

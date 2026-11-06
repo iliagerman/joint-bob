@@ -8,6 +8,8 @@ import { allPendingGuardianReviews } from "../guardian/reviews.js";
 import { storedDigest } from "../conversation-digest.js";
 import { bobDatabase } from "../control-center/bob-store.js";
 import { listReviewChecks } from "../control-center/review-check.js";
+import { currentActivity } from "../control-center/activity.js";
+import { harnessSessions, harnessTurnBusy } from "./harness-sessions.js";
 import type { ProjectRecord } from "../types.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { noteUnannouncedRunChanges, sharedProjectSessions } from "./sessions-helpers.js";
@@ -42,6 +44,10 @@ export async function loadBoard(session: AuthSession): Promise<LoadedBoard> {
     autoRespondStop: (projectId, conversationId) => autoStopped.get(`${projectId}:${conversationId}`) ?? null,
     controlledBy: (projectId, conversationId) => { const holder = leaseHolder(projectId, conversationId); return holder === null ? null : holder === session.accountId ? "you" : "someone-else"; },
     reviewCheck: (projectId, conversationId) => checks.get(`${projectId}:${conversationId}`) ?? null,
+    activityOf: (projectId, conversationId) => {
+      const shared = [...harnessSessions.values()].find((entry) => entry.projectId === projectId && entry.conversationId === conversationId && harnessTurnBusy(entry));
+      return shared ? currentActivity(shared.liveEvents) : null;
+    },
   });
   return { cards, projects };
 }

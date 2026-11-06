@@ -27,6 +27,8 @@ export interface BoardCard {
   backgroundRunning: boolean;
   /** The conversation's running summary, the card's live line. */
   summary: string | null;
+  /** What a turn running on this machine is doing now: its tool and what it runs on, or the last line it wrote. */
+  activity: string | null;
   autoRespondActive: boolean;
   /** Who started the conversation. */
   startedBy: "you" | "bob";
@@ -51,6 +53,7 @@ export interface BoardSources {
   autoRespondStop(projectId: string, conversationId: string): BoardAutoRespondStop | null;
   controlledBy(projectId: string, conversationId: string): "you" | "someone-else" | null;
   reviewCheck(projectId: string, conversationId: string): BoardReviewCheck | null;
+  activityOf(projectId: string, conversationId: string): string | null;
 }
 
 /** Running conversations and finished ones waiting for review, newest activity first. */
@@ -83,6 +86,7 @@ export function buildBoard(projects: BoardProject[], sources: BoardSources): Boa
         turnRunning: Boolean(session.turnRunning),
         backgroundRunning: Boolean(session.backgroundRunning),
         summary: sources.summaryOf(project.projectId, conversationId),
+        activity: running ? sources.activityOf(project.projectId, conversationId) : null,
         autoRespondActive: sources.autoRespondActive(project.projectId, conversationId),
         startedBy: sources.startedByBob(project.projectId, session.id) || sources.startedByBob(project.projectId, conversationId) ? "bob" : "you",
         pendingReviews,

@@ -15,6 +15,7 @@ const sources = {
   autoRespondStop: () => null,
   controlledBy: (_projectId: string, conversationId: string) => conversationId === "c-run" ? "you" as const : null,
   reviewCheck: () => null,
+  activityOf: (_projectId: string, conversationId: string) => conversationId === "c-run" ? "Bash · npm test" : "not running, never asked",
 };
 
 test("the board lists running conversations and ones waiting for review, newest first", () => {
@@ -38,6 +39,8 @@ test("the board lists running conversations and ones waiting for review, newest 
   assert.equal(running.summary, "summary of p1");
   assert.equal(running.autoRespondActive, true);
   assert.equal(running.agentModel, "opus");
+  assert.equal(running.activity, "Bash · npm test", "a running card says what the turn is doing now");
+  assert.equal(review.activity, null, "a finished one has nothing running");
   assert.equal(running.startedBy, "bob");
   assert.equal(running.controlledBy, "you");
   assert.equal(review.controlledBy, null);

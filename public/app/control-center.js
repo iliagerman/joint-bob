@@ -101,11 +101,7 @@ function renderCard(card) {
   const body = element("div", "control-card-body");
   if (card.pendingReviews?.length || card.autoRespondStop) body.append(renderNeed(card));
   else {
-    const live = element("div", "control-live");
-    live.append(element("span", `control-pulse ${card.column === "running" ? "running" : "review"}`));
-    live.append(element("span", "control-live-text", briefStatus(card.summary) ?? (card.column === "running" ? "Working…" : "Finished. Open it to review.")));
-    if (card.summary) live.title = plainSummary(card.summary);
-    body.append(live);
+    body.append(renderLive(card));
     const checked = checkLine(card);
     if (checked) body.append(checked);
   }
@@ -135,6 +131,27 @@ function renderCard(card) {
   decorateCard(root, card);
   root.addEventListener("click", () => openCard(card).catch((error) => toast(error.message)));
   return root;
+}
+
+/**
+ * Where the conversation stands: what a running turn is doing now (its tool, or the last line it wrote), over the first sentence
+ * of the summary's current state. Hover for the whole summary.
+ */
+function renderLive(card) {
+  const live = element("div", "control-live");
+  live.append(element("span", `control-pulse ${card.column === "running" ? "running" : "review"}`));
+  const lines = element("div", "control-live-lines");
+  const status = briefStatus(card.summary);
+  if (card.activity) {
+    live.classList.add("has-now");
+    const now = element("span", "control-live-now", card.activity);
+    now.dataset.testid = "control-card-activity";
+    lines.append(now);
+  }
+  if (status || !card.activity) lines.append(element("span", "control-live-text", status ?? (card.column === "running" ? "Working…" : "Finished. Open it to review.")));
+  live.append(lines);
+  live.title = [card.summary ? plainSummary(card.summary) : null, card.activity ? `Now: ${card.activity}` : null].filter(Boolean).join("\n\n");
+  return live;
 }
 
 /** The first step waiting for the person, in the card's status room: the others follow once it is answered. */
@@ -360,6 +377,12 @@ function onChanged() {
   refreshWaiting();
 }
 window.addEventListener("running-refreshed", onChanged);
+// What a running turn is doing changes all the time, so while the board is in view and something runs it is read again.
+const LIVE_REFRESH_MS = 10_000;
+setInterval(() => {
+  if (!isControlCenterOpen() || document.hidden || !board.cards.some((card) => card.column === "running")) return;
+  refreshControlCenter().catch((error) => console.warn("Could not refresh the control center", error));
+}, LIVE_REFRESH_MS);
 window.addEventListener("control-center-changed", onChanged);
 // Leaving the control center closes the conversation over it.
 window.addEventListener("app-view-changed", () => { if (!isControlCenterOpen()) closeConversationPopup(); });
