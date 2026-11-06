@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.218.0 — 2026-11-06
 
 - The Activity overview is now drawn on paper, like the film on the landing page: Maya and Jonah are storybook characters who talk, point at the slide and react, each chapter's place is drawn by a pencil as the camera travels to it, and every slide is drawn on a board between them, step by step as it is explained.
 
