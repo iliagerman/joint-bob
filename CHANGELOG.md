@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.218.3 — 2026-11-06
+
+- Fixed Bob's review check judging a long conversation by its first message and telling finished work to go on; it now reads what you asked last.
+
 ## 2.218.2 — 2026-11-06
 
 - Fixed the Activity overview's pencil drawing, which stopped this release from building.
