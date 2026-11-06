@@ -115,6 +115,7 @@ export const browserCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("select"), selector, values: z.array(z.string().max(4096)).max(100) }),
   z.object({ action: z.literal("check"), selector, checked: z.boolean() }),
   z.object({ action: z.literal("wait"), selector, state: z.enum(["visible", "hidden", "attached", "detached"]).optional() }),
+  z.object({ action: z.literal("loginForm") }),
   z.object({ action: z.literal("snapshot") }),
   z.object({ action: z.literal("screenshot") }),
   z.object({ action: z.literal("evaluate"), expression: text }),

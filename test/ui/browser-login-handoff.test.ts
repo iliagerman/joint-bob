@@ -103,3 +103,25 @@ for (const action of ["navigate", "newTab"] as const) {
     assert.equal(completed.loginRequest, null); assert.equal(completed.owner, "agent");
   });
 }
+
+test("loginForm lists the sign-in fields and fills them as a human so the page signs in", { timeout: 30_000 }, async t => {
+  const server = http.createServer((request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end(request.url?.startsWith("/ready") ? "<h1>Account ready</h1>" : '<form action="/ready"><label>Email <input name="email" type="email"></label><label>Password <input name="password" type="password"></label><button>Sign in</button></form>');
+  });
+  const port = await listen(server); const origin = `http://127.0.0.1:${port}`;
+  const runtime = new BrowserRuntime({ capability }); t.after(async () => { await runtime.close(); close(server); });
+  const session = await runtime.create(start("pi", origin, "native-form"), []);
+  const paused = await pending(t, runtime, session.id);
+  await runtime.execute(session.id, { action: "takeControl", loginRequestId: paused.loginRequest!.id }, human);
+  const form = await runtime.execute(session.id, { action: "loginForm" }, human) as { fields: Array<{ selector: string; type: string; label: string }>; submit: { selector: string; label: string }; challenge: boolean; origin: string };
+  assert.equal(form.origin, origin); assert.equal(form.challenge, false);
+  assert.deepEqual(form.fields.map(field => [field.type, field.label]), [["email", "Email"], ["password", "Password"]]);
+  assert.equal(form.submit.label, "Sign in");
+  await runtime.execute(session.id, { action: "fill", selector: form.fields[0].selector, text: "me@example.com" }, human);
+  await runtime.execute(session.id, { action: "fill", selector: form.fields[1].selector, text: "secret" }, human);
+  await runtime.execute(session.id, { action: "clickElement", selector: form.submit.selector }, human);
+  const ready = await waitForAssertion(async () => { const view = await runtime.get(session.id); assert.match(view.tabs.find(tab => tab.id === view.activePageId)!.url, /\/ready(?:\?|$)/); return view; }, 15_000);
+  const done = await runtime.execute(session.id, { action: "completeLogin", requestId: paused.loginRequest!.id, expectedPageId: ready.activePageId! }, human) as Awaited<ReturnType<BrowserRuntime["get"]>>;
+  assert.equal(done.loginRequest, null);
+});

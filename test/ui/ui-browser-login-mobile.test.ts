@@ -618,3 +618,59 @@ test("a fast finger drag is coalesced into few scroll commands", { timeout: 120_
   assert.ok(sustained.length <= 18, `a one-second drag must stay near ten commands, sent ${sustained.length}`);
   assert.ok(sustained.reduce((sum, m) => sum + m.command.y, 0) > 0, "the throttled drag must keep its direction");
 });
+
+// The sign-in is drawn from the page's own fields, not the live stream: on a
+// phone the cropped remote page is unusable, so the native form must replace it.
+test("a phone sign-in shows the page's fields as a native form and hides the cropped stream", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const commands: any[] = [];
+  const form = {
+    origin: "https://accounts.example.test", challenge: false,
+    fields: [{ selector: "[data-jb-login-field=\"0\"]", type: "email", label: "Email", autocomplete: "username" }, { selector: "[data-jb-login-field=\"1\"]", type: "password", label: "Password", autocomplete: "current-password" }],
+    submit: { selector: "[data-jb-login-submit=\"1\"]", label: "Sign in" },
+  };
+  const session: any = {
+    id: sessionId, nodeId: ownerNodeId, state: "running", owner: "agent", canControl: true,
+    profileId: "55555555-5555-4555-8555-555555555555", profileLabel: "Synthetic login",
+    activePageId: pageId, tabs: [{ id: pageId, title: "Sign in", url: "https://accounts.example.test/login" }], downloads: [],
+    loginRequest: { id: requestId, expectedOrigin: "https://accounts.example.test", readySelector: "[data-authenticated]", loginSelector: "input", label: "Synthetic login", automatic: false },
+  };
+  const snapshot = () => ({ ...session });
+  await page.route("**/api/browser/**", async route => {
+    const url = new URL(route.request().url());
+    let result: any = {};
+    if (url.pathname === "/api/browser/sessions" && route.request().method() === "GET") result = { sessions: [snapshot()] };
+    else if (url.pathname === `/api/browser/sessions/${sessionId}`) result = { session: snapshot() };
+    else if (url.pathname.endsWith("/command")) {
+      const command = route.request().postDataJSON();
+      commands.push(command);
+      if (command.action === "takeControl") { session.owner = "human"; session.canControl = true; }
+      result = command.action === "loginForm" ? { session: snapshot(), result: form } : { session: snapshot() };
+    } else if (url.pathname === "/api/browser/status") result = { config: { executorNodeId: node.nodeId }, nodes: [{ id: ownerNodeId, name: "Owner", available: true, reachable: true, runningCount: 1 }] };
+    else if (url.pathname === "/api/browser/preferences") result = { nodeId: null, effectiveNodeId: ownerNodeId };
+    else if (url.pathname === "/api/browser/profiles") result = { profiles: [] };
+    await route.fulfill({ json: result });
+  });
+
+  await page.routeWebSocket(/\/ws\?mode=browser/, ws => { ws.send(JSON.stringify({ type: "browserState", session: snapshot() })); });
+  const login = await signIn(environment, node);
+  await page.context().addCookies(login.cookie.split("; ").map(cookie => ({ name: cookie.slice(0, cookie.indexOf("=")), value: cookie.slice(cookie.indexOf("=") + 1), url: node.url })));
+  await page.goto(node.url);
+  await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click();
+  await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().click();
+  await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
+  await page.setViewportSize({ width: 412, height: 730 });
+  const activeIdentity = await page.evaluate(async () => { const { state } = await import("/app/state.js"); return { projectId: state.activeProjectId, engine: state.engine, conversationId: state.activeConversationId || state.activeSessionId, appNodeId: state.conversationLock?.nodeId || state.activeNodeId }; });
+  Object.assign(session, activeIdentity);
+  await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
+
+  const dialog = page.getByTestId("browser-login-panel");
+  await dialog.waitFor();
+  const formBox = dialog.getByTestId("browser-login-form");
+  await formBox.waitFor({ state: "visible" });
+  assert.equal(await formBox.locator("input").count(), 2, "both sign-in fields must be real inputs");
+  assert.equal(await formBox.locator("input[type=password]").count(), 1, "the password field must be a password input");
+  assert.equal(await formBox.getByTestId("browser-login-submit").textContent(), "Sign in");
+  assert.equal(await dialog.getByTestId("browser-screen").isVisible(), false, "the cropped live page must be hidden while the form is shown");
+  assert.ok(commands.some(c => c.action === "loginForm"), "the viewer must read the form from the page");
+});

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { browserCommandSchema, browserStartSchema, type BrowserAccess, type BrowserActor, type BrowserCapability, type BrowserSessionRecord, type BrowserCommand, type BrowserProfile, type BrowserProfileGrant, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
 import { BrowserCommandQueue } from "./browser-command-queue.js";
 import { detectBrowserLogin } from "./browser-login-detection.js";
+import { readBrowserLoginForm } from "./browser-login-form.js";
 import { describeImage } from "./attachment-digest.js";
 import { getSettings } from "./settings.js";
 
@@ -143,7 +144,7 @@ export function browserLaunchArguments(platform = process.platform): string[] {
   // each change as a broken request even when the active route did not change.
   return ["--window-size=1512,945", ...(platform === "linux" ? ["--disable-network-change-notifier"] : [])];
 }
-const readOnly = new Set(["snapshot", "screenshot", "wait"]);
+const readOnly = new Set(["snapshot", "screenshot", "wait", "loginForm"]);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const defaultIdleTimeoutMs = 2 * 60 * 60 * 1000;
 
@@ -701,6 +702,7 @@ export class BrowserRuntime {
       case "check": await this.locator(page, command.selector).setChecked(command.checked); break;
       case "wait": await this.locator(page, command.selector).waitFor({ state: command.state }); break;
       case "evaluate": return page.evaluate(command.expression);
+      case "loginForm": return { ...await readBrowserLoginForm(page), challenge: await detectBrowserLogin(page) === "challenge" };
       case "snapshot": return { pageId: session.activePageId, url: page.url(), title: await page.title(), accessibility: (await page.locator("body").ariaSnapshot({ timeout: 5000 })).slice(0, 50000), errors: [...session.errors] };
       case "screenshot": {
         const data = (await page.screenshot({ timeout: 10000 })).toString("base64");

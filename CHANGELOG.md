@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.219.1 — 2026-11-06
+
+- The browser sign-in on a phone now shows the site's own Email and Password fields as a form, instead of a cropped live page. Tab, autofill and the phone keyboard work, and the page is filled and submitted behind the scenes.
+- Sign-ins with a challenge (a code or CAPTCHA), or with no form, still show the live page.
+
 ## 2.219.0 — 2026-11-06
 
 - A subscription pool shared through a relay no longer sends its sign-ins to other machines. A machine without its own sign-in for a pooled profile sends its Claude and ChatGPT requests through the relay, which adds its sign-in, so the sign-in stays on the relay.
