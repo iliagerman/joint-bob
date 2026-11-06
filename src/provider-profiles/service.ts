@@ -10,8 +10,9 @@ import { profileLogins } from "./login.js";
 import { claudeOAuthIdentity } from "./claude-identity.js";
 import { prepareClaudeProfile, readLegacyClaudeCredential, removeLegacyClaudeCredential } from "./claude.js";
 import { withProfileAuthority } from "./broker.js";
-import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, turnTokenValidityMs, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
-import { accessibleProviderProfile, listProviderProfiles, machineSignInChosen, providerProfile, resolveProviderProfile, type ProfileProvider, type ProfileScope, type ProviderProfile } from "./store.js";
+import { borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, turnTokenValidityMs, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
+import { relayProxyCredential } from "./relay-proxy.js";
+import { accessibleProviderProfile, listProviderProfiles, machineSignInChosen, providerProfile, resolveProviderProfile, localProviderProfile, type ProfileProvider, type ProfileScope, type ProviderProfile } from "./store.js";
 
 export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolChoice, updateSubscriptionPool } from "./pools.js";
 
@@ -150,10 +151,11 @@ async function migrateClaudeProfile(profile: ProviderProfile): Promise<void> {
   await removeLegacyClaudeCredential(profile);
 }
 
-/** Only the access token crosses into a turn's execution runtime. */
-export async function claudeProfileAccessToken(profile: ProviderProfile): Promise<string> {
+/** Only the access token crosses into a turn's execution runtime, with the relay proxy's address when the relay keeps the sign-in. */
+export async function claudeProfileAccess(profile: ProviderProfile): Promise<{ accessToken: string; baseUrl?: string }> {
   if (profile.provider !== "claude") throw new Error("Expected Claude profile");
-  return (await profileAccessCredential(profile)).access;
+  const credential = await profileAccessCredential(profile);
+  return { accessToken: credential.access, ...(typeof credential.proxyBaseUrl === "string" ? { baseUrl: credential.proxyBaseUrl } : {}) };
 }
 
 /**
@@ -217,7 +219,11 @@ export async function startProfileLogin(owner: string, id: string) {
 /** The SDK's file lock serializes renewal across sessions and processes. Never use ambient keys. */
 export async function profileAccessCredential(profile: ProviderProfile): Promise<ProfileOAuthCredential | BorrowedCredential> {
   const pool = poolProfileContext();
-  if (pool?.clusterId) return borrowClusterCredential(profile, pool);
+  if (pool?.clusterId) {
+    // A relay pool member this machine is signed in to as well runs here; otherwise the relay keeps the sign-in and sends the requests.
+    const own = localProviderProfile(profile.id);
+    return (own && await localProfileCredential(own)) || relayProxyCredential(profile, pool);
+  }
   return await localProfileCredential(profile) ?? borrowTwinCredential(profile);
 }
 

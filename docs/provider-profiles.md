@@ -60,9 +60,9 @@ A pool for a whole group is set only on a relay. Sign in on the relay, make the 
 
 The **Assignments** tab says when a relay rule applies, and marks a Cluster exception for that relay group as overridden. No other node can assign a pool to a whole cluster: an ordinary cluster's manager is refused, and a whole-cluster pool any machine saved before this rule is ignored. A machine that is offline when the relay saves the rule receives it when it returns; one that answers without pool support blocks the rule until it is updated. While a pool is attached, a machine without pool support cannot join the relay's group.
 
-The relay lends its pool's sign-ins: a member's turn borrows a short-lived token from the relay, so the relay must be online when a member needs a new token.
+The pool's sign-ins never leave the relay. A member machine signed in to the same profile itself runs the turn on its own sign-in. Any other member sends its turn's requests to the relay, which adds its sign-in, passes them to Claude or ChatGPT and streams the answers back. The relay must therefore be online for the whole turn: if it cannot be reached before the turn starts, the pool moves to its next member. Pi profiles still run only on the relay.
 
-Cluster members receive a signed, non-secret pool manifest, not provider credentials. When a turn needs a profile held on another node, the manager revalidates the current cluster assignment and membership before the holder lends a short-lived access token over the signed peer channel. The refresh credential stays on the profile holder; the borrowed token is kept in memory and never becomes a cluster manifest.
+Cluster members receive a signed, non-secret pool manifest, not provider credentials. A turn on a member gets a random placeholder token that works only on that machine's loopback proxy. The proxy sends each model request to the relay over the signed, encrypted machine channel. For every request, the relay checks the current relay rule, the cluster membership and the pool's members, then sends it on with its own sign-in. It sends on only the providers' model routes (Claude's `/v1/messages` and ChatGPT's Codex responses), never sign-in or account routes. No access or refresh token reaches the member.
 
 ## Automation assignments
 

@@ -187,6 +187,12 @@ export function twinProviderProfile(id: string): ProviderProfile | undefined {
   return row && row.owner === adminAccountId() ? fromRow(row) : undefined;
 }
 
+/** This node's own copy of a profile, whoever owns it: a pool member's own sign-in lives only on its machine. */
+export function localProviderProfile(id: string): ProviderProfile | undefined {
+  const row = database().prepare("SELECT * FROM provider_profiles WHERE id=? AND deleted=0").get(id) as Record<string, unknown> | undefined;
+  return row ? fromRow(row) : undefined;
+}
+
 export function deleteProviderProfile(owner: string, id: string): void {
   const profile = providerProfile(owner, id), db = database();
   if (db.prepare("SELECT 1 FROM provider_profile_selections WHERE profile_id=? LIMIT 1").get(id)) throw new Error("Remove this profile's selections before deleting it");

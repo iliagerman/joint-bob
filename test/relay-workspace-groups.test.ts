@@ -79,7 +79,7 @@ test("a relay group takes a subscription pool, and then admits only machines tha
     assert.throws(() => redeemRelaySharingInvitation(server, relay, joiner, { ...second.request, features: [] }, second.invitation.secret), /Pool protocol support/);
     redeemRelaySharingInvitation(server, relay, joiner, second.request, second.invitation.secret);
     assert.deepEqual(listSharingClusterMembers(server, clusterId).map((member) => member.nodeId), [relay, owner, joiner]);
-    for (const path of ["capability", "snapshot", "authorize-token", "token"]) {
+    for (const path of ["capability", "snapshot", "authorize-token", "proxy"]) {
       assert.equal(relayPeerRequestAllowed(server, relay, joiner, `/api/cluster/v2/subscription-pools/${path}`), true, `relay members reach the pool route ${path}, which checks membership itself`);
     }
     clearClusterSubscriptionPool(server, relay, clusterId, owner, manifest.poolId, 1);

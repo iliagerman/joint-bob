@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { createProviderProfile } from "../src/provider-profiles/store.js";
-import { claudeProfileAccessToken, logoutProfile, openAIAuthPath, profileLoginState, profileModelRuntime } from "../src/provider-profiles/service.js";
+import { claudeProfileAccess, logoutProfile, openAIAuthPath, profileLoginState, profileModelRuntime } from "../src/provider-profiles/service.js";
 import { prepareClaudeExecution, prepareClaudeProfile, profileDirectory } from "../src/provider-profiles/claude.js";
 import { getClusterNode } from "../src/cluster.js";
 
@@ -30,11 +30,11 @@ test("Claude migration is serialized, canonical tokens win, and logout prevents 
   await assert.rejects(stat(path.join(profileDirectory(profile), ".credentials.json")), { code: "ENOENT" });
   await canonical(profile, { anthropic: credential("rotated-access", "rotated-refresh") });
   await legacy(profile);
-  assert.equal(await claudeProfileAccessToken(profile), "rotated-access");
+  assert.deepEqual(await claudeProfileAccess(profile), { accessToken: "rotated-access" });
   assert.equal(JSON.parse(await readFile(openAIAuthPath(profile), "utf8")).anthropic.refresh, "rotated-refresh");
   await logoutProfile(profile);
   await legacy(profile);
-  await assert.rejects(claudeProfileAccessToken(profile), /No other account was used/);
+  await assert.rejects(claudeProfileAccess(profile), /No other account was used/);
   await assert.rejects(stat(path.join(profileDirectory(profile), ".credentials.json")), { code: "ENOENT" });
 });
 
@@ -48,7 +48,7 @@ test("Claude concurrent refresh rotates exactly once, exposing only access", asy
     assert.equal(value.refresh, "synthetic-refresh");
     return { ...value, ...credential("fresh-access", "fresh-refresh"), type: "oauth" as const };
   } } } });
-  assert.deepEqual(await Promise.all(Array.from({ length: 6 }, () => claudeProfileAccessToken(profile))), Array(6).fill("fresh-access"));
+  assert.deepEqual(await Promise.all(Array.from({ length: 6 }, async () => (await claudeProfileAccess(profile)).accessToken)), Array(6).fill("fresh-access"));
   assert.equal(refreshes, 1);
 });
 
@@ -57,7 +57,7 @@ test("revoked Claude refresh fails closed without leaking provider errors", asyn
   await canonical(profile, { anthropic: { ...credential(), expires: 1 } });
   const runtime = await profileModelRuntime(profile), provider = runtime.getProvider("anthropic")!;
   runtime.registerNativeProvider({ ...provider, auth: { ...provider.auth, oauth: { ...provider.auth!.oauth!, refresh: async () => { throw new Error("private-refresh-response"); } } } });
-  await assert.rejects(claudeProfileAccessToken(profile), (error: Error) => {
+  await assert.rejects(claudeProfileAccess(profile), (error: Error) => {
     assert.match(error.message, /No other account was used/);
     assert.doesNotMatch(error.message, /private-refresh-response/);
     return true;

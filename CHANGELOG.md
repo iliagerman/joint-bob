@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.219.0 — 2026-11-06
+
+- A subscription pool shared through a relay no longer sends its sign-ins to other machines. A machine without its own sign-in for a pooled profile sends its Claude and ChatGPT requests through the relay, which adds its sign-in, so the sign-in stays on the relay.
+- A pool member signed in on the same machine keeps using its own sign-in.
+
 ## 2.218.3 — 2026-11-06
 
 - Fixed Bob's review check judging a long conversation by its first message and telling finished work to go on; it now reads what you asked last.

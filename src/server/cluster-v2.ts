@@ -104,13 +104,21 @@ function memberDescriptor(db: DatabaseSync, clusterId: string, nodeId: string): 
   return row;
 }
 
-export async function signedPost<T>(db: DatabaseSync, senderNodeId: string, recipientNodeId: string, clusterId: string, target: string, payload: unknown): Promise<T> {
+/** A signed request to a cluster member whose answer, a stream included, the caller reads itself. */
+export async function signedFetch(db: DatabaseSync, senderNodeId: string, recipientNodeId: string, clusterId: string, target: string, payload: unknown, signal: AbortSignal): Promise<globalThis.Response> {
   const body = Buffer.from(JSON.stringify(payload));
   const peer = memberDescriptor(db, clusterId, recipientNodeId);
+  return peerFetch(new URL(target, peer.url), { method: "POST", redirect: "error", headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, senderNodeId, recipientNodeId, "POST", target, body) }, body, signal }, recipientNodeId);
+}
+
+export async function signedPost<T>(db: DatabaseSync, senderNodeId: string, recipientNodeId: string, clusterId: string, target: string, payload: unknown): Promise<T> {
   let response: globalThis.Response;
   try {
-    response = await peerFetch(new URL(target, peer.url), { method: "POST", redirect: "error", headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, senderNodeId, recipientNodeId, "POST", target, body) }, body, signal: AbortSignal.timeout(10_000) }, recipientNodeId);
-  } catch { throw new ClusterV2HttpError(503, "Cluster peer is unavailable"); }
+    response = await signedFetch(db, senderNodeId, recipientNodeId, clusterId, target, payload, AbortSignal.timeout(10_000));
+  } catch (error) {
+    if (error instanceof ClusterV2HttpError) throw error;
+    throw new ClusterV2HttpError(503, "Cluster peer is unavailable");
+  }
   if (!response.ok) throw new ClusterV2HttpError(response.status >= 400 && response.status < 500 ? response.status : 503, `Cluster peer request failed (${response.status})`);
   try { return await response.json() as T; } catch { throw new ClusterV2HttpError(503, "Cluster peer returned an invalid response"); }
 }

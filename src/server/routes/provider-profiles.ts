@@ -16,6 +16,7 @@ import { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, li
 import { poolProfileProviderSchema, applyClusterSubscriptionPoolEvent, assignedClusterPoolsForOwner, clusterPoolProfileAuthorized, getClusterSubscriptionPool, parseClusterSubscriptionPoolAssignment, setClusterSubscriptionPool, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
 import { localProfileCredential, logoutProfile, profileAvailability, profileLoginState, startProfileLogin } from "../../provider-profiles/service.js";
 import { borrowTwinCredential, TWIN_PROFILE_TOKEN_PATH } from "../../provider-profiles/twin-login.js";
+import { forwardToProvider, isModelRoute, isProxiedProvider, RELAY_PROXY_PATH, RelayRouteRefused, relayProxyRequestSchema, streamAnswer } from "../../provider-profiles/relay-proxy.js";
 import { profileLogins } from "../../provider-profiles/login.js";
 import { kiroProfileLoginStatus, cancelKiroProfileLogin } from "../../kiro-profiles/native.js";
 import { piProfileProviders, startPiProfileLogin, removePiProfileProvider } from "../../provider-profiles/pi-credentials.js";
@@ -255,18 +256,36 @@ async function authorizeClusterToken(db: Awaited<ReturnType<typeof clusterV2Data
   }
 }
 
-app.post("/api/cluster/v2/subscription-pools/token", route(async (request, response) => {
+/**
+ * A member's turn on a pool profile held here: the request goes on to the provider with this
+ * node's sign-in, and only the answer goes back. The sign-in itself never leaves (relay-proxy.ts).
+ */
+app.post(RELAY_PROXY_PATH, route(async (request, response) => {
   const sender = response.locals.machineProtocol === 2 && typeof response.locals.machineNodeId === "string" ? response.locals.machineNodeId : undefined;
   if (!sender) { sendError(response, 401, "Unauthorized"); return; }
-  const input = clusterTokenRequestSchema.parse(request.body), local = await getClusterNode(), db = await clusterV2Database();
+  const { request: proxied, ...input } = relayProxyRequestSchema.parse(request.body), local = await getClusterNode(), db = await clusterV2Database();
   if (!clusterPoolProfileAuthorized(db, input.clusterId, local.id, sender, input.poolId, input.profileId)) { sendError(response, 403, "Forbidden"); return; }
   const selected = providerProfileById(input.profileId), pool = getSubscriptionPool(selected.owner, input.poolId);
   if (selected.shared || !pool.members.some(({ profileId }) => profileId === input.profileId) || !accountInCluster(db, selected.owner, input.clusterId)) { sendError(response, 403, "Forbidden"); return; }
+  if (!isProxiedProvider(selected.provider)) { sendError(response, 409, `${selected.label} cannot be used through the relay`); return; }
+  // Refused before the manager is asked: a request that is not a model route costs nothing more.
+  if (proxied && !isModelRoute(selected.provider, proxied.path)) { sendError(response, 403, `${proxied.path} is not a model route the relay sends on`); return; }
   await authorizeClusterToken(db, local.id, sender, input);
-  try {
-    const credential = await localProfileCredential(selected) ?? await borrowTwinCredential(selected);
-    response.json({ credential: credential ? { type: "oauth", access: credential.access, refresh: "", expires: credential.expires } : null });
-  } catch (error) { sendError(response, 409, error instanceof Error ? error.message : "Sign-in unavailable on this node"); }
+  let credential: Awaited<ReturnType<typeof localProfileCredential>>;
+  try { credential = await localProfileCredential(selected) ?? await borrowTwinCredential(selected); }
+  catch (error) { sendError(response, 409, error instanceof Error ? error.message : "Sign-in unavailable on this node"); return; }
+  if (!credential) { sendError(response, 409, `${selected.label} is not signed in on the relay`); return; }
+  if (!proxied) { response.json({ ready: true }); return; }
+  const abort = new AbortController();
+  response.on("close", () => abort.abort());
+  let answer: globalThis.Response;
+  try { answer = await forwardToProvider(selected.provider, credential.access, proxied, abort.signal); }
+  catch (error) {
+    if (error instanceof RelayRouteRefused) { sendError(response, 403, error.message); return; }
+    sendError(response, 502, `The relay could not reach the provider for ${selected.label}`);
+    return;
+  }
+  await streamAnswer(answer, response);
 }));
 
 /** A twin without its own sign-in borrows a short-lived token. The refresh token stays here. */

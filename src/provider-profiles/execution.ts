@@ -1,10 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentRuntime, type RuntimeAccount } from "../account-runtime.js";
-import { claudeProfileAccessToken, projectProviderProfile } from "./service.js";
+import { claudeProfileAccess, projectProviderProfile } from "./service.js";
 import { prepareClaudeExecution, claudeProfileEnvironment } from "./claude.js";
 import type { ProviderProfile } from "./store.js";
 
-const claudeProfile = new AsyncLocalStorage<{ directory: string; accessToken: string; runtime: RuntimeAccount }>();
+const claudeProfile = new AsyncLocalStorage<{ directory: string; accessToken: string; baseUrl?: string; runtime: RuntimeAccount }>();
 function selectedExecution() {
   const selected = claudeProfile.getStore();
   const runtime = currentRuntime();
@@ -25,15 +25,16 @@ export function selectedClaudeConfigPath(): string | undefined {
 export function selectedClaudeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const selected = selectedExecution();
   if (!selected) return environment;
-  return { ...claudeProfileEnvironment(environment, selected.directory), CLAUDE_CODE_OAUTH_TOKEN: selected.accessToken };
+  // A relay pool sign-in stays on the relay: the token is a placeholder only this machine's relay proxy accepts.
+  return { ...claudeProfileEnvironment(environment, selected.directory), CLAUDE_CODE_OAUTH_TOKEN: selected.accessToken, ...(selected.baseUrl ? { ANTHROPIC_BASE_URL: selected.baseUrl } : {}) };
 }
 export async function withClaudeProfile<T>(projectId: string, conversationId: string | undefined, work: () => Promise<T>): Promise<T> {
   const profile = await projectProviderProfile(projectId, conversationId, "claude");
   if (!profile) return work();
   return useProviderProfile(profile, async () => {
-    const accessToken = await claudeProfileAccessToken(profile);
+    const access = await claudeProfileAccess(profile);
     const execution = await prepareClaudeExecution(profile);
-    try { return await claudeProfile.run({ directory: execution.directory, accessToken, runtime: currentRuntime() }, work); }
+    try { return await claudeProfile.run({ directory: execution.directory, ...access, runtime: currentRuntime() }, work); }
     finally { await execution.dispose(); }
   });
 }
