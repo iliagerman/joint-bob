@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.222.0 — 2026-11-06
+
+- Bob can change how Joint Bob looks. Ask him in the control center chat to switch the theme, or to make the text or a panel bigger or smaller. He hands the request to Joint Bob's display agent, which changes Settings → Appearance in the browser you asked from and reports back. **Undo** puts the earlier settings back.
+- The display agent runs on a lighter model. The decision model (Jev) picks one from the lighter half of your routing profile's levels; without a decision model key, the lightest level runs.
+- Text and panel sizes are now kept as exact steps, such as 1.15 instead of 1.1500000000000001.
+
 ## 2.221.1 — 2026-11-06
 
 - Ships 2.221.0, which did not release: its changelog quoted the name of a project that a test checks members never see. Bob's hint for what to ask now uses a neutral example.
