@@ -128,7 +128,8 @@ test("one timer wakes for the earliest due report, runs it, and does not poll", 
   await new Promise((resolve) => setTimeout(resolve, 900));
   assert.equal(calls.length, 1);
   assert.equal(listBobMessages(db, "ilia").length, 1);
-  assert.ok(getBobSchedule(db, "ilia", created.id)!.nextRun > Date.now() + 3_600_000);
+  // Its next time is the next 08:00, which may be minutes away when the test runs just before 08:00 UTC; it is not now.
+  assert.ok(getBobSchedule(db, "ilia", created.id)!.nextRun > Date.now() + 1_000);
   await new Promise((resolve) => setTimeout(resolve, 600));
   assert.equal(calls.length, 1, "after it ran the timer waits for the next day, it does not tick");
 
