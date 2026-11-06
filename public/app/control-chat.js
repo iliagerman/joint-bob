@@ -1,6 +1,7 @@
 import { harnessOption } from "../harness-metadata.js";
 import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
+import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
 import { openConversation, refreshControlCenter, saveControlCenter } from "./control-center.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
@@ -17,6 +18,8 @@ let messages = [];
 const filter = { project: "", importance: "" };
 let settingsLoaded = false;
 let catalog = { harnesses: [], models: [] };
+/** Files and images picked, pasted or dropped for the next message, read as the conversation composer reads them. */
+let attachments = [];
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -97,14 +100,36 @@ async function runAction(message, action, button) {
   }
 }
 
-async function send(text, answerOnly) {
+function renderChatAttachments() {
+  renderAttachmentChips(elements.controlChatAttachments, attachments, (id) => {
+    attachments = attachments.filter((attachment) => attachment.id !== id);
+    renderChatAttachments();
+  });
+}
+
+async function addChatAttachments(files) {
+  if (!files.length) return;
+  try {
+    attachments = await attachmentsFromFiles(files, attachments);
+    renderChatAttachments();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    elements.controlChatFiles.value = "";
+  }
+}
+
+const ofKind = (list, kind) => list.filter((attachment) => attachment.kind === kind).map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+
+async function send(text, sent, answerOnly) {
   const projectId = elements.controlChatProject.value || undefined;
   elements.controlChatSend.disabled = true;
   const waiting = element("div", "control-msg bob", "…");
   elements.controlChatMessages.append(waiting);
   elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
+  const files = sent.length ? { images: ofKind(sent, "image"), files: ofKind(sent, "file") } : {};
   try {
-    const result = await api("/api/control-center/bob/message", { method: "POST", body: JSON.stringify({ message: text, ...(projectId ? { projectId } : {}), ...(answerOnly ? { answerOnly: true } : {}) }) });
+    const result = await api("/api/control-center/bob/message", { method: "POST", body: JSON.stringify({ message: text, ...files, ...(projectId ? { projectId } : {}), ...(answerOnly ? { answerOnly: true } : {}) }) });
     waiting.remove();
     for (const message of [result.user, result.reply]) if (matchesFilter(message)) messages.push(message);
     renderMessages();
@@ -112,6 +137,9 @@ async function send(text, answerOnly) {
   } catch (error) {
     waiting.remove();
     elements.controlChatMessages.append(element("div", "control-msg error", error.message));
+    // Nothing reached Bob, so what was sent comes back to the box unless the person already wrote something new.
+    if (!elements.controlChatInput.value) elements.controlChatInput.value = text;
+    if (!attachments.length) { attachments = sent; renderChatAttachments(); }
   } finally {
     elements.controlChatSend.disabled = false;
   }
@@ -230,12 +258,42 @@ for (const chip of elements.controlChatFilters.querySelectorAll("[data-importanc
 elements.controlChatForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const text = elements.controlChatInput.value.trim();
-  if (!text) return;
+  if (!text) {
+    if (attachments.length) toast("Say what Bob should do with what you attached.");
+    return;
+  }
   elements.controlChatInput.value = "";
+  const sent = attachments;
+  attachments = [];
+  renderChatAttachments();
   // Text that came from outside (a webhook's payload) may only be answered, never acted on.
   const answerOnly = elements.controlChatForm.dataset.answerOnly === "1";
   delete elements.controlChatForm.dataset.answerOnly;
-  void send(text, answerOnly);
+  void send(text, sent, answerOnly);
+});
+elements.controlChatAttach.addEventListener("click", () => elements.controlChatFiles.click());
+elements.controlChatFiles.addEventListener("change", (event) => { void addChatAttachments(event.target.files ?? []); });
+// A pasted screenshot is attached; pasted text stays text.
+elements.controlChatInput.addEventListener("paste", (event) => {
+  const images = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
+  if (!images.length) return;
+  if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+  void addChatAttachments(images);
+});
+elements.controlChatForm.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer.types.includes("Files")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  elements.controlChatForm.classList.add("dragging");
+});
+elements.controlChatForm.addEventListener("dragleave", (event) => {
+  if (!elements.controlChatForm.contains(event.relatedTarget)) elements.controlChatForm.classList.remove("dragging");
+});
+elements.controlChatForm.addEventListener("drop", (event) => {
+  if (!event.dataTransfer.types.includes("Files")) return;
+  event.preventDefault();
+  elements.controlChatForm.classList.remove("dragging");
+  void addChatAttachments(event.dataTransfer.files);
 });
 elements.controlChatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

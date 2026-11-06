@@ -210,7 +210,7 @@ const attachmentDataSchema = z.string()
     if (decoded.toString("base64") !== data) context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid base64 attachment data" });
     if (decoded.byteLength > MAX_ATTACHMENT_BYTES) context.addIssue({ code: z.ZodIssueCode.custom, message: "Attachment exceeds 4 MB" });
   });
-const imageAttachmentSchema = z.object({
+export const imageAttachmentSchema = z.object({
   name: z.string().trim().min(1).max(240),
   mimeType: z.string().trim().min(1).max(120),
   data: attachmentDataSchema,
@@ -249,7 +249,7 @@ export const quickNotePrepareSchema = z.object({
   title: z.string().trim().min(1).max(120),
   secretAccountIds: z.array(z.string().uuid()).max(100).optional(),
 }).strict();
-const fileAttachmentSchema = z.object({
+export const fileAttachmentSchema = z.object({
   name: z.string().trim().min(1).max(240),
   mimeType: z.string().trim().min(1).max(120),
   data: attachmentDataSchema,

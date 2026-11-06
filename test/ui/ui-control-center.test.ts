@@ -125,6 +125,23 @@ test("the control center shows the live board, filters by project, colors cards 
   const requests = await page.evaluate("window.__bobRequests") as Array<{ message: string; projectId?: string }>;
   assert.deepEqual(requests.map((request) => request.projectId ?? null), [null, "p2"]);
 
+  // Files can be attached and a screenshot pasted; both go with the message, and the box is cleared once it is sent.
+  await page.getByTestId("control-chat-project").selectOption({ label: "Auto" });
+  await page.getByTestId("control-chat-files").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("the map is wrong") });
+  await page.getByTestId("control-chat-input").evaluate((input) => {
+    const clipboard = new DataTransfer();
+    clipboard.items.add(new File([new Uint8Array([137, 80, 78, 71])], "screen.png", { type: "image/png" }));
+    input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: clipboard, bubbles: true, cancelable: true }));
+  });
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-chat-attachments"] .attachment-chip').length === 2);
+  await page.getByTestId("control-chat-input").fill("what is in these?");
+  await page.getByTestId("control-chat-send").click();
+  await page.waitForFunction(() => (window as unknown as { __bobRequests: unknown[] }).__bobRequests.length === 3);
+  const attached = (await page.evaluate("window.__bobRequests") as Array<{ images?: Array<{ name: string; data: string }>; files?: Array<{ name: string; data: string }> }>)[2];
+  assert.deepEqual(attached.images?.map((image) => [image.name, image.data]), [["screen.png", "iVBORw=="]]);
+  assert.deepEqual(attached.files?.map((file) => [file.name, Buffer.from(file.data, "base64").toString()]), [["notes.txt", "the map is wrong"]]);
+  assert.equal(await page.locator('[data-testid="control-chat-attachments"] .attachment-chip').count(), 0);
+
   // The filters narrow the timeline by importance and by project.
   await page.getByTestId("control-chat-importance-important").click();
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-chat-entry"]').length === 1);

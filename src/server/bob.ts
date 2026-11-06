@@ -15,7 +15,8 @@ import { getClusterNode } from "../cluster.js";
 import { genericSecretEnvironment } from "../secrets.js";
 import type { HarnessId, ProjectRecord } from "../types.js";
 import { loadBoard } from "./control-center-board.js";
-import { startBobConversation, titleOf } from "./control-center-start.js";
+import { saveBobAttachments, startBobConversation, titleOf, type BobAttachments } from "./control-center-start.js";
+import { promptTextWithAttachments } from "./chat.js";
 import { handleBobAutomation } from "./control-center-automation-chat.js";
 import { handleBobOrganize } from "./control-center-organize.js";
 import { bobDashboardRequest } from "./control-center-dashboard-request.js";
@@ -58,7 +59,7 @@ export async function bobDecisionModel(projects: ProjectRecord[], settings: BobS
  * decision model is sure which. Only a conversation this machine runs and the person has not taken over can be continued;
  * the message says why when it cannot, and Bob then starts a new conversation as usual. Null means: start a new one.
  */
-async function continueExisting(args: { session: AuthSession; settings: BobSettings; project: ProjectRecord; message: string; recentChat: string[]; model: NonNullable<Awaited<ReturnType<typeof bobDecisionModel>>> }): Promise<{ text: string } | { skipped: string } | null> {
+async function continueExisting(args: { session: AuthSession; settings: BobSettings; project: ProjectRecord; message: string; attachments: BobAttachments; recentChat: string[]; model: NonNullable<Awaited<ReturnType<typeof bobDecisionModel>>> }): Promise<{ text: string } | { skipped: string } | null> {
   const sessions = (await sharedProjectSessions(args.project, args.session.userId, args.session.accountId))
     .filter((entry) => !entry.readOnly && !entry.draft).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "")).slice(0, 8);
   if (!sessions.length) return null;
@@ -71,7 +72,7 @@ async function continueExisting(args: { session: AuthSession; settings: BobSetti
   const target = sessions.find((entry) => (entry.conversationId ?? entry.id) === chosen.conversationId)!;
   if (target.executionNodeId && target.executionNodeId !== (await getClusterNode()).id) return { skipped: `"${target.title}" runs on another machine, so I started a new conversation instead.` };
   if (isLeased(args.project.id, chosen.conversationId)) return { skipped: `You are in control of "${target.title}", so I started a new conversation instead of interrupting it.` };
-  await queueConversationPrompt({ projectId: args.project.id, engine: target.harnessId, sessionId: target.id, message: args.message, requestId: randomUUID(), label: "Bob", until: "started" });
+  await queueConversationPrompt({ projectId: args.project.id, engine: target.harnessId, sessionId: target.id, message: args.message, ...args.attachments, requestId: randomUUID(), label: "Bob", until: "started" });
   return { text: `Sent to "${target.title}" in ${args.project.name}, since it is the same work.` };
 }
 
@@ -84,16 +85,22 @@ function viaText(reason: string | null, decision: BobDecision | null, projectNam
   return reason === "low-confidence" ? `Decision model ${sure} is under the threshold, so Bob's agent decided` : `Decision model ${sure}${where} · ${decision.kind} · ${decision.size}`;
 }
 
-/** Bob's own agent answers from what is running and each project's recent work; with a project in view it can also read that project's files. */
-export async function answerWithAgent(args: { message: string; recentChat: string[]; project: ProjectRecord | undefined; projectChosen: boolean; options: BobProjectOption[]; settings: BobSettings; session: AuthSession; turn: BobTurn }): Promise<{ text: string; via: string[] }> {
+/**
+ * Bob's own agent answers from what is running and each project's recent work; with a project in view it can also read that
+ * project's files. What the person attached is saved in the project and named in the question, with read-only tools to open it.
+ */
+export async function answerWithAgent(args: { message: string; attachments: BobAttachments; recentChat: string[]; project: ProjectRecord | undefined; projectChosen: boolean; options: BobProjectOption[]; settings: BobSettings; session: AuthSession; turn: BobTurn }): Promise<{ text: string; via: string[] }> {
   const { cards } = await loadBoard(args.session);
   if (!args.project) return { text: "There are no projects yet, so there is nothing for me to look at.", via: [] };
   const contributed = await collectBobContext(args.turn);
   const harnessId = (args.settings.harnessId || iconHarnessId()) as HarnessId;
+  const saved = await saveBobAttachments(args.project, args.attachments);
+  const message = promptTextWithAttachments(args.message, saved.filter((item) => item.kind === "image"), saved.filter((item) => item.kind === "file"));
   const result = await runGitReview({
     projectId: args.project.id, cwd: args.project.path, harnessId, provider: args.settings.provider, modelId: args.settings.modelId, thinkingLevel: args.settings.thinkingLevel,
-    selection: { scope: "context", label: "Bob" }, question: args.message, diff: bobMaterial({ message: args.message, recentChat: args.recentChat, context: bobContext(cards, args.options), contributed: contributed.text }),
-    instructions: BOB_INSTRUCTIONS, readOnlyTools: args.projectChosen,
+    selection: { scope: "context", label: "Bob" }, question: args.message, diff: bobMaterial({ message, recentChat: args.recentChat, context: bobContext(cards, args.options), contributed: contributed.text }),
+    images: args.attachments.images.map(({ mimeType, data }) => ({ type: "image" as const, mimeType, data })),
+    instructions: BOB_INSTRUCTIONS, readOnlyTools: args.projectChosen || saved.length > 0,
   });
   return { text: result.answer.trim(), via: contributed.via };
 }
@@ -105,8 +112,11 @@ export interface BobReply { action: "started" | "answer"; user: BobMessage; repl
  * how much it matters. The decision model decides what the message is, which project it is about and how big the job is,
  * in one batched request; a confident task starts as a conversation in that project, anything else is answered by Bob's agent.
  */
-export async function handleBobMessage(session: AuthSession, input: { message: string; projectId?: string; answerOnly?: boolean }): Promise<BobReply> {
+export async function handleBobMessage(session: AuthSession, input: { message: string; projectId?: string; answerOnly?: boolean; images?: BobAttachments["images"]; files?: BobAttachments["files"] }): Promise<BobReply> {
   const db = await bobDatabase();
+  // Attachments reach the agent that reads the message: Bob's when he answers, or the conversation he starts or continues.
+  const attachments: BobAttachments = { images: input.images ?? [], files: input.files ?? [] };
+  const attachedNames = [...attachments.images, ...attachments.files].map((attachment) => attachment.name);
   // Talking to Bob, from the chat or from Telegram, is also how he learns who to tell about things that happen later.
   rememberBobAccount(db, actingAccountFromSession(session));
   const settings = readBobSettings(db, session.accountId);
@@ -127,7 +137,8 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
   }
   const sure = needsAgentDecision(decision, settings.threshold) ? null : decision;
   const project = chosen ?? projects.find((candidate) => candidate.id === sure?.projectId);
-  const user = appendBobMessage(db, session.accountId, { role: "user", text: input.message, projectId: project?.id ?? null, projectName: project?.name ?? null });
+  const shown = attachedNames.length ? `${input.message}\n\nAttached: ${attachedNames.join(", ")}` : input.message;
+  const user = appendBobMessage(db, session.accountId, { role: "user", text: shown, projectId: project?.id ?? null, projectName: project?.name ?? null });
 
   // A request for a dashboard for a project or for the person goes to the dashboard-creator agent, not to a project conversation.
   const dashboards = input.answerOnly ? null : await bobDashboardRequest({ session, db, settings, message: input.message, recentChat: recent, project, projects, decision: sure, model });
@@ -150,7 +161,7 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
       return { action: "answer", user, reply: refusal, projectId: project.id };
     }
     const harnessId = named ?? (settings.harnessId || iconHarnessId());
-    const continued = model ? await continueExisting({ session, settings, project, message: input.message, recentChat: recent, model }) : null;
+    const continued = model ? await continueExisting({ session, settings, project, message: input.message, attachments, recentChat: recent, model }) : null;
     if (continued && "text" in continued) {
       const reply = appendBobMessage(db, session.accountId, { role: "bob", text: continued.text, via: viaText(null, sure, project.name), projectId: project.id, projectName: project.name });
       notifyBobExchange(turn, reply.text);
@@ -160,7 +171,7 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
     // What Bob knows about how the person works goes into the brief, the way they would write it themselves.
     const known = await collectBobContext(turn);
     const brief = known.text ? `${input.message}\n\n---\nNotes about how I work, kept by my assistant:\n${known.text}` : input.message;
-    const started = await startBobConversation({ session, settings, project, title: titleOf(input.message), brief, harnessId, autoRespond: bobWantsAutoRespond(settings, sure) });
+    const started = await startBobConversation({ session, settings, project, title: titleOf(input.message), brief, harnessId, autoRespond: bobWantsAutoRespond(settings, sure), attachments });
     const autoRespondNote = started.autoRespondNote;
     const reply = appendBobMessage(db, session.accountId, {
       role: "bob", text: `Started in ${project.name}. It is on the board now; I'll show what it is doing there.${autoRespondNote}${skipped}`,
@@ -172,7 +183,7 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
 
   const reason = !model ? "no-decision-model" : !decision ? "no-answer" : sure ? sure.kind : "low-confidence";
   const answerProject = project ?? projects[0];
-  const answered = await answerWithAgent({ message: input.message, recentChat: recent, project: answerProject, projectChosen: Boolean(project), options, settings, session, turn });
+  const answered = await answerWithAgent({ message: input.message, attachments, recentChat: recent, project: answerProject, projectChosen: Boolean(project), options, settings, session, turn });
   const via = [viaText(reason, decision, project?.name ?? null), ...answered.via].join(" · ");
   const reply = appendBobMessage(db, session.accountId, { role: "bob", text: answered.text || "I have nothing to add.", via, projectId: project?.id ?? null, projectName: project?.name ?? null });
   notifyBobExchange(turn, reply.text);

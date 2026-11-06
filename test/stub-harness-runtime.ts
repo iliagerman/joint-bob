@@ -95,7 +95,7 @@ function wrapPiSession(session: HarnessSession, options: HarnessOpenOptions): Ha
     const emit = (event: HarnessEvent): void => { for (const listener of listeners) listener(event); };
     try {
       await input.beforeStart?.();
-      if (process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG) await appendFile(process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG, `${JSON.stringify({ cwd: options.cwd, sessionId: session.id, sessionPath: options.sessionPath, prompt: input.text, settings: session.settings() })}\n`);
+      if (process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG) await appendFile(process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG, `${JSON.stringify({ cwd: options.cwd, sessionId: session.id, sessionPath: options.sessionPath, prompt: input.text, images: input.images?.length ?? 0, settings: session.settings() })}\n`);
       // A joining client must see the accepted prompt even while the turn is held.
       const transcript = await appendPiTranscript(session, options, input);
       completed.push(transcript.user);
@@ -129,7 +129,7 @@ function wrapClaudeSession(session: HarnessSession, options: HarnessOpenOptions)
     const maxPromptBytes = Number(process.env.JOINT_BOB_TEST_ENGINE_MAX_PROMPT_BYTES);
     if (maxPromptBytes && Buffer.byteLength(input.text) > maxPromptBytes) throw new Error("Prompt is too long");
     claude.markStarted(input, state);
-    if (process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG) await appendFile(process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG, `${JSON.stringify({ cwd: options.cwd, sessionId: session.id, sessionPath: options.sessionPath, prompt: input.text, settings: session.settings() })}\n`);
+    if (process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG) await appendFile(process.env.JOINT_BOB_TEST_ENGINE_DETAIL_LOG, `${JSON.stringify({ cwd: options.cwd, sessionId: session.id, sessionPath: options.sessionPath, prompt: input.text, images: input.images?.length ?? 0, settings: session.settings() })}\n`);
     const streaming = process.env.JOINT_BOB_TEST_ENGINE_STREAMING === "1";
     if (streaming) claude.emit({ type: "textDelta", text: "stubbed" });
     await recordStubRun("claude");

@@ -5,7 +5,7 @@ import { listConversationSegments } from "../conversation-records.js";
 import { conversationScopeId, getScopeSecretAccounts } from "../secrets.js";
 import { readOnlyChatTools } from "../read-only-tools.js";
 import { getProject } from "../store.js";
-import type { HarnessEvent, HarnessModelSettings, HarnessSession } from "../harnesses/runtime.js";
+import type { HarnessEvent, HarnessModelSettings, HarnessPrompt, HarnessSession } from "../harnesses/runtime.js";
 import type { GitReviewSelection } from "../git-review-threads.js";
 import type { HarnessId } from "../types.js";
 
@@ -38,6 +38,8 @@ export interface RunGitReviewInput {
   selection: GitReviewSelection;
   diff: string;
   question: string;
+  /** Images the person attached, handed to agents that take them directly; the question names their saved paths for the rest. */
+  images?: HarnessPrompt["images"];
   /** Prior exchanges in this thread, oldest first, replayed as context. */
   history?: Array<{ role: "user" | "assistant"; text: string }>;
   /** Structured review/discovery instructions; still runs in the same read-only session. */
@@ -186,8 +188,9 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
     });
     // A prompt that fails before the turn ends leaves `done` unawaited; its later outcome is moot.
     done.catch(() => undefined);
-    if (turn.pooled) await Promise.race([turn.prompt({ text: reviewPrompt(input) }), done]);
-    else await Promise.all([turn.prompt({ text: reviewPrompt(input) }), done]);
+    const prompt = { text: reviewPrompt(input), ...(input.images?.length ? { images: input.images } : {}) };
+    if (turn.pooled) await Promise.race([turn.prompt(prompt), done]);
+    else await Promise.all([turn.prompt(prompt), done]);
     const answer = collectAnswer(events);
     if (!answer) throw new GitReviewRunError(502, "Review produced no explanation");
     const status = session.status();

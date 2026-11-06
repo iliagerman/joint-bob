@@ -69,6 +69,9 @@
 .control-chat-project select { width: auto; max-width: 220px; padding: 3px 24px 3px 8px; font-size: 12px; }
 .control-chat-box { display: flex; gap: 8px; align-items: flex-end; }
 .control-chat-box textarea { flex: 1; resize: none; min-height: 48px; }
+.control-chat-box #controlChatAttach { flex: none; font-size: 16px; line-height: 1; }
+.control-chat-form .attachment-list { gap: 6px; }
+.control-chat-form.dragging { outline: 1px dashed var(--accent); outline-offset: -4px; }
 @media (max-width: 1279px) { .control-chat { flex-basis: min(var(--control-chat-width, 400px), 46%); } }
 
 .control-chat-head .compact { flex: none; }

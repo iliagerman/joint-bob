@@ -6,7 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode, type SignedIn } from "./dev-nodes.js";
 
-/** A stand-in decision model: every message is a task about the project it names; one that starts "continue" belongs to the first conversation. */
+/**
+ * A stand-in decision model: every message is a task about the project it names, except one that starts "question", which Bob's
+ * agent answers; one that starts "continue" belongs to the first conversation.
+ */
 async function decisionModel(): Promise<{ server: Server; url: string }> {
   const server = createServer((request, response) => {
     let body = "";
@@ -17,7 +20,7 @@ async function decisionModel(): Promise<{ server: Server; url: string }> {
       const choose = (choice: string) => ({ type: "choice", choice, confidence: 0.97 });
       const answers: Record<string, unknown> = {};
       for (const [id, question] of Object.entries(parsed.questions)) {
-        if (id === "kind") answers[id] = choose("task");
+        if (id === "kind") answers[id] = choose(message.startsWith("question") ? "question" : "task");
         else if (id === "size") answers[id] = choose("long");
         else if (id === "autorespond") answers[id] = choose("no");
         else if (id === "project") answers[id] = choose(Object.entries(question.criteria).find(([key, text]) => key !== "none" && message.includes(text.split(".")[0]))?.[0] ?? "none");
@@ -42,15 +45,16 @@ async function eventually<T>(read: () => Promise<T | undefined>, label: string):
   throw new Error(`Never happened: ${label}`);
 }
 
-test("Bob starts a task as a conversation, uses the agent the person names, continues the conversation it belongs to, and leaves one the person took over", { timeout: 180_000 }, async () => {
+test("Bob starts a task as a conversation, uses the agent the person names, continues the conversation it belongs to, leaves one the person took over, and passes on what the person attached", { timeout: 180_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-control-tasks-"));
   const classifier = await decisionModel();
   let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
   try {
     const engineLog = path.join(root, "engine-runs.log");
+    const detailLog = path.join(root, "engine-detail.log");
     const environment = await seedDevEnvironment(root, 1);
     const node: SeededNode = environment.nodes[0];
-    server = await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: engineLog, JOINT_BOB_TYPESAFE_ENDPOINT: classifier.url });
+    server = await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: engineLog, JOINT_BOB_TEST_ENGINE_DETAIL_LOG: detailLog, JOINT_BOB_TYPESAFE_ENDPOINT: classifier.url });
     const auth: SignedIn = await signIn(environment, node);
     const project = projectNamed(node, "Joint Bob");
     const account = await api<{ account: { id: string } }>(node, auth, "POST", "/secrets/accounts", { label: "decision", provider: "custom", variables: [{ name: "TYPESAFE_AI_API_KEY", kind: "value", value: "test-key" }] });
@@ -93,6 +97,30 @@ test("Bob starts a task as a conversation, uses the agent the person names, cont
     const left = await send("continue: and the height too in Joint Bob");
     assert.equal(left.body.action, "started", JSON.stringify(left.body));
     assert.match(left.body.reply.text, /You are in control of ".+", so I started a new conversation instead of interrupting it\./);
+
+    // 5. What the person pastes or attaches reaches the agent: saved in the project, named in the prompt, the image handed over too.
+    const prompts = async () => (await readFile(detailLog, "utf8").catch(() => "")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as { prompt: string; images: number });
+    const image = { name: "screen.png", mimeType: "image/png", data: Buffer.from("not really a png").toString("base64") };
+    const file = { name: "notes.txt", mimeType: "text/plain", data: Buffer.from("the logo is too small").toString("base64") };
+    const savedPath = (prompt: string, name: string) => new RegExp(`- ${name.replace(".", "\\.")}: (\\S+)`).exec(prompt)?.[1];
+    const withFiles = await api<{ action: string; user: { text: string } }>(node, auth, "POST", "/control-center/bob/message", { message: "fix the logo in Joint Bob", images: [image], files: [file] });
+    assert.equal(withFiles.body.action, "started", JSON.stringify(withFiles.body));
+    assert.equal(withFiles.body.user.text, "fix the logo in Joint Bob\n\nAttached: screen.png, notes.txt", "Bob's chat shows what was attached");
+    const startedPrompt = await eventually(async () => (await prompts()).find((entry) => entry.prompt.includes("fix the logo")), "the new conversation got the brief");
+    for (const [name, bytes] of [["screen.png", "not really a png"], ["notes.txt", "the logo is too small"]]) {
+      const saved = savedPath(startedPrompt.prompt, name);
+      assert.ok(saved?.startsWith(path.join(project.path, ".joint-bob-attachments")), `${name} is named in the prompt: ${startedPrompt.prompt}`);
+      assert.equal(await readFile(saved!, "utf8"), bytes, `${name} is saved in the project`);
+    }
+    // Bob's agent answers with the stubbed Claude, which needs no model set up.
+    assert.equal((await api(node, auth, "PUT", "/control-center/bob/settings", { harnessId: "claude" })).status, 200);
+    const asked = await api<{ action: string }>(node, auth, "POST", "/control-center/bob/message", { message: "question: what is wrong in this screenshot of Joint Bob?", images: [image] });
+    assert.equal(asked.body.action, "answer", JSON.stringify(asked.body));
+    const answerPrompt = (await prompts()).find((entry) => entry.prompt.includes("what is wrong in this screenshot"))!;
+    assert.ok(savedPath(answerPrompt.prompt, "screen.png"), "Bob's agent is told where the image is");
+    assert.equal(answerPrompt.images, 1, "and is handed the image itself");
+    const tooMany = await api(node, auth, "POST", "/control-center/bob/message", { message: "fix it in Joint Bob", images: [image, image, image, image, image] });
+    assert.equal(tooMany.status, 400, "the message box's limits hold");
   } finally {
     if (server) await stopDevNode(server);
     await new Promise<void>((resolve) => classifier.server.close(() => resolve()));

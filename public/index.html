@@ -299,7 +299,10 @@
               <label class="control-chat-project">Project
                 <select id="controlChatProject" data-testid="control-chat-project"><option value="">Auto</option></select>
               </label>
+              <div class="attachment-list" id="controlChatAttachments" aria-live="polite" data-testid="control-chat-attachments"></div>
               <div class="control-chat-box">
+                <input class="sr-only" id="controlChatFiles" type="file" multiple data-testid="control-chat-files" />
+                <button class="ghost compact" id="controlChatAttach" type="button" aria-label="Attach files or images" title="Attach files or images; you can also paste or drop them" data-testid="control-chat-attach">+</button>
                 <textarea id="controlChatInput" rows="2" placeholder="Ask about any project, or give Bob a task…" data-testid="control-chat-input"></textarea>
                 <button class="primary compact" type="submit" id="controlChatSend" data-testid="control-chat-send">Send</button>
               </div>
