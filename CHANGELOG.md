@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.221.1 — 2026-11-06
+
+- Ships 2.221.0, which did not release: its changelog quoted the name of a project that a test checks members never see. Bob's hint for what to ask now uses a neutral example.
+
 ## 2.221.0 — 2026-11-06
 
 - Bob can ask or tell one of your conversations something, such as "ask the slice 10 conversation how to review it". After you press **Send it**, he sends it to that conversation as you, and its answer comes back to his chat. He can also delete a conversation. He now finds idle conversations you name, not only the ones on the board.
