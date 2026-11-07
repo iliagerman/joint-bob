@@ -905,6 +905,18 @@ function queuedSettingsEditor(bubble) {
   return { container, reset: () => { draft = JSON.parse(bubble.dataset.queueSettings); render(); }, value: () => draft };
 }
 
+/** The phone's full-screen editor titles itself and closes from the top; desktop hides this row with CSS. */
+function queuedEditorHeader(discard) {
+  const header = document.createElement("div");
+  header.className = "queued-editor-top";
+  const close = queuedButton("✕", "queued-message-edit-close-button");
+  close.className = "queued-editor-close";
+  close.setAttribute("aria-label", "Cancel editing");
+  close.addEventListener("click", () => discard.click());
+  header.append(close, Object.assign(document.createElement("strong"), { textContent: "Edit queued message" }));
+  return header;
+}
+
 function queuedEditor(bubble, queueId, footer, edit) {
   const editor = document.createElement("div");
   editor.className = "queued-editor";
@@ -919,8 +931,11 @@ function queuedEditor(bubble, queueId, footer, edit) {
   hints.textContent = "Cmd/Ctrl+Enter to save · Escape to cancel";
   save.setAttribute("aria-keyshortcuts", "Meta+Enter Control+Enter");
   discard.setAttribute("aria-keyshortcuts", "Escape");
+  save.className = "queued-editor-save";
+  discard.className = "queued-editor-cancel";
   const settings = queuedSettingsEditor(bubble);
-  editor.append(input, settings.container, hints, save, discard);
+  const note = Object.assign(document.createElement("p"), { className: "queued-editor-note", textContent: "Sends after the current turn finishes." });
+  editor.append(queuedEditorHeader(discard), note, input, settings.container, hints, save, discard);
 
   edit.addEventListener("click", () => {
     settings.reset();

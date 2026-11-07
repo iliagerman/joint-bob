@@ -73,8 +73,22 @@ function currentView() {
 function placeMenu() {
   if (menu.hidden) return;
   const rect = fab.getBoundingClientRect();
+  const height = visualViewport?.height || innerHeight;
+  // In the top bar the menu drops down from the handle, right-aligned to it.
+  if (fab.classList.contains("in-bar")) {
+    menu.style.left = `${Math.max(12, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 12))}px`;
+    menu.style.top = `${Math.max(12, Math.min(rect.bottom + 8, height - menu.offsetHeight - 12))}px`;
+    return;
+  }
   menu.style.left = `${Math.max(12, Math.min(rect.left - menu.offsetWidth - 10, innerWidth - menu.offsetWidth - 12))}px`;
-  menu.style.top = `${Math.max(12, Math.min(rect.top - menu.offsetHeight - 10, (visualViewport?.height || innerHeight) - menu.offsetHeight - 12))}px`;
+  menu.style.top = `${Math.max(12, Math.min(rect.top - menu.offsetHeight - 10, height - menu.offsetHeight - 12))}px`;
+}
+const viewPanel = { projects: "#projectsPanel", sessions: "#chatsPanel", chat: "#chatPanel", board: "#boardPanel", control: "#controlCenterPanel" };
+/** In focus mode Bob's handle lives at the end of the current view's top bar, so it never covers messages or rows. */
+function placeFab() {
+  const bar = document.querySelector(`${viewPanel[currentView()]} > :is(.panel-bar, .chat-topbar)`);
+  fab.classList.add("in-bar");
+  bar.append(fab);
 }
 function showMenu(show = menu.hidden) {
   if (!enabled) return;
@@ -164,6 +178,7 @@ function syncView() {
   if (!enabled) return;
   const view = currentView();
   showMenu(false);
+  placeFab();
   placeActions();
   controlCenterTile.hidden = view === "control";
   document.querySelector("#focusConversations").disabled = !state.activeProjectId;
@@ -239,10 +254,13 @@ export function applyFocusUi() {
   } else {
     if (toolbarHome.isConnected) toolbarHome.replaceWith(elements.chatToolbar);
     elements.chatMoreMenu.removeAttribute("open");
+    fab.classList.remove("in-bar");
+    menu.before(fab);
   }
 }
 
 function move(x, y) {
+  if (fab.classList.contains("in-bar")) return placeMenu();
   const height = visualViewport?.height || innerHeight;
   position = { x: Math.max(12, Math.min(x, innerWidth - fab.offsetWidth - 12)), y: Math.max(12, Math.min(y, height - fab.offsetHeight - 12)) };
   Object.assign(fab.style, { left: `${position.x}px`, top: `${position.y}px`, right: "auto", bottom: "auto" });
@@ -313,7 +331,7 @@ function decorateControls() {
 function installFabDrag() {
   let drag = null, dragged = false;
   fab.addEventListener("pointerdown", event => {
-    if (!event.isPrimary || event.button !== 0) return;
+    if (!event.isPrimary || event.button !== 0 || fab.classList.contains("in-bar")) return;
     const rect = fab.getBoundingClientRect();
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
     dragged = false;

@@ -90,7 +90,7 @@ for (const width of [1440, 1024]) {
         bubble: bubble.getBoundingClientRect().toJSON(),
         clientWidth: bubble.clientWidth,
         scrollWidth: bubble.scrollWidth,
-        controls: [...bubble.querySelectorAll(".queued-editor, .queued-editor > *, .queued-settings > :not([hidden])")].map((control) => ({
+        controls: [...bubble.querySelectorAll(".queued-editor, .queued-editor > :not(.queued-editor-top, .queued-editor-note), .queued-settings > :not([hidden])")].map((control) => ({
           name: control.getAttribute("data-testid") || control.className,
           ...control.getBoundingClientRect().toJSON(),
         })),

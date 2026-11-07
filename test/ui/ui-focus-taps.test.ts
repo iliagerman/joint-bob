@@ -85,6 +85,6 @@ test("focus controls support single, double, and triple taps", { timeout: 180_00
   await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 70, y: 160 }] });
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   const moved = await fab.boundingBox();
-  assert.ok(moved && moved.x < 100 && moved.y < 180, `touch drag moves controls button: ${JSON.stringify({ start, moved })}`);
+  assert.ok(moved && moved.x === start.x && moved.y === start.y, `the handle stays in the top bar: ${JSON.stringify({ start, moved })}`);
   assert.equal(await page.locator("#focusControls").isVisible(), false, "drag does not open controls");
 });

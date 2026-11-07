@@ -168,3 +168,32 @@ body.booting :is(#focusControlsButton, #focusControls) { visibility: hidden; }
   .focus-dock :is(#focusMarkDone, #focusAutoRespond) { min-height: 56px; font-size: 16px; }
   .focus-state { font-size: 12px; }
 }
+
+/* Bob's handle in the top bar: a plain icon at the end of the header, not a floating button. */
+body.focus-ui #focusControlsButton.in-bar { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 44px; height: 44px; border: 0; background: transparent; box-shadow: none; cursor: pointer; }
+body.focus-ui #focusControlsButton.in-bar img { width: 32px; height: 32px; }
+body.focus-ui #focusControlsButton.in-bar .focus-pending-badge { top: 2px; right: 2px; }
+
+/* Queued-message editor: its title and note are phone-only, and the hints stay on desktop, where the shortcuts work. */
+.queued-editor-top, .queued-editor-note { display: none; }
+@media (max-width: 700px) {
+  /* The bubble's entry animation keeps a transform, which would pin the fixed editor inside the bubble. */
+  body.focus-ui .message.queued:has(> .queued-editor:not([hidden])) { animation: none; }
+  body.focus-ui .queued-editor:not([hidden]) {
+    position: fixed; inset: 0; z-index: 60; width: auto; max-width: none; margin: 0;
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto auto; align-content: stretch; gap: 12px;
+    padding: calc(10px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); background: var(--panel);
+  }
+  body.focus-ui .queued-editor-top { display: flex; align-items: center; gap: 8px; min-height: 48px; }
+  body.focus-ui .queued-editor-top strong { font: 600 22px/1.2 var(--serif); }
+  body.focus-ui .queued-editor .queued-editor-close { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; min-height: 44px; margin-left: -10px; padding: 0; border: 0; background: transparent; color: var(--text); font-size: 24px; line-height: 1; }
+  body.focus-ui .queued-editor-note { display: block; margin: 0; color: var(--muted); font-size: 14px; }
+  body.focus-ui .queued-editor :is(.queued-editor-top, .queued-editor-note, textarea, .queued-settings) { grid-column: 1 / -1; }
+  body.focus-ui .queued-editor textarea { align-self: stretch; height: auto; min-height: 0; max-height: none; font-size: 17px; resize: none; }
+  body.focus-ui .queued-editor .queued-settings > :is(button, select) { width: 100%; min-height: 50px; font-size: 16px; }
+  body.focus-ui .queued-editor .queued-settings > button { justify-content: flex-start; padding: 0 14px; text-align: left; }
+  body.focus-ui .queued-editor-hints { display: none; }
+  body.focus-ui .queued-editor .queued-editor-cancel { grid-column: 1; grid-row: 5; }
+  body.focus-ui .queued-editor .queued-editor-save { grid-column: 2; grid-row: 5; }
+  body.focus-ui .queued-editor :is(.queued-editor-cancel, .queued-editor-save) { min-height: 54px; font-size: 16px; }
+}
