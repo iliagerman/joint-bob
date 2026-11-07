@@ -348,6 +348,7 @@ function groupConversation(conversationId: string, segments: Array<{ session: Se
   const segmentViews = segments.length > 1
     ? segments.map((segment) => ({ engine: segment.session.harnessId, sessionId: segment.session.id, path: segment.session.path, ...(segment.session.draft ? { draft: true } : {}) }))
     : undefined;
+  const generatedTitle = segments.length > 1 ? firstLive?.title ?? face.title : face.title;
   return {
     ...face,
     conversationId,
@@ -356,7 +357,9 @@ function groupConversation(conversationId: string, segments: Array<{ session: Se
     ...(segmentViews ? { segments: segmentViews } : {}),
     // A switched conversation keeps the title of its first real segment; a fresh
     // segment's own title may be derived from the handoff envelope.
-    title: overrides[conversationId] ?? titleCase(segments.length > 1 ? firstLive?.title ?? face.title : face.title),
+    title: overrides[conversationId] ?? generatedTitle,
+    // Titles the agent named read in title case; titles the user typed stay as written.
+    displayTitle: overrides[conversationId] ?? titleCase(generatedTitle),
     ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
     ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
     ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),

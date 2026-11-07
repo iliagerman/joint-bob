@@ -90,6 +90,8 @@ export interface AgentRunSummary {
 }
 
 export interface SessionSummary {
+  /** The title as the list shows it: agent-named titles in title case, typed titles unchanged. */
+  displayTitle?: string;
   cronTaskId?: string;
   webhookHistory?: { webhookId: string; hidden: boolean; updatedAt: string };
   silentReviewFrom?: string;

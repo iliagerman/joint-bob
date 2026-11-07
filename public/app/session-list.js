@@ -155,7 +155,7 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
   if (session.color) button.dataset.color = session.color;
   if (session.worktree) button.dataset.worktreeColor = session.worktree.color;
   const sessionName = document.createElement("strong");
-  const title = shortSessionTitle(session);
+  const title = shortSessionTitle({ ...session, title: session.displayTitle ?? session.title });
   sessionName.textContent = title;
   const meta = document.createElement("span");
   meta.textContent = formatDate(session.updatedAt || session.createdAt);
