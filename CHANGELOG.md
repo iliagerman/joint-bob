@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Text on phones is larger: conversation and project titles, the Bob menu and messages are easier to read. Project paths no longer show under project names on phones.
+
 ## 2.226.1 — 2026-11-07
 
 - Bob now acknowledges a message as soon as you send it ("Got it. Working on …", with a running timer) until his answer comes. The waiting sign used to disappear as soon as your message was saved, so nothing showed that Bob was working.

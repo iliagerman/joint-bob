@@ -204,6 +204,7 @@ function projectRow(project) {
     }
     if (badges.childElementCount) heading.append(badges);
     const projectPath = document.createElement("span");
+    projectPath.className = "project-path";
     projectPath.textContent = project.path;
     // The sync status is a sibling of the path, not a child: the path truncates,
     // and a truncated path used to swallow the status entirely.

@@ -27,7 +27,7 @@ test("focus chat header stays one line with elapsed time and a working-only colo
     }, { percent, busy });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const metrics = await page.evaluate(color => {
-      const ids = ["sessionTitle", "chatProjectName", "turnTimer", "contextUsageText"];
+      const ids = ["sessionTitle", "turnTimer", "contextUsageText"];
       const rects = ids.map(id => { const r = document.getElementById(id)!.getBoundingClientRect(); return { id, center: r.y + r.height / 2, width: r.width }; });
       const number = document.querySelector<HTMLElement>("#contextUsageText")!;
       const probe = document.createElement("span"); probe.style.color = `var(${color})`; document.body.append(probe);

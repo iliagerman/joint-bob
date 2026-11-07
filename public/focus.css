@@ -133,3 +133,38 @@ body.booting :is(#focusControlsButton, #focusControls) { visibility: hidden; }
   body.focus-ui #projectList { padding-inline: 8px; }
   body.focus-ui :is(.panel-bar, .chat-topbar) { padding-inline: 12px; }
 }
+
+/* Phones: larger type and touch targets. Selectors repeat the base rules' specificity so these, coming later, win. Desktop keeps its sizes. */
+@media (max-width: 700px) {
+  body.focus-ui { --read: 17px; --read-leading: 1.6; }
+  body.focus-ui .project-path, body.focus-ui .chat-project-name { display: none; }
+  body.focus-ui .panel-title h1 { font-size: 22px; }
+  body.focus-ui .section-title { font-size: 12px; }
+  body.focus-ui .search-shell input { min-height: 46px; font-size: 16px; }
+  body.focus-ui .conversation-tabs button { min-height: 48px; font-size: 15px; }
+  body.focus-ui .chat-filters button { min-height: 44px; font-size: 14px; }
+  body.focus-ui .list-filter-row { font-size: 14px; }
+  body.focus-ui .list-filter-row .searchable-select-trigger { min-height: 44px; font-size: 15px; }
+  body.focus-ui .done-filter { font-size: 14px; }
+  body.focus-ui .project-group-summary { font-size: 15px; }
+  body.focus-ui .project-card strong, body.focus-ui .session-card strong { font-size: 17px; }
+  body.focus-ui .project-card span, body.focus-ui .session-card span { font-size: 13.5px; }
+  body.focus-ui .project-card .project-sync-status, body.focus-ui .project-card .project-lock-badge, body.focus-ui .project-card .project-cluster-badge { font-size: 12px; }
+  body.focus-ui .session-card .chat-badge, body.focus-ui .session-card .session-done-badge { font-size: 12px; padding: 3px 8px; }
+  body.focus-ui .chat-topbar .chat-title-block > h2 { font-size: 20px; }
+  body.focus-ui .turn-timer { font-size: 13px; }
+  body.focus-ui #focusControlsButton { width: 60px; height: 60px; }
+  body.focus-ui #focusControlsButton img { width: 36px; height: 36px; }
+  .focus-controls { width: min(392px, calc(100vw - 16px)); }
+  .focus-controls > header strong { font: 600 21px var(--serif); }
+  .focus-controls button:not(.searchable-select-trigger) { min-height: 52px; font-size: 16px; }
+  .focus-controls button svg { flex-basis: 24px; width: 24px; height: 24px; }
+  .focus-setting-label { font-size: 12px; }
+  .focus-controls .searchable-select-trigger { min-height: 50px; font: 500 16px/1.3 var(--sans); }
+  .focus-controls :is(.focus-more, .focus-tools-list) button { min-height: 84px; gap: 6px; font-size: 13px; }
+  .focus-controls :is(.focus-more, .focus-tools-list) button svg { flex-basis: 26px; width: 26px; height: 26px; }
+  .focus-more :is(#focusRunningCount, #focusReviewCount), .focus-tools-list .focus-pending-badge { min-width: 22px; height: 22px; font-size: 12px; }
+  .focus-controls .focus-dock button { min-height: 76px; gap: 6px; font-size: 13px; }
+  .focus-dock :is(#focusMarkDone, #focusAutoRespond) { min-height: 56px; font-size: 16px; }
+  .focus-state { font-size: 12px; }
+}
