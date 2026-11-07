@@ -4,10 +4,10 @@ import { api } from "./api.js";
 import { appearanceContext, applyAppearance } from "./appearance.js";
 import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
-import { openConversation, refreshControlCenter, saveControlCenter } from "./control-center.js";
+import { focusProject, openConversation, refreshControlCenter, saveControlCenter } from "./control-center.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { state } from "./state.js";
-import { toast } from "./shell.js";
+import { formatDate, toast } from "./shell.js";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 820;
@@ -35,22 +35,62 @@ function applyLayout() {
   elements.controlChat.style.setProperty("--control-chat-width", `${chatWidth}px`);
 }
 
+const DECIDED_BY_BOB = /^(Decision model|No decision model|The decision model)/;
+
+/** Who wrote a message: you, Bob answering you, or the part of Joint Bob its line names first (Review check, Guardian, Auto respond…). */
+function sourceOf(message) {
+  if (message.role === "user") return { label: "You", detail: null };
+  if (!message.via || DECIDED_BY_BOB.test(message.via)) return { label: "Bob", detail: message.via };
+  const [label, ...rest] = message.via.split(" · ");
+  return { label, detail: rest.join(" · ") || null };
+}
+
+/** The conversation a message is about: its Open button names it; once the buttons are used, the title it starts with. */
+function conversationOf(message) {
+  const open = message.actions?.find((action) => action.data?.open)?.data.open;
+  const quoted = message.text.match(/^"([^"\n]+)"/)?.[1];
+  if (!open && !quoted) return null;
+  return { open, title: open?.title ?? quoted ?? "the conversation" };
+}
+
+/** One line on top of each message: who it is from, which conversation it is about (click to open it), the project, how much it matters and when. */
+function renderHead(message) {
+  const head = element("div", "control-entry-head");
+  const source = sourceOf(message);
+  head.append(element("b", "control-source", source.label));
+  const about = conversationOf(message);
+  if (about) {
+    head.append(element("span", "control-head-muted", "about"));
+    const link = element(about.open ? "button" : "span", "control-about", about.title);
+    link.dataset.testid = "control-chat-about";
+    if (about.open) {
+      link.type = "button";
+      link.title = "Open this conversation";
+      link.addEventListener("click", () => { openConversation(about.open).catch((error) => toast(error.message)); });
+    }
+    head.append(link);
+  }
+  head.append(element("span", "control-label project", message.projectName ?? "General"));
+  head.append(element("span", `control-label importance ${message.importance}`, IMPORTANCE_LABELS[message.importance] ?? message.importance));
+  const time = element("time", "control-time", formatDate(message.createdAt));
+  time.dateTime = message.createdAt;
+  head.append(time);
+  return { head, detail: source.detail };
+}
+
 function renderMessage(message) {
   const wrap = element("div", `control-entry ${message.role}`);
   wrap.dataset.testid = "control-chat-entry";
   wrap.dataset.importance = message.importance;
   wrap.dataset.project = message.projectId ?? "";
-  const labels = element("div", "control-labels");
-  labels.append(element("span", "control-label project", message.projectName ?? "General"));
-  labels.append(element("span", `control-label importance ${message.importance}`, IMPORTANCE_LABELS[message.importance] ?? message.importance));
-  if (message.role === "user") labels.classList.add("right");
+  const { head, detail } = renderHead(message);
   const body = element("div", `control-msg ${message.role === "user" ? "user" : "bob"}`);
   // Bob's agent answers in Markdown. What the person typed, and system notices that quote commands, stay as written.
   if (message.role === "bob") { body.classList.add("markdown"); renderMarkdown(body, message.text); }
   else body.textContent = message.text;
-  wrap.append(labels);
-  if (message.via) wrap.append(element("div", "control-via", message.via));
-  wrap.append(body);
+  wrap.append(head, body);
+  // How it was decided goes under the message, small: the head already says where it came from.
+  if (detail) wrap.append(element("div", "control-via", detail));
   if (message.actions?.length) {
     const actions = element("div", "control-actions");
     for (const action of message.actions) {
@@ -91,6 +131,8 @@ async function runAction(message, action, button) {
   button.disabled = true;
   try {
     const result = await api("/api/control-center/bob/action", { method: "POST", body: JSON.stringify({ messageId: message.id, actionId: action.id }) });
+    // A button runs once: the server took the pressed message's buttons away, and so does the page.
+    message.actions = [];
     if (result.messages?.length) messages.push(...result.messages.filter(matchesFilter));
     renderMessages();
     // Features whose button also changes the page (open a tab) listen for the one that ran.
@@ -247,8 +289,14 @@ elements.controlChatRestore.addEventListener("click", () => { void saveSettings(
 
 // ── Filters and sending ──────────────────────────────────────────────────────────────────────────────────
 
+// Choosing a project here focuses the whole control center on it: the board shows only its cards, and new messages go to it.
+let boardFocus = "";
 elements.controlChatFilterProject.addEventListener("change", () => {
   filter.project = elements.controlChatFilterProject.value;
+  const project = filter.project === "general" ? "" : filter.project;
+  boardFocus = project;
+  elements.controlChatProject.value = project;
+  focusProject(project || null);
   void loadMessages().catch((error) => toast(error.message));
 });
 for (const chip of elements.controlChatFilters.querySelectorAll("[data-importance]")) {
@@ -316,6 +364,15 @@ window.addEventListener("control-center-rendered", (event) => {
   choose(elements.controlChatProject, [new Option("Auto", "")]);
   choose(elements.controlChatFilterProject, [new Option("All projects", ""), new Option("General", "general")]);
   applyLayout();
+  // The board's own project chips focus the chat too: one project chosen there filters it here.
+  const focus = event.detail.focus.length === 1 ? event.detail.focus[0] : "";
+  if (focus === boardFocus) return;
+  boardFocus = focus;
+  if (filter.project === "general" && !focus) return;
+  filter.project = focus;
+  elements.controlChatFilterProject.value = focus;
+  elements.controlChatProject.value = focus;
+  void loadMessages().catch((error) => toast(error.message));
 });
 
 // A new message from Bob (a question for you, a report) appears while the chat is open.

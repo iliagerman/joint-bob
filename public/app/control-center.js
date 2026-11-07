@@ -259,7 +259,8 @@ function renderLanes(container, cards) {
 }
 
 function render() {
-  window.dispatchEvent(new CustomEvent("control-center-rendered", { detail: { projects: board.projects, cards: board.cards } }));
+  // The chat follows the board's focus: one project chosen here filters it to that project.
+  window.dispatchEvent(new CustomEvent("control-center-rendered", { detail: { projects: board.projects, cards: board.cards, focus: [...state.controlCenter.filter] } }));
   renderFilters();
   const container = elements.controlCenterBoard;
   container.replaceChildren();
@@ -323,6 +324,13 @@ export function closeConversationPopup() {
 }
 
 const openCard = openConversation;
+
+/** Focuses the board on one project, or on all of them with null. Bob's chat calls it when its project filter changes. */
+export function focusProject(projectId) {
+  state.controlCenter.filter = projectId ? [projectId] : [];
+  save();
+  render();
+}
 
 /** Closes a finished conversation as its project's list does: the same question about what to learn, and the same request. */
 async function markDone(card) {

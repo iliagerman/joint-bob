@@ -177,9 +177,35 @@ test("the control center shows the live board, filters by project, colors cards 
   await page.getByTestId("control-chat-importance-reports").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="control-chat-entry"]')?.textContent?.includes("Morning report"));
   await page.getByTestId("control-chat-importance-all").click();
+  // Choosing a project focuses the whole control center on it: the chat, the board's cards, and where a new message goes.
   await page.getByTestId("control-chat-filter-project").selectOption({ label: "DAK Live" });
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-chat-entry"]').length === 2);
+  assert.deepEqual(await page.getByTestId("control-center-card").evaluateAll((cards) => cards.map((card) => card.getAttribute("data-key"))), ["p2:c2"]);
+  assert.equal(await page.getByTestId("control-chat-project").inputValue(), "p2");
+  await page.getByTestId("control-center-filters").getByText("All", { exact: true }).click();
+  await page.waitForFunction(() => (document.querySelector('[data-testid="control-chat-filter-project"]') as HTMLSelectElement).value === "");
+  assert.equal(await page.getByTestId("control-center-card").count(), 3, "the board's own chips focus the chat too");
+  await page.getByTestId("control-center-filters").getByText("Joint Bob", { exact: true }).click();
+  await page.waitForFunction(() => (document.querySelector('[data-testid="control-chat-filter-project"]') as HTMLSelectElement).value === "p1");
   await page.getByTestId("control-chat-filter-project").selectOption("");
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-center-card"]').length === 3);
+
+  // Each message says where it comes from and which conversation it is about, and one that waits offers every way forward.
+  await page.evaluate(() => {
+    const open = { projectId: "p1", conversationId: "c3", title: "Review counter" };
+    const conversation = { ...open, projectName: "Joint Bob", engine: "claude", sessionId: "c3" };
+    (window as unknown as { __timeline: unknown[] }).__timeline.push({ id: "check", role: "bob", text: '"Review counter" waits for you.\nIt asks which plan to use.', via: "Review check · Decision model 96%", projectId: "p1", projectName: "Joint Bob", importance: "needs-you", createdAt: new Date().toISOString(),
+      actions: [{ id: "review.push", label: "Push it on", style: "primary", data: conversation }, { id: "conversation.done", label: "Done", data: conversation }, { id: "conversation.abandon", label: "Abandon", style: "warn", data: conversation }, { id: "open", label: "Open", data: { open } }] });
+    window.dispatchEvent(new CustomEvent("control-center-changed"));
+  });
+  const check = page.getByTestId("control-chat-entry").filter({ hasText: "It asks which plan to use" });
+  await check.waitFor();
+  assert.match(await check.locator(".control-entry-head").innerText(), /^Review check\s+about\s+Review counter\s+Joint Bob\s+Needs you\s+\S/);
+  assert.equal(await check.getByTestId("control-chat-about").evaluate((link) => link.tagName), "BUTTON", "the conversation opens from its name");
+  assert.equal(await check.locator(".control-via").textContent(), "Decision model 96%");
+  assert.deepEqual(await check.locator(".control-action").allTextContents(), ["Push it on", "Done", "Abandon", "Open"]);
+  // A finished card can be closed from the board too.
+  assert.equal(await page.locator('[data-key="p1:c3"]').getByTestId("control-card-action-done").isVisible(), true);
 
   // Bob's settings are saved with the account; pausing shows a banner with a way back.
   await page.getByTestId("control-chat-settings-button").click();

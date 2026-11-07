@@ -63,7 +63,9 @@
 .control-msg.markdown li + li { margin-top: 2px; }
 .control-msg.markdown code { font-size: 11.5px; }
 .control-msg.error { align-self: flex-start; border-left: 2px solid #ef6b6b; }
-.control-via { align-self: flex-start; font-size: 11.5px; color: var(--muted); padding: 2px 9px; border: 1px dashed var(--line-strong); border-radius: 999px; }
+/* How a message was decided: small, under it; its head already says where it came from. */
+.control-via { align-self: flex-start; font-size: 11px; color: var(--muted); }
+.control-entry.user .control-via { align-self: flex-end; }
 .control-chat-form { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .control-chat-project { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
 .control-chat-project select { width: auto; max-width: 220px; padding: 3px 24px 3px 8px; font-size: 12px; }
@@ -90,6 +92,15 @@
 .control-chat-filters .control-chip { padding: 0 8px; font-size: 11.5px; }
 .control-entry { display: flex; flex-direction: column; gap: 4px; }
 .control-entry.user { align-items: flex-end; }
+/* Each message opens with who it is from, the conversation it is about, its project, how much it matters and when. */
+.control-entry-head { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); max-width: 100%; }
+.control-entry.user .control-entry-head { justify-content: flex-end; }
+.control-source { color: var(--text); font-size: 12px; }
+.control-head-muted { color: var(--muted); }
+.control-about { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: inherit; font-weight: 600; padding: 0; border: 0; background: none; }
+button.control-about { cursor: pointer; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.control-time { margin-left: 2px; font-size: 11px; }
+.control-entry + .control-entry { margin-top: 6px; }
 .control-labels { display: flex; gap: 5px; }
 .control-label { font-size: 10px; line-height: 15px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted); }
 .control-label.importance.needs-ok, .control-label.importance.urgent { color: #ff9d9d; border-color: color-mix(in srgb, #ef6b6b 55%, transparent); }

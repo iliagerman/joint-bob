@@ -294,7 +294,7 @@ async function bringAnswer(actor: ActingAccount, operation: Extract<Operation, {
     : `"${operation.title}" finished without a written answer. Open it to see what it did.`;
   appendBobMessage(await bobDatabase(), actor.accountId, {
     role: "bob", text, importance: "report", via: "Organize · its answer", projectId: operation.projectId, projectName,
-    actions: [{ id: "open", label: "Open", data: { open: { projectId: operation.projectId, conversationId: operation.conversationId } } }],
+    actions: [{ id: "open", label: "Open", data: { open: { projectId: operation.projectId, conversationId: operation.conversationId, title: operation.title } } }],
   });
   broadcastToAllClients({ type: "controlCenterChanged" }, actor.accountId);
 }

@@ -4,8 +4,19 @@ import { appendBobMessage, bobDatabase, listBobAccounts, onBobMessage, onBobTime
 import { disableAutoRespond, enableAutoRespond, getAutoRespond, onAutoRespondStopped, type AutoRespondState } from "../conversation-auto-respond.js";
 import { allPendingGuardianReviews, decideGuardianReview, onGuardianEvent, type GuardianReview } from "../guardian/reviews.js";
 import { isLeased } from "../control-center/leases.js";
+import { sessionTitleOverrides } from "../names.js";
 import { getProject, projectVisible } from "../store.js";
+import { titleOf } from "./control-center-start.js";
+import { harnessSessions } from "./harness-sessions.js";
 import { broadcastToAllClients } from "./realtime.js";
+
+/** The conversation's title, for saying which one a notice is about: its own title, or its first message. Null when this machine has not opened it. */
+async function conversationTitle(projectId: string, conversationId: string): Promise<string | null> {
+  const shared = [...harnessSessions.values()].find((entry) => entry.projectId === projectId && entry.conversationId === conversationId);
+  if (!shared) return null;
+  const first = shared.session.messages.find((message) => message.role === "user" && message.text?.trim())?.text;
+  return (await sessionTitleOverrides())[shared.session.id] ?? (first ? titleOf(first) : null);
+}
 
 /** Who is told about something in a project: people who use Bob, can see the project, and have not paused Bob. */
 async function watchers(projectId: string): Promise<ActingAccount[]> {
@@ -21,16 +32,17 @@ async function watchers(projectId: string): Promise<ActingAccount[]> {
 
 async function announceReview(review: GuardianReview): Promise<void> {
   const project = await getProject(review.projectId);
+  const title = await conversationTitle(review.projectId, review.conversationId);
   const db = await bobDatabase();
   for (const actor of await watchers(review.projectId)) {
     appendBobMessage(db, actor.accountId, {
       role: "system", importance: "needs-ok", projectId: review.projectId, projectName: project?.name ?? null,
-      text: `${review.title}\n${review.subject}\n${review.detail}`,
+      text: `${title ? `"${title}": ` : ""}${review.title}\n${review.subject}\n${review.detail}`,
       via: "Guardian · production or destructive steps always ask you. Bob never answers these for you.",
       actions: [
         { id: "guardian.allow", label: "Allow once", style: "warn", data: { projectId: review.projectId, conversationId: review.conversationId, reviewId: review.id } },
         { id: "guardian.block", label: "Block", data: { projectId: review.projectId, conversationId: review.conversationId, reviewId: review.id } },
-        { id: "open", label: "Open", data: { open: { projectId: review.projectId, conversationId: review.conversationId } } },
+        { id: "open", label: "Open", data: { open: { projectId: review.projectId, conversationId: review.conversationId, ...(title ? { title } : {}) } } },
       ],
     });
   }
@@ -60,15 +72,16 @@ const STOP_LABELS: Record<NonNullable<AutoRespondState["stopKind"]>, { importanc
 async function announceAutoRespondStopped(state: AutoRespondState): Promise<void> {
   if (!state.stopKind || state.stopKind === "user-stopped") return;
   const project = await getProject(state.projectId);
+  const title = await conversationTitle(state.projectId, state.conversationId);
   const db = await bobDatabase();
   const label = STOP_LABELS[state.stopKind];
   for (const actor of await watchers(state.projectId)) {
     appendBobMessage(db, actor.accountId, {
       role: "system", importance: label.importance, projectId: state.projectId, projectName: project?.name ?? null,
-      text: `${label.text}.${state.stopReason ? `\n${state.stopReason}` : ""}`,
+      text: `${title ? `"${title}": ` : ""}${label.text}.${state.stopReason ? `\n${state.stopReason}` : ""}`,
       via: "Auto respond ended · Bob was told",
       actions: [
-        { id: "open", label: "Open the conversation", style: "primary", data: { open: { projectId: state.projectId, conversationId: state.conversationId } } },
+        { id: "open", label: "Open the conversation", style: "primary", data: { open: { projectId: state.projectId, conversationId: state.conversationId, ...(title ? { title } : {}) } } },
         { id: "autorespond.resume", label: "Turn auto respond on again", data: { projectId: state.projectId, conversationId: state.conversationId } },
         { id: "autorespond.off", label: "Leave it to me", data: { projectId: state.projectId, conversationId: state.conversationId } },
       ],
