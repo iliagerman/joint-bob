@@ -74,7 +74,25 @@ To let the bot read a whole group, turn off its privacy mode in @BotFather with 
 
 Everyone in an approved group can use what the assistant can use, including its tools, secrets, files and memory, and can ask about them. That includes people who join later; you get a notice when someone joins. For a group with other people, connect a separate assistant that has only what you're happy to share. Anyone who takes over your Telegram account becomes you to the bot, so turn on Telegram's two-step verification.
 
-If the decision model can't answer, a private chat is told to send the message again, and a group gets no reply. Telegram can only be read as text for now; photos and voice messages aren't passed on.
+If the decision model can't answer, a private chat is told to send the message again, and a group gets no reply.
+
+### Voice, photos and files
+
+- **Voice messages and round video messages** are transcribed in any language, so the decision model and the agent read the words. Audio files are transcribed too, and the agent gets both the file and its words, up to the first 10 minutes.
+- **Voice messages get a voice reply by default.** Turn this off under **Resources → Telegram → Voice messages**. The answer also comes as text if it holds code, links or a table, and only as text if it would run over about a minute or nothing here can speak it.
+- **Photos and files of any type** reach the agent with the message. An album counts as one message. Replying to an older file gives the agent that file too.
+- **In a group,** files are fetched only when the assistant answers. Its answer comes with any files from the last 20 messages that it hasn't received yet, up to 10.
+- **Sending files back:** the agent saves them in a folder Joint Bob gives it for that turn, and they're posted after its answer. Images go as photos, `.ogg` files as voice messages, `.mp3` and `.m4a` as audio, `.mp4` as video and anything else as a document.
+
+Voice needs one of these. You don't need ElevenLabs if your machine can run the open-source voice:
+
+- **Open-source voice:** choose **Install open-source voice** under **Resources → Telegram**. It runs on this machine, sends nothing out, needs at least 8 GB of memory and 4 cores, and takes about 800 MB. Whisper understands any language it's spoken to in, but Kokoro only speaks English, so an answer in another language comes as text. On a four-core machine, Whisper takes about as long as the audio and speaking an answer takes about twice its length, and both use every core while they run. Whisper also uses over 1 GB of memory.
+- **ElevenLabs:** attach an ElevenLabs account to the assistant's project in **Settings → Secrets**. If the open-source voice isn't installed, audio is sent to ElevenLabs to be transcribed. In a group, that's every voice message the bot can see. Answers in English use the open-source voice if it's installed; other languages use ElevenLabs if an account is attached.
+- **Neither:** the agent gets the audio file and answers in text. In a group, the decision model can't tell whether a voice message is for the assistant.
+
+**Settings → Activity overview** chooses the voice and which engine speaks.
+
+Telegram limits bots to downloading files up to 20 MB and sending up to 50 MB. If a file is too large, the chat is told. Stickers reach the agent as their emoji. Contacts, locations and polls aren't read.
 
 ## Other webhooks
 

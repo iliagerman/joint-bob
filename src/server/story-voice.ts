@@ -11,18 +11,23 @@ import { elevenLabsKey } from "../secrets.js";
 import { getStorySettings, type StorySettings } from "../story-settings.js";
 import { storyVoiceDirectory } from "../story-scripts.js";
 
-// Local voice is Kokoro-82M on this node's CPU. It is installed only on request and only on nodes with enough
-// memory and cores, so a small machine never downloads it. Without it a project can narrate with its own ElevenLabs key.
+// Local voice is Kokoro-82M, and Whisper for listening (speech-to-text.ts), on this node's CPU. It is installed only on
+// request and only on nodes with enough memory and cores, so a small machine never downloads it. Without it a project can
+// use its own ElevenLabs key.
 export const KOKORO_MIN_MEMORY_BYTES = 8 * 2 ** 30;
 export const KOKORO_MIN_CORES = 4;
 const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
-// lamejs (LGPL) encodes lines as MP3; like Kokoro it lives only in this on-request runtime, never in Joint Bob's own packages.
-const KOKORO_PACKAGES = ["kokoro-js@1.2.1", "@huggingface/transformers@3.8.1", "@breezystack/lamejs@1.2.7"];
+// lamejs (LGPL) encodes lines as MP3 and ffmpeg (GPL) decodes any audio for Whisper. Like Kokoro they live only in this
+// on-request runtime, never in Joint Bob's own packages.
+const KOKORO_PACKAGES = ["kokoro-js@1.2.1", "@huggingface/transformers@3.8.1", "@breezystack/lamejs@1.2.7", "ffmpeg-static@5.3.0"];
 // Changes whenever the runtime gains a package; an older install updates itself the next time a story checks its voice.
-const RUNTIME_VERSION = "2";
-const LOADER = `// Joint Bob local voice runtime ${RUNTIME_VERSION}\nexport { KokoroTTS } from "kokoro-js";\nexport { env } from "@huggingface/transformers";\nexport { Mp3Encoder } from "@breezystack/lamejs";\n`;
+const RUNTIME_VERSION = "3";
+export const LOCAL_VOICE_LOADER = `// Joint Bob local voice runtime ${RUNTIME_VERSION}\nexport { KokoroTTS } from "kokoro-js";\nexport { env, pipeline, Tensor } from "@huggingface/transformers";\nexport { Mp3Encoder } from "@breezystack/lamejs";\nexport { default as ffmpegPath } from "ffmpeg-static";\n`;
 const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 const ELEVEN_MODEL = "eleven_flash_v2_5";
+/** Speaks the most languages, Hebrew included, which a person's answer may be in. */
+const ELEVEN_REPLY_MODEL = "eleven_v3";
+export const elevenLabsApi = (): string => process.env.JOINT_BOB_ELEVENLABS_API || "https://api.elevenlabs.io";
 export const NARRATION_LIMIT = 2_500;
 
 export type VoiceProvider = "kokoro" | "elevenlabs";
@@ -39,11 +44,11 @@ export function localVoiceAllowed(memoryBytes: number, cores: number): { allowed
 }
 
 const runtimeDirectory = () => path.join(resolveDataDirectory(), "story-voice-runtime");
-const loaderFile = () => path.join(runtimeDirectory(), "load.mjs");
+export const localVoiceLoaderFile = () => path.join(runtimeDirectory(), "load.mjs");
 
 function loaderState(): "missing" | "outdated" | "current" {
   try {
-    return readFileSync(loaderFile(), "utf8") === LOADER ? "current" : "outdated";
+    return readFileSync(localVoiceLoaderFile(), "utf8") === LOCAL_VOICE_LOADER ? "current" : "outdated";
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
     throw error;
@@ -91,14 +96,14 @@ export async function startLocalVoiceInstall(): Promise<void> {
   installError = null;
   await mkdir(runtimeDirectory(), { recursive: true });
   installing = runNpmInstall()
-    .then(() => writeFile(loaderFile(), LOADER))
+    .then(() => writeFile(localVoiceLoaderFile(), LOCAL_VOICE_LOADER))
     .then(() => { runtime = undefined; })
     .catch((error: Error) => { installError = error.message; })
     .finally(() => { installing = undefined; });
 }
 
 // The loader is a file inside the runtime, so kokoro-js and the cache settings share one copy of transformers.
-/** Brings an install from before MP3 encoding up to date. Only a computer that already had local voice is updated. */
+/** Brings an older install up to date. Only a computer that already had local voice is updated. */
 export function updateLocalVoice(): void {
   const status = localVoiceStatus();
   if (status.allowed && status.outdated && !status.installing) startLocalVoiceInstall().catch((error: Error) => { installError = error.message; });
@@ -124,7 +129,7 @@ export function toMp3(samples: Float32Array, rate: number, Encoder: Mp3Encoder):
 
 // The version in the URL makes a running server load the updated runtime instead of the copy it imported before.
 function loadRuntime(): Promise<VoiceRuntime> {
-  runtime ??= import(`${pathToFileURL(loaderFile()).href}?v=${RUNTIME_VERSION}`);
+  runtime ??= import(`${pathToFileURL(localVoiceLoaderFile()).href}?v=${RUNTIME_VERSION}`);
   return runtime;
 }
 
@@ -154,7 +159,7 @@ export function narrationProvider(projectId: string, settings: StorySettings = g
   const localReason = kokoro.reason ?? (kokoro.installError
     ? `Installing local voice on ${os.hostname()} failed: ${kokoro.installError} Try again in Settings → Activity overview.`
     : null) ?? (kokoro.outdated
-    ? `Local voice on ${os.hostname()} is being updated to a smaller sound format. It speaks again in a minute or two.`
+    ? `Local voice on ${os.hostname()} is being updated. It speaks again in a minute or two.`
     : null) ?? `Local voice is not installed on ${os.hostname()}, the computer that narrates this project. Install it there in Settings → Activity overview.`;
   if (settings.voiceProvider === "kokoro") return kokoroReady ? { provider: "kokoro", reason: null } : { provider: null, reason: localReason };
   if (settings.voiceProvider === "elevenlabs") return elevenReady ? { provider: "elevenlabs", reason: null } : { provider: null, reason: elevenReason };
@@ -200,30 +205,70 @@ export async function narrateStoryText(projectId: string, text: string, who: "ho
   return { bytes, mime };
 }
 
-async function speakWithKokoro(voice: string, speed: number, text: string, file: string): Promise<Buffer> {
-  const spoken = queue.then(async () => {
-    const audio = await (await loadKokoro()).generate(text, { voice, speed });
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, toMp3(audio.audio, audio.sampling_rate, (await loadRuntime()).Mp3Encoder));
-  });
-  queue = spoken.catch(() => undefined);
-  await spoken;
-  return readFile(file);
+/** Kokoro reads about 500 sounds at a time and silently drops the rest, so longer text is spoken in parts that end on a sentence where they can. */
+const KOKORO_PART_CHARS = 300;
+export function speechParts(text: string, limit = KOKORO_PART_CHARS): string[] {
+  const parts: string[] = [];
+  let part = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (part && part.length + word.length + 1 > limit) { parts.push(part); part = ""; }
+    part += `${part ? " " : ""}${word}`;
+    if (/[.!?]$/.test(word) && part.length >= limit / 2) { parts.push(part); part = ""; }
+  }
+  if (part) parts.push(part);
+  return parts;
 }
 
-export async function speakWithElevenLabs(apiKey: string, voice: string, text: string, file: string, fetchImpl: typeof fetch): Promise<Buffer> {
-  const response = await fetchImpl(`https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_64`, {
+function kokoroSpeech(voice: string, speed: number, text: string): Promise<Buffer> {
+  const spoken = queue.then(async () => {
+    const engine = await loadKokoro();
+    const parts: Array<{ audio: Float32Array; sampling_rate: number }> = [];
+    for (const part of speechParts(text)) parts.push(await engine.generate(part, { voice, speed }));
+    const samples = new Float32Array(parts.reduce((total, part) => total + part.audio.length, 0));
+    let offset = 0;
+    for (const part of parts) { samples.set(part.audio, offset); offset += part.audio.length; }
+    return toMp3(samples, parts[0].sampling_rate, (await loadRuntime()).Mp3Encoder);
+  });
+  queue = spoken.catch(() => undefined);
+  return spoken;
+}
+
+async function speakWithKokoro(voice: string, speed: number, text: string, file: string): Promise<Buffer> {
+  const audio = await kokoroSpeech(voice, speed, text);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, audio);
+  return audio;
+}
+
+async function elevenLabsSpeech(apiKey: string, voice: string, text: string, model: string, fetchImpl: typeof fetch): Promise<Buffer> {
+  const response = await fetchImpl(`${elevenLabsApi()}/v1/text-to-speech/${voice}?output_format=mp3_44100_64`, {
     method: "POST",
     headers: { "xi-api-key": apiKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
-    body: JSON.stringify({ text, model_id: ELEVEN_MODEL }),
+    body: JSON.stringify({ text, model_id: model }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { detail?: { message?: string } | string } | null;
     const detail = typeof body?.detail === "string" ? body.detail : body?.detail?.message ?? response.statusText;
     throw new GitReviewError(502, `ElevenLabs refused the narration (${response.status}): ${detail}`);
   }
-  const audio = Buffer.from(await response.arrayBuffer());
+  return Buffer.from(await response.arrayBuffer());
+}
+
+export async function speakWithElevenLabs(apiKey: string, voice: string, text: string, file: string, fetchImpl: typeof fetch): Promise<Buffer> {
+  const audio = await elevenLabsSpeech(apiKey, voice, text, ELEVEN_MODEL, fetchImpl);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, audio);
   return audio;
+}
+
+/** Kokoro's voices are all English, so a letter from another script would come out as noise. */
+export const kokoroCanSay = (text: string): boolean => !/[^\p{Script=Latin}\P{L}]/u.test(text);
+
+/** Speech for an answer, or null when nothing here can say it. Uses the engine and host voice chosen in Settings → Activity overview; it isn't kept on disk like a story's lines. */
+export async function speakReply(projectId: string, text: string, fetchImpl: typeof fetch = fetch): Promise<Buffer | null> {
+  const settings = getStorySettings();
+  if (narrationProvider(projectId, settings).provider === "kokoro" && kokoroCanSay(text)) return kokoroSpeech(settings.hostVoice, settings.speed, text);
+  const eleven = elevenLabsKey(projectId);
+  if (settings.voiceProvider !== "kokoro" && eleven && "key" in eleven) return elevenLabsSpeech(eleven.key, settings.elevenHostVoice, text, ELEVEN_REPLY_MODEL, fetchImpl);
+  return null;
 }

@@ -35,7 +35,7 @@ import { disconnectTelegram } from "../telegram.js";
 
 /** What the person wrote, without the instructions and context added to the agent's copy of a turn. */
 function withoutAssistantContext(text: string): string {
-  return text.replace(/^Personal assistant instructions \(set by its owner\):[\s\S]*?\n\nPersonal assistant tool policy: [^\n]*\n\n/, "");
+  return text.replace(/^Personal assistant instructions \(set by its owner\):[\s\S]*?\n\nPersonal assistant tool policy: [^\n]*\n\n/, "").replace(/^\[Telegram: [^\n]*\]\n\n/, "");
 }
 
 const routeSchema = z.object({ message: z.string().trim().min(1).max(20000), recentMessages: z.array(z.string().max(4000)).max(6) }).strict();
@@ -154,11 +154,11 @@ async function resumeAssistantTopic(accountId: string, entry: AssistantEntry, co
   if (ownership && ownership.ownerNodeId !== localId) throw new Error("Assistant topic is on another execution node");
   return { engine, sessionId, message: input.message, isNew: false };
 }
-async function startAssistantTopic(accountId: string, entry: AssistantEntry, route: Extract<AssistantRoute, { kind: "new" | "recall" }>, input: z.infer<typeof routeSchema>, localId: string, history: AssistantRoutingContext["history"]): Promise<AssistantDestination> {
+async function startAssistantTopic(accountId: string, entry: AssistantEntry, route: Extract<AssistantRoute, { kind: "new" | "recall" }>, input: z.infer<typeof routeSchema>, localId: string, history: AssistantRoutingContext["history"], words: string): Promise<AssistantDestination> {
   const engine = entry.executionSettings?.harnessId ?? entry.engine;
   const sessionId = randomUUID();
   await ensureConversationRecord(entry.projectId, engine, sessionId, localId);
-  await ensureSessionTitle(sessionId, route.kind === "recall" ? "Assistant history lookup" : input.message.slice(0, 80));
+  await ensureSessionTitle(sessionId, route.kind === "recall" ? "Assistant history lookup" : words.slice(0, 80));
   await addPersonalAssistantTopic(accountId, entry.id, { projectId: entry.projectId, engine, sessionId, source: false });
   await shareAssistantAccess(entry, engine, sessionId);
   const message = route.kind === "recall"
@@ -170,10 +170,10 @@ async function startAssistantTopic(accountId: string, entry: AssistantEntry, rou
     : input.message;
   return { engine, sessionId, message, isNew: true };
 }
-async function assistantDestination(accountId: string, entry: AssistantEntry, context: AssistantRoutingContext, route: AssistantRoute, input: z.infer<typeof routeSchema>, localId: string): Promise<AssistantDestination> {
+async function assistantDestination(accountId: string, entry: AssistantEntry, context: AssistantRoutingContext, route: AssistantRoute, input: z.infer<typeof routeSchema>, localId: string, words: string): Promise<AssistantDestination> {
   return route.kind === "continue"
     ? resumeAssistantTopic(accountId, entry, context, route, input, localId)
-    : startAssistantTopic(accountId, entry, route, input, localId, context.history);
+    : startAssistantTopic(accountId, entry, route, input, localId, context.history, words);
 }
 export interface AssistantAutomationTurnOptions {
   scheduledAutoRespond?: AutoRespondConfig;
@@ -246,7 +246,7 @@ async function processAssistantTurn(accountId: string, entry: AssistantEntry, se
       ? await routeOutsideCaller(accountId, entry, context, { scope, message: options.routing.message }, options.classifierFetch)
       : await classifyAssistantMessage(entry, options?.routing ? { ...routingInput, message: options.routing.message } : routingInput, context, options?.classifierFetch);
     if (!route) throw new Error("Assistant could not classify this message. Retry without losing the conversation.");
-    const destination = await assistantDestination(accountId, entry, context, route, routingInput, local.id);
+    const destination = await assistantDestination(accountId, entry, context, route, routingInput, local.id, options?.routing?.message ?? routingInput.message);
     if (scope) await addRoutingScopeTopic(entry.id, scope, destination.engine, destination.sessionId);
     return executeAssistantTurn(accountId, entry, session, input, destination, context.project, origin, options);
   });
@@ -273,7 +273,7 @@ export async function runPersonalAssistantAutomationTurn(accountId: string, assi
     const source = await sourceHistory(accountId, entry.id, entry, session, project, false);
     const turns = await listPersonalAssistantTurns(accountId, entry.id);
     if (!turns) throw new Error("Assistant not found");
-    return [...source.map(item => withoutAssistantContext(item.text)), ...turns.slice(-3).flatMap(turn => [turn.message, ...(turn.response ? [turn.response] : [])])].slice(-6);
+    return [...source.map(item => withoutAssistantContext(item.text)), ...turns.slice(-3).flatMap(turn => [withoutAssistantContext(turn.message), ...(turn.response ? [turn.response] : [])])].slice(-6);
   };
   return processAssistantTurn(accountId, entry, session, { requestId, message, recentMessages: [] }, options.origin, { ...options, recentMessages });
 }
@@ -360,7 +360,7 @@ app.get("/api/personal-assistants/:id/transcript", async (request, response, nex
     const timeline = [
       ...messages.map(item => ({ ...item, text: withoutAssistantContext(item.text), createdAt: item.timestamp ?? "" })),
       ...turns.flatMap(turn => [
-        { id: turn.requestId, role: "user", text: turn.message, createdAt: turn.createdAt },
+        { id: turn.requestId, role: "user", text: withoutAssistantContext(turn.message), createdAt: turn.createdAt },
         { id: `${turn.requestId}:response`, role: "assistant", text: turn.response ?? (turn.status === "running" ? "Working…" : turn.status === "failed" ? "This turn failed. Send a new message to continue." : ""), createdAt: turn.createdAt, status: turn.status },
       ]),
       ...external.map(item => ({ ...item, text: withoutAssistantContext(item.text), createdAt: item.timestamp ?? "" })),

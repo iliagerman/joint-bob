@@ -1,3 +1,6 @@
+import { openAsBlob } from "node:fs";
+import path from "node:path";
+
 // Telegram replies for webhooks routed through an assistant: the answer goes back to the chat that
 // asked. Code sends it, so the agent doesn't need network access or to handle the bot token.
 
@@ -5,6 +8,9 @@ const MESSAGE_LIMIT = 4096;
 /** Leaves room for the tags formatting adds, so a formatted part still fits one message. */
 const SOURCE_PART_LIMIT = 3500;
 const SEND_TIMEOUT_MS = 15_000;
+const TRANSFER_TIMEOUT_MS = 180_000;
+export const TELEGRAM_DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
+export const TELEGRAM_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const TELEGRAM_TOKEN_VARIABLE = "TELEGRAM_BOT_TOKEN";
 
 type Fields = Record<string, unknown>;
@@ -69,9 +75,10 @@ export function telegramParts(text: string, limit = SOURCE_PART_LIMIT): string[]
   return parts;
 }
 
+const telegramApi = (): string => process.env.JOINT_BOB_TELEGRAM_API || "https://api.telegram.org";
+
 async function callTelegram(token: string, method: string, body: Fields, fetchImpl: typeof fetch = fetch) {
-  const api = process.env.JOINT_BOB_TELEGRAM_API || "https://api.telegram.org";
-  const response = await fetchImpl(`${api}/bot${token}/${method}`, {
+  const response = await fetchImpl(`${telegramApi()}/bot${token}/${method}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
   });
   const answer = await response.json().catch(() => ({})) as { description?: string; result?: unknown };
@@ -109,4 +116,68 @@ export async function sendTelegramReply(token: string, chatId: string, text: str
     }
     replying = {};
   }
+}
+
+/** The download link holds the bot's token, so only this code ever sees it. */
+export async function telegramDownload(token: string, fileId: string, fetchImpl: typeof fetch = fetch): Promise<Buffer> {
+  const answer = await callTelegram(token, "getFile", { file_id: fileId }, fetchImpl);
+  if (!answer.ok) throw new Error(answer.description);
+  const filePath = fields(answer.result)?.file_path;
+  if (typeof filePath !== "string") throw new Error("Telegram didn't say where the file is");
+  const response = await fetchImpl(`${telegramApi()}/file/bot${token}/${filePath}`, { signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS) });
+  if (!response.ok) throw new Error(`Telegram didn't send the file: status ${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+const SEND_METHODS: Record<string, { method: string; field: string }> = {
+  ".jpg": { method: "sendPhoto", field: "photo" }, ".jpeg": { method: "sendPhoto", field: "photo" }, ".png": { method: "sendPhoto", field: "photo" }, ".webp": { method: "sendPhoto", field: "photo" },
+  ".gif": { method: "sendAnimation", field: "animation" }, ".mp4": { method: "sendVideo", field: "video" },
+  ".mp3": { method: "sendAudio", field: "audio" }, ".m4a": { method: "sendAudio", field: "audio" },
+  ".ogg": { method: "sendVoice", field: "voice" }, ".oga": { method: "sendVoice", field: "voice" }, ".opus": { method: "sendVoice", field: "voice" },
+};
+
+async function postFile(token: string, method: string, field: string, chatId: string, file: Blob, name: string, extra: Record<string, string>, fetchImpl: typeof fetch) {
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  for (const [key, value] of Object.entries(extra)) form.append(key, value);
+  form.append(field, file, name);
+  const response = await fetchImpl(`${telegramApi()}/bot${token}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS) });
+  const answer = await response.json().catch(() => ({})) as { description?: string };
+  return { ok: response.ok, description: answer.description ?? `status ${response.status}` };
+}
+
+/** Sends a file the way Telegram shows its type best. Whatever that way refuses, such as a very large photo, still goes as a document. */
+export async function sendTelegramFile(token: string, chatId: string, file: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const name = path.basename(file);
+  const best = SEND_METHODS[path.extname(file).toLowerCase()];
+  if (best && (await postFile(token, best.method, best.field, chatId, await openAsBlob(file), name, {}, fetchImpl)).ok) return;
+  const plain = await postFile(token, "sendDocument", "document", chatId, await openAsBlob(file), name, {}, fetchImpl);
+  if (!plain.ok) throw new Error(plain.description);
+}
+
+export async function sendTelegramVoice(token: string, chatId: string, mp3: Buffer, options: { replyTo?: number; fetchImpl?: typeof fetch } = {}): Promise<void> {
+  const extra: Record<string, string> = options.replyTo === undefined ? {} : { reply_parameters: JSON.stringify({ message_id: options.replyTo, allow_sending_without_reply: true }) };
+  const sent = await postFile(token, "sendVoice", "voice", chatId, new Blob([new Uint8Array(mp3)], { type: "audio/mpeg" }), "voice.mp3", extra, options.fetchImpl ?? fetch);
+  if (!sent.ok) throw new Error(sent.description);
+}
+
+/** What can be read aloud from an answer. `complete` is false when something had to be left out, so the text goes too. */
+export function telegramSpoken(markdown: string): { speech: string; complete: boolean } {
+  let complete = true;
+  const leaveOut = (kept = ""): string => { complete = false; return kept; };
+  const speech = markdown
+    .replace(/```[\s\S]*?```/g, () => leaveOut())
+    .replace(/(?:^\|.*\|[ \t]*(?:\n|$))+/gm, () => leaveOut())
+    .replace(/\[([^\]\n]+)\]\(https?:\/\/[^\s)]+\)/g, (_match, label: string) => leaveOut(label))
+    .replace(/https?:\/\/\S+/g, () => leaveOut())
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/^\s*-{3,}\s*$/gm, "")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/(^|[\s(])\*([^*\s][^*\n]*)\*/gm, "$1$2")
+    .replace(/~~([^~\n]+)~~/g, "$1")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+  return { speech, complete };
 }

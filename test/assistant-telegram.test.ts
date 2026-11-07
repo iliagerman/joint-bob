@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { LOCAL_VOICE_LOADER, localVoiceAllowed } from "../src/server/story-voice.js";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
 import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
@@ -17,7 +18,8 @@ function kiroFixture(promptLog: string, note: string): string {
   return `#!/usr/bin/env node
 ${kiroV3SessionFixture}
 const { execFileSync } = require("node:child_process");
-const { appendFileSync, writeFileSync } = require("node:fs");
+const { appendFileSync, symlinkSync, writeFileSync } = require("node:fs");
+const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
 if (process.argv.includes("--list-models")) {
@@ -33,37 +35,85 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
   if (request.method === "session/load") { sessionId = request.params.sessionId; return send({ jsonrpc: "2.0", id: request.id, result: v3Session(request, sessionId) }); }
   if (request.method === "session/prompt") {
     const text = request.params.prompt.map(block => block.text ?? "").join("");
-    appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify({ sessionId, text, botToken: process.env.TELEGRAM_BOT_TOKEN ?? null }) + "\\n");
+    const images = request.params.prompt.filter(block => block.type === "image").map(block => block.mimeType);
+    appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify({ sessionId, text, images, botToken: process.env.TELEGRAM_BOT_TOKEN ?? null }) + "\\n");
+    if (/"text":"[^"]*send-files-back/.test(text)) {
+      const folder = /save them in (.+?): everything/.exec(text)[1];
+      writeFileSync(path.join(folder, "report.pdf"), "the report");
+      writeFileSync(path.join(folder, "chart.png"), "the chart");
+      writeFileSync(path.join(folder, "hello.ogg"), "the voice");
+      symlinkSync(${JSON.stringify(note)}, path.join(folder, "leak.txt"));
+    }
     if (text.includes("remember-this")) {
       const cli = process.env.JOINT_BOB_ASSISTANT_MEMORY_CLI;
       const { revision } = JSON.parse(execFileSync(process.execPath, [cli, "read"], { encoding: "utf8" }));
       writeFileSync(${JSON.stringify(note)}, "The owner prefers trains.\\n");
       execFileSync(process.execPath, [cli, "write", revision, ${JSON.stringify(note)}]);
     }
-    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "**Done** in " + sessionId } } } });
+    const answer = text.includes("answer-with-link") ? "See **this** at https://example.com/a" : text.includes("answer-in-hebrew") ? "המלון מוזמן." : "**Done** in " + sessionId;
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: answer } } } });
     return send({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } });
   }
 });
 `;
 }
 
-interface Decision { question: string; criteria: string[]; state: { user_message?: string; saved_topics?: Array<{ summary: string }>; accessible_history?: unknown[]; new_message?: { author: string; text: string; mentions_bot: boolean }; recent_messages?: Array<{ author: string; text: string }> } }
-interface Sent { token: string; method: string; chat_id?: string; text?: string; parse_mode?: string; url?: string; secret_token?: string; allowed_updates?: string[]; reply_parameters?: { message_id: number } }
+interface Decision { question: string; criteria: string[]; state: { user_message?: string; saved_topics?: Array<{ summary: string }>; accessible_history?: unknown[]; new_message?: { author: string; text: string; mentions_bot: boolean; files: string[] }; recent_messages?: Array<{ author: string; text: string }> } }
+interface Sent { token: string; method: string; chat_id?: string; text?: string; parse_mode?: string; url?: string; secret_token?: string; allowed_updates?: string[]; reply_parameters?: { message_id: number }; file_id?: string; fileName?: string; fileText?: string }
 
 async function outsideWorld() {
   const decisions: Decision[] = [];
   const calls: Sent[] = [];
-  const control = { choice: "new_topic", address: "answer", down: false };
+  const control = { choice: "new_topic", address: "answer", down: false, transcript: "", speechDown: false, voiceDown: false };
+  const files = new Map<string, Buffer>();
+  const speech: Array<{ key: string; name: string; bytes: string }> = [];
+  const spoken: Array<{ key: string; text: string; model: string }> = [];
   const server: Server = createServer((request, response) => {
-    let raw = "";
-    request.on("data", chunk => { raw += chunk; });
-    request.on("end", () => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => { chunks.push(chunk); });
+    request.on("end", () => void (async () => {
+      const bytes = Buffer.concat(chunks);
+      const raw = bytes.toString();
+      const contentType = String(request.headers["content-type"] ?? "");
+      const form = () => new Response(bytes, { headers: { "Content-Type": contentType } }).formData();
       const json = (status: number, body: unknown) => response.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(body));
+      if (request.url === "/v1/speech-to-text") {
+        const upload = (await form()).get("file") as File;
+        speech.push({ key: String(request.headers["xi-api-key"]), name: upload.name, bytes: await upload.text() });
+        json(control.speechDown ? 500 : 200, control.speechDown ? { detail: "down" } : { text: control.transcript });
+        return;
+      }
+      if (request.url?.startsWith("/v1/text-to-speech/")) {
+        const { text, model_id: model } = JSON.parse(raw) as { text: string; model_id: string };
+        spoken.push({ key: String(request.headers["xi-api-key"]), text, model });
+        if (control.voiceDown) { json(500, { detail: "down" }); return; }
+        response.writeHead(200, { "Content-Type": "audio/mpeg" }).end("speech from eleven");
+        return;
+      }
+      const download = /^\/file\/bot(.+?)\/files\/(.+)$/.exec(request.url ?? "");
+      if (download) {
+        if (download[1] !== BOT_TOKEN) { json(401, {}); return; }
+        response.writeHead(200).end(files.get(download[2]));
+        return;
+      }
       const telegram = /^\/bot(.+)\/(\w+)$/.exec(request.url ?? "");
       if (telegram) {
         const [, token, method] = telegram;
         if (token !== BOT_TOKEN) { json(401, { ok: false, description: "Unauthorized" }); return; }
-        calls.push({ token, method, ...JSON.parse(raw || "{}") as Omit<Sent, "token" | "method"> });
+        if (contentType.startsWith("multipart/form-data")) {
+          const fields = await form();
+          const upload = [...fields.values()].find(value => value instanceof File) as File;
+          calls.push({ token, method, chat_id: String(fields.get("chat_id")), fileName: upload.name, fileText: await upload.text(), ...(fields.has("reply_parameters") ? { reply_parameters: JSON.parse(String(fields.get("reply_parameters"))) as { message_id: number } } : {}) });
+          json(200, { ok: true, result: {} });
+          return;
+        }
+        const body = JSON.parse(raw || "{}") as Omit<Sent, "token" | "method">;
+        calls.push({ token, method, ...body });
+        if (method === "getFile") {
+          if (!files.has(body.file_id!)) { json(400, { ok: false, description: "Bad Request: file is too big" }); return; }
+          json(200, { ok: true, result: { file_id: body.file_id, file_path: `files/${body.file_id}` } });
+          return;
+        }
         json(200, { ok: true, result: method === "getMe" ? { id: 9000, username: "family_bot", can_read_all_group_messages: false } : true });
         return;
       }
@@ -72,11 +122,40 @@ async function outsideWorld() {
       const [question] = Object.keys(body.questions);
       decisions.push({ question, criteria: Object.keys(body.questions[question].criteria), state: JSON.parse(body.state) as Decision["state"] });
       json(200, { answers: { [question]: { type: "choice", choice: question === "address" ? control.address : control.choice, confidence: 0.9 } } });
-    });
+    })());
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  return { url, decisions, calls, control, sent: () => calls.filter(call => call.method === "sendMessage"), close: () => new Promise(resolve => server.close(resolve)) };
+  return { url, decisions, calls, control, files, speech, spoken, sent: () => calls.filter(call => call.method === "sendMessage"), close: () => new Promise(resolve => server.close(resolve)) };
+}
+
+/** The open-source voice's packages, standing in for the real ones so nothing is downloaded. Whisper's language pick and its words are read back by the test. */
+async function seedLocalVoice(dataDir: string): Promise<{ say: (words: string) => Promise<void> }> {
+  const runtime = path.join(dataDir, "story-voice-runtime");
+  const modules = path.join(runtime, "node_modules");
+  const fake = async (name: string, code: string) => {
+    await mkdir(path.join(modules, name), { recursive: true });
+    await writeFile(path.join(modules, name, "package.json"), JSON.stringify({ name, type: "module", main: "index.js" }));
+    await writeFile(path.join(modules, name, "index.js"), code);
+  };
+  const ffmpeg = path.join(runtime, "fake-ffmpeg");
+  await mkdir(runtime, { recursive: true });
+  await writeFile(ffmpeg, "#!/bin/sh\nprintf '\\000\\000\\000\\000\\000\\000\\000\\000'\n");
+  await chmod(ffmpeg, 0o700);
+  await fake("ffmpeg-static", `export default ${JSON.stringify(ffmpeg)};`);
+  await fake("kokoro-js", "export const KokoroTTS = { from_pretrained: async () => ({ generate: async () => ({ audio: new Float32Array(1152), sampling_rate: 24000 }) }) };");
+  await fake("@breezystack/lamejs", "export class Mp3Encoder { encodeBuffer() { return Int8Array.of(75); } flush() { return Int8Array.of(79); } }");
+  await fake("@huggingface/transformers", `import { readFileSync } from "node:fs";
+export const env = {};
+export class Tensor {}
+export async function pipeline() {
+  const transcriber = async (_audio, options) => ({ text: readFileSync(${JSON.stringify(path.join(runtime, "words.txt"))}, "utf8") + " (" + options.language + ")" });
+  transcriber.processor = async () => ({ input_features: {} });
+  transcriber.model = Object.assign(async () => ({ logits: { data: [0, 5] } }), { generation_config: { decoder_start_token_id: 0, lang_to_id: { "<|en|>": 0, "<|he|>": 1 } } });
+  return transcriber;
+}`);
+  await writeFile(path.join(runtime, "load.mjs"), LOCAL_VOICE_LOADER);
+  return { say: words => writeFile(path.join(runtime, "words.txt"), words) };
 }
 
 const BOT_TOKEN = "123456:AAtestTOKENtestTOKENtestTOKEN";
@@ -99,7 +178,7 @@ test("a Telegram bot reaches its assistant only through code that approves each 
     const save = settings.prepare("INSERT INTO node_settings (key, value, is_secret, updated_at) VALUES (?, ?, 0, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at");
     for (const [key, value] of [["kiro.executable", executable], ["kiro.configPath", configPath], ["kiro.sessionPath", path.join(configPath, "sessions")]]) save.run(key, value, new Date().toISOString());
     settings.close();
-    server = await startDevNode(environment, node, { JOINT_BOB_TYPESAFE_ENDPOINT: `${world.url}/v1/systemone`, JOINT_BOB_TELEGRAM_API: world.url });
+    server = await startDevNode(environment, node, { JOINT_BOB_TYPESAFE_ENDPOINT: `${world.url}/v1/systemone`, JOINT_BOB_TELEGRAM_API: world.url, JOINT_BOB_ELEVENLABS_API: world.url });
     const session = await signIn(environment, node);
     const projectId = projectNamed(node, "Joint Bob").id;
     const decisionKey = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", { label: "decision", provider: "custom", variables: [{ name: "TYPESAFE_AI_API_KEY", kind: "value", value: "fixture-key" }] });
@@ -149,7 +228,7 @@ test("a Telegram bot reaches its assistant only through code that approves each 
     const dm = (from: number, text: string) => ({ message: { message_id: updateId, from: { id: from, first_name: `User${from}` }, chat: { id: from, type: "private" }, text } });
     const inGroup = (from: number, text: string, chat = GROUP) => ({ message: { message_id: updateId, from: { id: from, first_name: `User${from}` }, chat: { id: chat, type: "supergroup", title: "Family" }, text } });
     const settle = () => new Promise(resolve => setTimeout(resolve, 900));
-    const prompts = async () => (await readFile(promptLog, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { text: string; botToken: string | null });
+    const prompts = async () => (await readFile(promptLog, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { text: string; images: string[]; botToken: string | null });
     const promptCount = (await prompts()).length;
     const turns = async () => (await api<{ turns: Array<{ topicId: string; message: string; status: string }> }>(node, session, "GET", `/personal-assistants/${assistantId}/turns`)).body.turns;
     const lastTurnOrigin = () => {
@@ -349,6 +428,235 @@ test("a Telegram bot reaches its assistant only through code that approves each 
     const timeline = await api<{ timeline: Array<{ role: string; text: string }> }>(node, session, "GET", `/personal-assistants/${assistantId}/transcript`);
     assert.ok(timeline.body.timeline.some(item => item.role === "user" && item.text === "From the app"));
     assert.ok(!timeline.body.timeline.some(item => item.text.includes("Personal assistant instructions")), "the chat shows what was said, not the context added for the agent");
+
+    // ---- Voice, photos and files. ----
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+    const own = (extra: Record<string, unknown>) => ({ message: { message_id: updateId, from: { id: OWNER, first_name: "Owner" }, chat: { id: OWNER, type: "private" }, ...extra } });
+    const shared = (from: number, extra: Record<string, unknown>) => ({ message: { message_id: updateId, from: { id: from, first_name: `User${from}` }, chat: { id: GROUP, type: "supergroup", title: "Family" }, ...extra } });
+    const held = (id: string, bytes: Buffer | string) => { world.files.set(id, Buffer.from(bytes)); return { file_id: id, file_unique_id: `unique-${id}`, file_size: Buffer.byteLength(bytes) }; };
+    const attachedPath = (prompt: string, name: string) => new RegExp(`- ${name}: (.+)`).exec(prompt)?.[1];
+    world.control.choice = "new_topic";
+
+    // A photo reaches the agent as an image, with what its sender wrote.
+    await replyAfter(() => send(own({ photo: [held("thumb", "small"), held("photo", JPEG)], caption: "what hotel is this?" })));
+    const photoPrompt = (await prompts()).at(-1)!;
+    assert.deepEqual(photoPrompt.images, ["image/jpeg"]);
+    assert.match(photoPrompt.text, /what hotel is this\?\n\n\(Sent photo\.jpg\)/);
+    assert.deepEqual(world.calls.filter(call => call.method === "getFile").at(-1)?.file_id, "photo", "the largest size");
+    assert.equal(photoPrompt.botToken, null);
+    assert.equal(photoPrompt.text.includes(BOT_TOKEN), false, "the download link never reaches the agent");
+    const timelineTexts = (await api<{ timeline: Array<{ text: string }> }>(node, session, "GET", `/personal-assistants/${assistantId}/transcript`)).body.timeline.map(item => item.text);
+    assert.ok(timelineTexts.some(text => text.startsWith("what hotel is this?")), "the app's chat shows what was said");
+    assert.ok(!timelineTexts.some(text => text.includes("[Telegram: ")), "and not the note added for the agent");
+
+    // A file of any type arrives by path. One that claims to be an image but isn't never goes in as one.
+    await replyAfter(() => send(own({ document: { ...held("archive", "PK zipped"), file_name: "trip plan.zip", mime_type: "application/zip" } })));
+    const documentPrompt = (await prompts()).at(-1)!;
+    assert.deepEqual(documentPrompt.images, []);
+    const savedPath = attachedPath(documentPrompt.text, "trip plan.zip");
+    assert.ok(savedPath, documentPrompt.text);
+    assert.equal(await readFile(savedPath, "utf8"), "PK zipped");
+    await replyAfter(() => send(own({ document: { ...held("fake", "<script>"), file_name: "fake.png", mime_type: "image/png" } })));
+    assert.deepEqual((await prompts()).at(-1)!.images, []);
+
+    // A file too large for Telegram to hand over: the sender is told, and nothing runs for it.
+    const beforeLarge = (await prompts()).length;
+    const tooLarge = await replyAfter(() => send(own({ document: { file_id: "huge", file_unique_id: "huge", file_size: 30 * 1024 * 1024, file_name: "movie.mkv" } })));
+    assert.match(tooLarge.text!, /movie\.mkv is larger than the 20 MB/);
+    assert.equal(world.calls.some(call => call.file_id === "huge"), false, "it isn't even requested");
+    await settle();
+    assert.equal((await prompts()).length, beforeLarge);
+
+    // An album is one turn, however many messages it arrives as.
+    const beforeAlbum = (await prompts()).length;
+    const album = { media_group_id: "album-1" };
+    const repliesBeforeAlbum = world.sent().length;
+    await send(own({ ...album, photo: [held("one", JPEG)], caption: "our rooms" }));
+    await send(own({ ...album, photo: [held("two", JPEG)] }));
+    await send(own({ ...album, photo: [held("three", JPEG)] }));
+    const albumDeadline = Date.now() + 60_000;
+    while (world.sent().length === repliesBeforeAlbum) { assert.ok(Date.now() < albumDeadline, "the album got no answer"); await new Promise(resolve => setTimeout(resolve, 100)); }
+    const albumPrompts = (await prompts()).slice(beforeAlbum);
+    assert.equal(albumPrompts.length, 1);
+    assert.equal(albumPrompts[0].images.length, 3);
+    assert.match(albumPrompts[0].text, /our rooms/);
+
+    // Replying to an older file gives the agent that file.
+    await replyAfter(() => send(own({ text: "and this one?", reply_to_message: { message_id: 5, document: { ...held("older", "%PDF older"), file_name: "older.pdf" } } })));
+    assert.ok(attachedPath((await prompts()).at(-1)!.text, "older.pdf"));
+
+    const callRecorded = async (detail: string) => {
+      const deadline = Date.now() + 10_000;
+      while (!(await status()).calls.some(call => call.detail === detail)) {
+        assert.ok(Date.now() < deadline, `"${detail}" isn't in ${JSON.stringify((await status()).calls)}`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    };
+    const voiceSent = () => world.calls.filter(call => call.method === "sendVoice");
+    const voiceAfter = async (action: () => Promise<Response>) => {
+      const before = voiceSent().length;
+      assert.equal((await action()).status, 200);
+      const deadline = Date.now() + 60_000;
+      while (voiceSent().length === before) {
+        assert.ok(Date.now() < deadline, `no voice reply: ${JSON.stringify((await status()).calls)}`);
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return voiceSent().at(-1)!;
+    };
+    const ownVoice = (id: string, sound: string) => own({ voice: { ...held(id, sound), mime_type: "audio/ogg" } });
+    const voiceStatus = async () => (await api<{ voice: { replies: boolean; transcription: string | null; speech: string | null; local: { allowed: boolean; installed: boolean } } }>(node, session, "GET", telegram)).body.voice;
+    const voiceReplies = (enabled: boolean) => api(node, session, "PUT", `${telegram}/voice-replies`, { enabled });
+
+    // With nothing set up, a voice message reaches the agent as sound and the answer comes as text.
+    assert.deepEqual([(await voiceStatus()).replies, (await voiceStatus()).transcription, (await voiceStatus()).speech], [true, null, null]);
+    await replyAfter(() => send(ownVoice("voice-1", "ogg sound")));
+    const unheard = (await prompts()).at(-1)!.text;
+    assert.match(unheard, /couldn't transcribe/);
+    assert.doesNotMatch(unheard, /read aloud/, "the agent isn't told to write for a voice that doesn't exist");
+    assert.ok(attachedPath(unheard, "voice\\.ogg"), unheard);
+    assert.deepEqual([world.speech.length, voiceSent().length], [0, 0]);
+
+    // With an ElevenLabs account, the words are the message, and a voice message is answered with voice. The key stays here.
+    const voiceKey = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", { label: "voice", provider: "elevenlabs", variables: [{ name: "ELEVENLABS_API_KEY", kind: "value", value: "fixture-eleven-key" }] });
+    assert.equal((await api(node, session, "PUT", `/secrets/scopes/project/${projectId}`, { accountIds: [decisionKey.body.account.id, voiceKey.body.account.id] })).status, 200);
+    assert.deepEqual([(await voiceStatus()).transcription, (await voiceStatus()).speech], ["elevenlabs", "elevenlabs"]);
+    assert.equal(JSON.stringify(await voiceStatus()).includes("fixture-eleven-key"), false);
+    world.control.transcript = "מה עם המלון?";
+    const textsBefore = world.sent().length;
+    const voiced = await voiceAfter(() => send(ownVoice("voice-2", "second sound")));
+    assert.deepEqual(world.speech.at(-1), { key: "fixture-eleven-key", name: "voice.ogg", bytes: "second sound" });
+    const heard = (await prompts()).at(-1)!.text;
+    assert.match(heard, /transcribed from a voice message/);
+    assert.match(heard, /read aloud/);
+    assert.match(heard, /מה עם המלון\?$/);
+    assert.equal(world.decisions.at(-1)!.state.user_message, "מה עם המלון?", "the decision model judges the words");
+    assert.deepEqual([voiced.chat_id, voiced.fileName, voiced.fileText], [String(OWNER), "voice.mp3", "speech from eleven"]);
+    assert.match(world.spoken.at(-1)!.text, /^Done in /, "formatting isn't read out");
+    assert.deepEqual([world.spoken.at(-1)!.key, world.spoken.at(-1)!.model], ["fixture-eleven-key", "eleven_v3"]);
+    await callRecorded("Replied in Telegram by voice");
+    assert.equal(world.sent().length, textsBefore, "the voice message is the answer");
+
+    // A typed message still gets text.
+    const voicesBeforeText = voiceSent().length;
+    await replyAfter(() => send(own({ text: "typed question" })));
+    assert.equal(voiceSent().length, voicesBeforeText);
+
+    // Speech can't carry a link, so the text goes too.
+    world.control.transcript = "answer-with-link please";
+    const textsBeforeLink = world.sent().length;
+    await voiceAfter(() => send(ownVoice("voice-link", "link sound")));
+    assert.equal(world.spoken.at(-1)!.text, "See this at");
+    const linkDeadline = Date.now() + 10_000;
+    while (world.sent().length === textsBeforeLink) { assert.ok(Date.now() < linkDeadline, "the text didn't follow"); await new Promise(resolve => setTimeout(resolve, 50)); }
+    assert.match(world.sent().at(-1)!.text!, /https:\/\/example\.com\/a/);
+
+    // The owner can turn voice replies off, and back on.
+    world.control.transcript = "a question";
+    assert.equal((await voiceReplies(false)).status, 200);
+    assert.equal((await voiceStatus()).replies, false);
+    const voicesWhileOff = voiceSent().length;
+    await replyAfter(() => send(ownVoice("voice-off", "off sound")));
+    assert.equal(voiceSent().length, voicesWhileOff, "it answers in text");
+    assert.doesNotMatch((await prompts()).at(-1)!.text, /read aloud/);
+    assert.equal((await voiceReplies(true)).status, 200);
+
+    // When speaking fails, the answer still arrives as text, and the failure is on record.
+    world.control.voiceDown = true;
+    await replyAfter(() => send(ownVoice("voice-tts-down", "more sound")));
+    assert.ok((await status()).calls.some(call => /^Answered in text: /.test(call.detail)), JSON.stringify((await status()).calls));
+    world.control.voiceDown = false;
+
+    // When transcribing fails, the sound still reaches the agent, and the failure is on record.
+    world.control.speechDown = true;
+    await voiceAfter(() => send(ownVoice("voice-3", "third sound")));
+    assert.ok(attachedPath((await prompts()).at(-1)!.text, "voice\\.ogg"));
+    world.control.speechDown = false;
+    assert.ok((await status()).calls.some(call => /Couldn't transcribe voice\.ogg/.test(call.detail)), JSON.stringify((await status()).calls));
+
+    // A recording someone shares comes with its words, and the file.
+    world.control.transcript = "the words of the meeting";
+    await replyAfter(() => send(own({ audio: { ...held("meeting", "mp3 meeting"), file_name: "meeting.mp3", mime_type: "audio/mpeg" } })));
+    const recording = (await prompts()).at(-1)!.text;
+    assert.match(recording, /\[Words in meeting\.mp3: the words of the meeting\]/);
+    assert.ok(attachedPath(recording, "meeting\\.mp3"), recording);
+
+    // The open-source voice needs no account: it listens and speaks here, in the language it hears.
+    const { allowed: machineCanRunIt } = localVoiceAllowed(os.totalmem(), os.cpus().length);
+    if (machineCanRunIt) {
+      const local = await seedLocalVoice(node.dataDir);
+      assert.deepEqual([(await voiceStatus()).transcription, (await voiceStatus()).speech], ["local", "kokoro"]);
+      const heardByElevenLabs = world.speech.length, spokenByElevenLabs = world.spoken.length;
+      await local.say("what about the hotel");
+      const localVoice = await voiceAfter(() => send(ownVoice("voice-local", "local sound")));
+      assert.match((await prompts()).at(-1)!.text, /what about the hotel \(he\)$/, "Whisper read the language first, and the words came back");
+      assert.deepEqual([localVoice.fileName, localVoice.fileText], ["voice.mp3", "KO"], "Kokoro's speech, encoded");
+      assert.deepEqual([world.speech.length, world.spoken.length], [heardByElevenLabs, spokenByElevenLabs], "ElevenLabs wasn't used");
+
+      // Kokoro only speaks English. Another language goes to ElevenLabs if there's an account, and otherwise comes as text.
+      await local.say("answer-in-hebrew please");
+      await voiceAfter(() => send(ownVoice("voice-hebrew", "hebrew sound")));
+      assert.equal(world.spoken.at(-1)!.text, "המלון מוזמן.");
+      assert.equal((await api(node, session, "PUT", `/secrets/scopes/project/${projectId}`, { accountIds: [decisionKey.body.account.id] })).status, 200);
+      const hebrewText = await replyAfter(() => send(ownVoice("voice-hebrew-2", "hebrew again")));
+      assert.equal(hebrewText.text, "המלון מוזמן.");
+      assert.equal((await api(node, session, "PUT", `/secrets/scopes/project/${projectId}`, { accountIds: [decisionKey.body.account.id, voiceKey.body.account.id] })).status, 200);
+      await rm(path.join(node.dataDir, "story-voice-runtime"), { recursive: true, force: true });
+    }
+
+    // A stranger's file is never fetched or transcribed.
+    const fetchedBefore = world.calls.filter(call => call.method === "getFile").length;
+    const heardBefore = world.speech.length;
+    await send(dm(STRANGER, "still blocked"));
+    await send({ message: { message_id: updateId, from: { id: STRANGER, first_name: "Stranger" }, chat: { id: STRANGER, type: "private" }, voice: { ...held("stranger", "sound"), mime_type: "audio/ogg" } } });
+    await settle();
+    assert.equal(world.calls.filter(call => call.method === "getFile").length, fetchedBefore);
+    assert.equal(world.speech.length, heardBefore);
+
+    // In a group, a voice message is judged by its words; a file waits until the assistant answers.
+    await send(addedBy(OWNER, GROUP));
+    await settle();
+    world.control.address = "stay_silent";
+    world.control.transcript = "the flight moved to Friday";
+    assert.equal((await voiceStatus()).transcription, "elevenlabs");
+    const silentBefore = world.sent().length;
+    await send(shared(FRIEND, { voice: { ...held("group-voice", "group sound"), mime_type: "audio/ogg" } }));
+    await settle();
+    assert.equal(world.decisions.at(-1)!.state.new_message?.text, "the flight moved to Friday");
+    assert.equal(world.sent().length, silentBefore);
+    const fetchedWhileSilent = world.calls.filter(call => call.method === "getFile").length;
+    await send(shared(FRIEND, { document: { ...held("group-bill", "%PDF bill"), file_name: "bill.pdf" }, caption: "the bill" }));
+    await settle();
+    assert.deepEqual(world.decisions.at(-1)!.state.new_message?.files, ["bill.pdf"]);
+    assert.equal(world.calls.filter(call => call.method === "getFile").length, fetchedWhileSilent, "people's files stay in Telegram until the assistant needs them");
+    world.control.address = "answer";
+    world.control.choice = "new_topic";
+    await replyAfter(() => send(shared(STRANGER, { text: "@family_bot what does the bill say?" })));
+    const groupFiles = (await prompts()).at(-1)!.text;
+    assert.match(groupFiles, /the flight moved to Friday/, "what was said aloud is shared context");
+    assert.match(groupFiles, /\[bill\.pdf\] the bill/);
+    assert.ok(attachedPath(groupFiles, "bill\\.pdf"), groupFiles);
+    assert.match(groupFiles, /along with any files sent with it/);
+    await replyAfter(() => send(shared(STRANGER, { text: "@family_bot thanks" })));
+    assert.equal(attachedPath((await prompts()).at(-1)!.text, "bill\\.pdf"), undefined, "a file goes once");
+
+    // Sending files back: each goes the way its type shows best, and a link out of the folder never goes.
+    const sendsBefore = world.calls.length;
+    await replyAfter(() => send(shared(FRIEND, { text: "@family_bot send-files-back please" })));
+    const postedFiles = async () => world.calls.slice(sendsBefore).filter(call => call.fileName).map(call => [call.method, call.fileName, call.fileText, call.chat_id]);
+    const postDeadline = Date.now() + 10_000;
+    while ((await postedFiles()).length < 3) { assert.ok(Date.now() < postDeadline, "the files weren't sent"); await new Promise(resolve => setTimeout(resolve, 100)); }
+    assert.deepEqual(await postedFiles(), [["sendPhoto", "chart.png", "the chart", String(GROUP)], ["sendVoice", "hello.ogg", "the voice", String(GROUP)], ["sendDocument", "report.pdf", "the report", String(GROUP)]]);
+    await settle();
+    assert.equal((await postedFiles()).length, 3, "the link was left out");
+    const replyFolders = (await readdir(path.join(projectNamed(node, "Joint Bob").path, ".joint-bob-attachments"))).filter(name => name.startsWith("telegram-reply-"));
+    assert.deepEqual(replyFolders, [], "the turn's folder is removed");
+    await callRecorded("Replied in Telegram with 3 files");
+
+    // In a group, a voice message is answered with voice too, on the message it was asked in.
+    world.control.transcript = "@family_bot are the rooms booked?";
+    const groupVoiceMessage = updateId;
+    const groupVoice = await voiceAfter(() => send(shared(FRIEND, { voice: { ...held("group-question", "question sound"), mime_type: "audio/ogg" } })));
+    assert.deepEqual([groupVoice.chat_id, groupVoice.fileName, groupVoice.reply_parameters?.message_id], [String(GROUP), "voice.mp3", groupVoiceMessage]);
 
     // Disconnecting: Telegram is told, and the old address stops working.
     const managedHook = (await fetch(`${node.url}${hookUrl}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status;

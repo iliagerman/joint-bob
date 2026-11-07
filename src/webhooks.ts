@@ -287,7 +287,7 @@ export interface WebhookCall {
   /** The parsed JSON body or form fields, when the body had any. */
   data?: unknown;
   /** A message from a connected Telegram bot, already authorized. */
-  telegram?: { message: string; routing: { scope: string | null; message: string }; reply: (text: string) => Promise<void> };
+  telegram?: { message: string; routing: { scope: string | null; message: string }; answer: (text: string) => Promise<void>; failed: () => Promise<void> };
 }
 
 const MIME_BY_EXTENSION: Record<string, string> = {

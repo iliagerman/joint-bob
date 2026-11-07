@@ -31,7 +31,7 @@ async function readyVoice(check, onStage) {
   const started = Date.now();
   let voice = await check();
   while (!voice.available && voice.local.installing && Date.now() - started < VOICE_WAIT_MS) {
-    onStage(voice.local.outdated ? "Updating the open-source voice to a smaller sound format" : "Installing the open-source voice, once");
+    onStage(voice.local.outdated ? "Updating the open-source voice" : "Installing the open-source voice, once");
     await new Promise((resolve) => setTimeout(resolve, VOICE_CHECK_MS));
     voice = await check();
   }

@@ -85,7 +85,8 @@ test("assistant shell: resources, public actions, activity and discovery without
 
     // Telegram: connect a bot, link your account, and approve who can use it.
     const telegramApi = `**/api/personal-assistants/${assistantId}/telegram`;
-    const connectedBot = { connected: true, botUsername: "family_bot", readsAllGroupMessages: false, owner: null, waiting: [{ kind: "user", id: "999", name: "Stranger", state: "pending" }, { kind: "chat", id: "-5", name: "Family", state: "pending" }], allowed: [], blocked: [], calls: [{ status: "refused", detail: "Refused Stranger: not approved", at: "2026-11-03T07:00:00.000Z" }] };
+    const noVoice = { replies: true, transcription: null, speech: null, local: { allowed: true, installed: false, outdated: false, installing: false, installError: null, reason: null }, elevenLabsConflict: false };
+    const connectedBot = { connected: true, botUsername: "family_bot", readsAllGroupMessages: false, voice: noVoice, owner: null, waiting: [{ kind: "user", id: "999", name: "Stranger", state: "pending" }, { kind: "chat", id: "-5", name: "Family", state: "pending" }], allowed: [], blocked: [], calls: [{ status: "refused", detail: "Refused Stranger: not approved", at: "2026-11-03T07:00:00.000Z" }] };
     await page.route(telegramApi, route => route.request().method() === "POST"
       ? route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ...connectedBot, pairingLink: "https://t.me/family_bot?start=code" }) })
       : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ connected: false, bases: [{ id: "direct", label: "This machine's own address" }] }) }));
@@ -104,6 +105,25 @@ test("assistant shell: resources, public actions, activity and discovery without
     await page.getByTestId("assistant-telegram-link").getByRole("link", { name: "Open this link in Telegram" }).waitFor();
     assert.equal(await page.getByTestId("assistant-telegram-link").getByRole("link").getAttribute("href"), "https://t.me/family_bot?start=code");
     await page.getByTestId("assistant-telegram-privacy").waitFor();
+    // Voice: on by default, and nothing is downloaded until someone asks.
+    await page.getByTestId("assistant-telegram-voice").getByText("the agent gets the audio file and answers in text", { exact: false }).waitFor();
+    const voiceCalls: Array<{ url: string; body: unknown }> = [];
+    await page.route(`${telegramApi}/voice-replies`, route => {
+      voiceCalls.push({ url: "voice-replies", body: route.request().postDataJSON() });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...connectedBot, voice: { ...noVoice, replies: false } }) });
+    });
+    await page.route(`${telegramApi}/voice/install`, route => {
+      voiceCalls.push({ url: "install", body: route.request().postDataJSON() });
+      return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ ...connectedBot, voice: { ...noVoice, local: { ...noVoice.local, installed: true }, transcription: "local", speech: "kokoro" } }) });
+    });
+    const voiceSwitch = page.getByTestId("assistant-telegram-voice-replies");
+    assert.equal(await voiceSwitch.getAttribute("aria-checked"), "true");
+    await voiceSwitch.click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="assistant-telegram-voice-replies"]')?.getAttribute("aria-checked") === "false");
+    await page.getByTestId("assistant-telegram-voice-install").click();
+    await page.getByTestId("assistant-telegram-voice").getByText("transcribed on this machine", { exact: false }).waitFor();
+    assert.deepEqual(voiceCalls, [{ url: "voice-replies", body: { enabled: false } }, { url: "install", body: {} }]);
+    assert.equal(await page.getByTestId("assistant-telegram-voice-install").count(), 0);
     await page.getByText("Everyone in an approved group can use", { exact: false }).waitFor();
     const waitingRow = page.locator(".res-row", { hasText: "Stranger" });
     await waitingRow.getByRole("button", { name: "Approve" }).click();
@@ -115,6 +135,8 @@ test("assistant shell: resources, public actions, activity and discovery without
     assert.ok((await allowedRow.boundingBox())!.height >= 40, "the rows keep their height in the scrolling panel");
     await page.unroute(telegramApi);
     await page.unroute(`${telegramApi}/access`);
+    await page.unroute(`${telegramApi}/voice-replies`);
+    await page.unroute(`${telegramApi}/voice/install`);
 
     await page.goto(`${node.url}/assistant.html?id=${assistantId}&view=resources`);
     await page.getByTestId("assistant-resources-section-skills").click();

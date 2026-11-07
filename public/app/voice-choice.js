@@ -5,7 +5,7 @@ import { projectGitUrl } from "./project-git-url.js";
 import { chooseOption, toast } from "./shell.js";
 import { state } from "./state.js";
 
-const LOCAL_INSTALL = "It installs once, about 500 MB, and needs no key.";
+const LOCAL_INSTALL = "It installs once, about 800 MB, and needs no key.";
 
 /** This node's story settings, after asking for a voice if none was chosen yet. Null when the viewer cancels. */
 export async function voiceForThisNode() {

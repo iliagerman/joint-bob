@@ -117,7 +117,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   const placed = await placeAttachments(workspacePath, attachments);
   const titleTemplate = webhook.target.kind === "project" ? webhook.titleTemplate || webhook.name : "";
   const titleInstruction = automationTitleInstruction(titleTemplate);
-  const message = call.telegram?.message ?? [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed].filter(Boolean).join("\n\n");
+  const message = (call.telegram ? [call.telegram.message, placed.listed] : [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed]).filter(Boolean).join("\n\n");
   if (webhook.target.kind === "assistant") {
     if (!webhook.creatorAccountId) throw new WebhookError(409, "Assistant webhook has no creator account");
     const assistantId = webhook.target.assistantId;
@@ -139,14 +139,14 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
         });
       },
     }).catch(async (error: unknown) => {
-      await call.telegram?.reply("This message couldn't be handled. Please send it again.");
+      await call.telegram?.failed();
       throw error;
     });
     const [engine, ...sessionParts] = turn.topicId.split(":");
     activeSessionId = sessionParts.join(":");
     if (!engine || !activeSessionId) throw new WebhookError(500, "Assistant webhook turn has no conversation target");
     transitionAutomationExecution(await clusterV2Database(), call.requestId!, "succeeded", null, activeSessionId, engine);
-    if (turn.response) await call.telegram?.reply(turn.response);
+    await call.telegram?.answer(turn.response ?? "");
     return activeSessionId;
   }
   const engine = webhook.target.engine ?? defaultEngine();

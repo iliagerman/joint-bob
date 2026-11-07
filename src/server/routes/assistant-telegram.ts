@@ -3,7 +3,7 @@ import { setTelegramAccess, telegramConnection } from "../../assistant-telegram.
 import { personalAssistantDatabase } from "../../personal-assistants.js";
 import { WebhookResourceError } from "../../webhook-resources.js";
 import { app } from "../state.js";
-import { connectTelegram, disconnectTelegram, newTelegramPairing, refreshTelegramBot, telegramStatus } from "../telegram.js";
+import { connectTelegram, disconnectTelegram, installTelegramVoice, newTelegramPairing, refreshTelegramBot, setTelegramVoiceRepliesFor, telegramStatus } from "../telegram.js";
 import { resourceRoute } from "./assistant-resources.js";
 
 const connectSchema = z.object({ token: z.string().trim().regex(/^\d+:[A-Za-z0-9_-]{20,}$/, "That doesn't look like a bot token. Copy it from @BotFather."), baseId: z.string().min(1).max(200).optional() }).strict();
@@ -23,6 +23,10 @@ app.put("/api/personal-assistants/:id/telegram/access", resourceRoute(async (req
   if (!known || !setTelegramAccess(db, known.webhookId, body.kind, body.id, body.state)) throw new WebhookResourceError("Not found", 404);
   response.json(await telegramStatus(entry));
 }));
+app.put("/api/personal-assistants/:id/telegram/voice-replies", resourceRoute(async (request, response, entry) => {
+  response.json(await setTelegramVoiceRepliesFor(entry, z.object({ enabled: z.boolean() }).strict().parse(request.body).enabled));
+}));
+app.post("/api/personal-assistants/:id/telegram/voice/install", resourceRoute(async (_request, response, entry) => { response.status(202).json(await installTelegramVoice(entry)); }));
 app.delete("/api/personal-assistants/:id/telegram", resourceRoute(async (_request, response, entry) => {
   if (!await disconnectTelegram(entry.id)) throw new WebhookResourceError("This assistant has no Telegram bot", 404);
   response.status(204).end();

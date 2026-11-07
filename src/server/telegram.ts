@@ -1,14 +1,20 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { lstat, mkdir, readdir, rm } from "node:fs/promises";
+import path from "node:path";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { deleteSecretAccount, saveSecretAccount, secretAccountVariable } from "../secrets.js";
+import { deleteSecretAccount, elevenLabsKey, saveSecretAccount, secretAccountVariable } from "../secrets.js";
 import { getPersonalAssistantById, personalAssistantDatabase, type PersonalAssistant } from "../personal-assistants.js";
 import { emitSocialChange } from "../social/events.js";
+import { getProject } from "../store.js";
 import { personName } from "../social/directory.js";
 import { addAssistantNotice, decide, DecisionRefused } from "../social/requests.js";
-import { ensureTelegramSchema, issueTelegramPairing, listTelegramAccess, readTelegramUpdate, recentTelegramMessages, rememberTelegramMessage, removeTelegramConnection, saveTelegramConnection, setTelegramReadsAll, telegramBotInUse, telegramConnection, telegramConnectionForWebhook, telegramHeaderValid, telegramTurnMessage, telegramUpdateIsNew, type TelegramConnection, type TelegramTurn } from "../assistant-telegram.js";
-import { sendTelegramReply, telegramBot, telegramDeleteWebhook, telegramLeaveChat, telegramSetWebhook, TELEGRAM_TOKEN_VARIABLE } from "../webhook-telegram.js";
+import { ensureTelegramSchema, isTelegramAudio, isTelegramSpeech, issueTelegramPairing, listTelegramAccess, readTelegramUpdate, recentTelegramMessages, rememberTelegramMessage, removeTelegramConnection, saveTelegramConnection, setTelegramReadsAll, setTelegramVoiceReplies, takeTelegramFiles, telegramAttachmentType, telegramBotInUse, telegramConnection, telegramConnectionForWebhook, telegramHeaderValid, telegramTurnMessage, telegramUpdateIsNew, type TelegramConnection, type TelegramFile, type TelegramTurn } from "../assistant-telegram.js";
+import { sendTelegramFile, sendTelegramReply, sendTelegramVoice, telegramBot, telegramDeleteWebhook, telegramDownload, telegramLeaveChat, telegramSetWebhook, telegramSpoken, TELEGRAM_DOWNLOAD_MAX_BYTES, TELEGRAM_TOKEN_VARIABLE, TELEGRAM_UPLOAD_MAX_BYTES } from "../webhook-telegram.js";
 import { WebhookResourceError } from "../webhook-resources.js";
-import { createWebhook, deleteWebhook, getWebhook, recordWebhookDelivery, webhookDeliveries, webhookInputSchema, type Webhook } from "../webhooks.js";
+import { createWebhook, deleteWebhook, getWebhook, recordWebhookDelivery, webhookDeliveries, webhookInputSchema, type Webhook, type WebhookAttachment } from "../webhooks.js";
+import { GitReviewError } from "../git-review.js";
+import { transcribeAudio, transcriptionEngine } from "./speech-to-text.js";
+import { localVoiceStatus, narrationProvider, speakReply, startLocalVoiceInstall, updateLocalVoice } from "./story-voice.js";
 import { acceptWebhookCall } from "./webhooks.js";
 import { urlBases } from "./routes/webhooks.js";
 import type { DatabaseSync } from "node:sqlite";
@@ -17,6 +23,13 @@ import type { DatabaseSync } from "node:sqlite";
 // the decision model or an agent can run; this file does the talking to Telegram.
 
 const PRIVATE_REPLY = "This bot is private.";
+const MAX_TURN_FILES = 10;
+const MAX_REPLY_FILES = 10;
+const ALBUM_WAIT_MS = 1500;
+/** A long voice message is still judged quickly: the decision model reads this much of it. */
+const MAX_DECISION_WORDS = 8000;
+/** About a minute of speech, which takes Kokoro about two on four cores. A longer answer is better read, so it goes as text. */
+const MAX_SPOKEN_CHARS = 1000;
 
 export function handleTelegramCallHeader(db: DatabaseSync, webhookId: string, header: unknown): boolean {
   const known = telegramConnectionForWebhook(db, webhookId);
@@ -55,7 +68,7 @@ async function groupWantsAnswer(assistant: PersonalAssistant, known: TelegramCon
       },
     }, {
       assistant: assistant.name, owner, owner_instructions: assistant.instructions, bot_username: known.botUsername, setting: `Telegram group "${turn.chatName}"`,
-      recent_messages: recent, new_message: { author: turn.senderName, text: turn.text, mentions_bot: turn.mentionsBot, replies_to_bot: turn.repliesToBot },
+      recent_messages: recent, new_message: { author: turn.senderName, text: turn.text.slice(0, MAX_DECISION_WORDS), files: turn.files.map(file => file.name), mentions_bot: turn.mentionsBot, replies_to_bot: turn.repliesToBot },
     });
     return answer ? answer.address.choice === "answer" : null;
   } catch (error) {
@@ -64,27 +77,172 @@ async function groupWantsAnswer(assistant: PersonalAssistant, known: TelegramCon
   }
 }
 
-async function runTurn(db: DatabaseSync, webhook: Webhook, known: TelegramConnection, assistant: PersonalAssistant, turn: TelegramTurn): Promise<void> {
-  const recent = turn.isGroup ? recentTelegramMessages(db, webhook.id, turn.chatId) : [];
-  if (turn.isGroup) {
-    rememberTelegramMessage(db, webhook.id, turn.chatId, turn.messageId, turn.senderName, turn.text);
-    const wanted = await groupWantsAnswer(assistant, known, turn, recent);
-    if (wanted === null) { recordWebhookDelivery(db, webhook.id, "failed", "The decision model didn't answer, so the assistant stayed silent", turn.senderId); return; }
+/** What one turn has already fetched, so a file isn't downloaded or transcribed twice. */
+interface TurnFiles { db: DatabaseSync; webhook: Webhook; known: TelegramConnection; projectId: string; bytes: Map<string, Buffer>; words: Map<string, string | null> }
+
+async function fileBytes(work: TurnFiles, file: TelegramFile): Promise<Buffer> {
+  const kept = work.bytes.get(file.uniqueId);
+  if (kept) return kept;
+  const bytes = await telegramDownload(botToken(work.known), file.fileId);
+  work.bytes.set(file.uniqueId, bytes);
+  return bytes;
+}
+
+const tooLargeToRead = (file: TelegramFile): boolean => file.bytes !== null && file.bytes > TELEGRAM_DOWNLOAD_MAX_BYTES;
+
+/** The words in a recording. Null when nothing can transcribe it, or it failed: the sound then reaches the agent as a file. */
+async function spokenWords(work: TurnFiles, file: TelegramFile): Promise<string | null> {
+  if ((!isTelegramSpeech(file) && !isTelegramAudio(file)) || tooLargeToRead(file) || !transcriptionEngine(work.projectId)) return null;
+  if (work.words.has(file.uniqueId)) return work.words.get(file.uniqueId)!;
+  let words: string | null = null;
+  try { words = await transcribeAudio(work.projectId, await fileBytes(work, file), file.name, file.mimeType) || null; }
+  catch (error) { recordWebhookDelivery(work.db, work.webhook.id, "failed", `Couldn't transcribe ${file.name}: ${withoutToken(error, botToken(work.known))}`); }
+  work.words.set(file.uniqueId, words);
+  return words;
+}
+
+/** The words of a message's own voice message count as what the person wrote, so the decision model can judge them too. */
+async function withSpokenWords(work: TurnFiles, turn: TelegramTurn): Promise<{ turn: TelegramTurn; spoken: boolean }> {
+  const said: string[] = [];
+  const files: TelegramFile[] = [];
+  for (const file of turn.files) {
+    const words = isTelegramSpeech(file) ? await spokenWords(work, file) : null;
+    if (words) said.push(words);
+    else files.push(file);
+  }
+  return said.length ? { turn: { ...turn, text: [turn.text, ...said].filter(Boolean).join("\n"), files }, spoken: true } : { turn, spoken: false };
+}
+
+/** Turns a message's files into attachments. What can't be read is reported, never silently dropped. */
+async function gatherFiles(work: TurnFiles, files: TelegramFile[]): Promise<{ attachments: WebhookAttachment[]; quoted: string[]; problems: string[]; unheard: boolean }> {
+  const attachments: WebhookAttachment[] = [], quoted: string[] = [], problems: string[] = [];
+  let unheard = false;
+  const unique = [...new Map(files.map(file => [file.uniqueId, file])).values()];
+  if (unique.length > MAX_TURN_FILES) problems.push(`Only the last ${MAX_TURN_FILES} files were read.`);
+  for (const file of unique.slice(-MAX_TURN_FILES)) {
+    const words = await spokenWords(work, file);
+    if (words && isTelegramSpeech(file)) { quoted.push(`[Voice message: ${words}]`); continue; }
+    if (words) quoted.push(`[Words in ${file.name}: ${words}]`);
+    if (tooLargeToRead(file)) { problems.push(`${file.name} is larger than the 20 MB Telegram lets bots download.`); continue; }
+    try {
+      const data = await fileBytes(work, file);
+      attachments.push({ name: file.name, mimeType: telegramAttachmentType(data, file.mimeType), data });
+      unheard ||= !words && (isTelegramSpeech(file) || isTelegramAudio(file));
+    } catch (error) {
+      recordWebhookDelivery(work.db, work.webhook.id, "failed", `Couldn't download ${file.name}: ${withoutToken(error, botToken(work.known))}`);
+      problems.push(`${file.name} couldn't be downloaded.`);
+    }
+  }
+  return { attachments, quoted, problems, unheard };
+}
+
+/** The agent leaves files for the chat in its own folder for this turn. A link out of it is never followed. */
+async function replyFileNames(folder: string): Promise<string[]> {
+  try {
+    if (!(await lstat(folder)).isDirectory()) return [];
+    return (await readdir(folder, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => entry.name).sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function sendReplyFiles(db: DatabaseSync, webhook: Webhook, known: TelegramConnection, chatId: string, folder: string): Promise<string[]> {
+  const token = botToken(known);
+  const names = await replyFileNames(folder);
+  const sent: string[] = [];
+  const refused = names.length > MAX_REPLY_FILES ? [`Only the first ${MAX_REPLY_FILES} files were sent.`] : [];
+  for (const name of names.slice(0, MAX_REPLY_FILES)) {
+    const file = path.join(folder, name);
+    if ((await lstat(file)).size > TELEGRAM_UPLOAD_MAX_BYTES) { refused.push(`${name} is larger than the 50 MB Telegram lets bots send.`); continue; }
+    try { await sendTelegramFile(token, chatId, file); sent.push(name); }
+    catch (error) {
+      recordWebhookDelivery(db, webhook.id, "failed", `${name} not sent: ${withoutToken(error, token)}`);
+      refused.push(`${name} couldn't be sent.`);
+    }
+  }
+  if (refused.length) await tellChat(db, webhook, known, chatId, refused.join("\n"));
+  return sent;
+}
+
+const NOT_TRANSCRIBED = "The audio is attached because Joint Bob couldn't transcribe it.";
+const TRANSCRIBED = "These words were transcribed from a voice message, so they may hold errors.";
+const READ_ALOUD = "They sent a voice message, so your final answer is read aloud to them: write plain spoken sentences, keep it short, and leave anything that has to be read, such as code or links, for the end.";
+
+/** Answers a voice message with voice. `textToo` when nothing could speak it, or speech had to leave something out. */
+async function speakAnswer(db: DatabaseSync, webhook: Webhook, known: TelegramConnection, projectId: string, chatId: string, text: string, replyTo: number | undefined): Promise<{ spoke: boolean; textToo: boolean }> {
+  const { speech, complete } = telegramSpoken(text);
+  if (!speech || speech.length > MAX_SPOKEN_CHARS) return { spoke: false, textToo: true };
+  const token = botToken(known);
+  try {
+    const audio = await speakReply(projectId, speech);
+    if (!audio) return { spoke: false, textToo: true };
+    await sendTelegramVoice(token, chatId, audio, { replyTo });
+    return { spoke: true, textToo: !complete };
+  } catch (error) {
+    recordWebhookDelivery(db, webhook.id, "failed", `Answered in text: ${withoutToken(error, token)}`);
+    return { spoke: false, textToo: true };
+  }
+}
+
+async function runTurn(db: DatabaseSync, webhook: Webhook, known: TelegramConnection, assistant: PersonalAssistant, heard: TelegramTurn): Promise<void> {
+  updateLocalVoice();
+  const work: TurnFiles = { db, webhook, known, projectId: assistant.projectId, bytes: new Map(), words: new Map() };
+  const { turn: said, spoken } = await withSpokenWords(work, heard);
+  const recent = said.isGroup ? recentTelegramMessages(db, webhook.id, said.chatId) : [];
+  if (said.isGroup) {
+    rememberTelegramMessage(db, webhook.id, said.chatId, said.messageId, said.senderName, said.text, said.files);
+    const wanted = await groupWantsAnswer(assistant, known, said, recent);
+    if (wanted === null) { recordWebhookDelivery(db, webhook.id, "failed", "The decision model didn't answer, so the assistant stayed silent", said.senderId); return; }
     if (!wanted) return;
   }
+  const replyTo = said.isGroup ? said.messageId : undefined;
+  const { attachments, quoted, problems, unheard } = await gatherFiles(work, [...said.repliedFiles, ...(said.isGroup ? takeTelegramFiles(db, webhook.id, said.chatId) : said.files)]);
+  if (problems.length) await tellChat(db, webhook, known, said.chatId, problems.join("\n"), replyTo);
+  const turn = quoted.length ? { ...said, text: [said.text, ...quoted].filter(Boolean).join("\n\n") } : said;
+  if (!turn.text.trim() && !attachments.length) return;
+  const project = await getProject(assistant.projectId);
+  if (!project) throw new Error("The assistant's project no longer exists");
+  const replyFolder = path.join(project.path, ".joint-bob-attachments", `telegram-reply-${randomUUID()}`);
+  await mkdir(replyFolder, { recursive: true, mode: 0o700 });
+  const fileNames = attachments.map(file => file.name);
+  const wantsVoice = known.voiceReplies && heard.files.some(isTelegramSpeech);
+  const notes = [...(spoken ? [TRANSCRIBED] : []), ...(unheard ? [NOT_TRANSCRIBED] : []), ...(wantsVoice && narrationProvider(assistant.projectId).provider ? [READ_ALOUD] : []), ...problems];
   acceptWebhookCall(webhook, {
-    method: "POST", headers: {}, query: "", body: turn.text, sender: { value: turn.senderId, label: turn.senderName },
+    method: "POST", headers: {}, query: "", body: turn.text, attachments, sender: { value: turn.senderId, label: turn.senderName },
     telegram: {
-      message: telegramTurnMessage(turn, recent),
+      message: telegramTurnMessage(turn, recent, { replyFolder, notes, fileNames }),
       // Only the owner's own private chat continues what they started in the app.
-      routing: { scope: turn.isOwner && !turn.isGroup ? null : `telegram:${webhook.id}:${turn.chatId}`, message: turn.text },
-      reply: async text => {
-        if (!await tellChat(db, webhook, known, turn.chatId, text, turn.isGroup ? turn.messageId : undefined)) return;
-        recordWebhookDelivery(db, webhook.id, "delivered", "Replied in Telegram", turn.senderId);
-        if (turn.isGroup) rememberTelegramMessage(db, webhook.id, turn.chatId, -Date.now(), assistant.name, text);
+      routing: { scope: turn.isOwner && !turn.isGroup ? null : `telegram:${webhook.id}:${turn.chatId}`, message: (turn.text.trim() || `(sent ${fileNames.join(", ")})`).slice(0, MAX_DECISION_WORDS) },
+      answer: async text => {
+        try {
+          const voice = wantsVoice ? await speakAnswer(db, webhook, known, assistant.projectId, turn.chatId, text, replyTo) : { spoke: false, textToo: true };
+          if (voice.textToo && !await tellChat(db, webhook, known, turn.chatId, text, voice.spoke ? undefined : replyTo)) return;
+          const sent = await sendReplyFiles(db, webhook, known, turn.chatId, replyFolder);
+          recordWebhookDelivery(db, webhook.id, "delivered", `Replied in Telegram${voice.spoke ? " by voice" : ""}${sent.length ? ` with ${sent.length} file${sent.length === 1 ? "" : "s"}` : ""}`, turn.senderId);
+          if (turn.isGroup) rememberTelegramMessage(db, webhook.id, turn.chatId, -Date.now(), assistant.name, [text, ...sent.map(name => `[Sent ${name}]`)].filter(Boolean).join("\n"));
+        } finally { await rm(replyFolder, { recursive: true, force: true }); }
+      },
+      failed: async () => {
+        await rm(replyFolder, { recursive: true, force: true });
+        await tellChat(db, webhook, known, turn.chatId, "This message couldn't be handled. Please send it again.", replyTo);
       },
     },
   });
+}
+
+const albums = new Map<string, { turn: TelegramTurn; timer: NodeJS.Timeout }>();
+
+/** An album reaches a bot as one message per photo. They wait for each other, so it's one turn, not ten. */
+function collectAlbum(webhookId: string, turn: TelegramTurn, run: (album: TelegramTurn) => void): void {
+  const key = `${webhookId}:${turn.chatId}:${turn.albumId}`;
+  const waiting = albums.get(key);
+  if (waiting) clearTimeout(waiting.timer);
+  const album: TelegramTurn = waiting ? {
+    ...waiting.turn, text: [waiting.turn.text, turn.text].filter(Boolean).join("\n"), files: [...waiting.turn.files, ...turn.files], repliedFiles: [...waiting.turn.repliedFiles, ...turn.repliedFiles],
+    mentionsBot: waiting.turn.mentionsBot || turn.mentionsBot, repliesToBot: waiting.turn.repliesToBot || turn.repliesToBot,
+  } : turn;
+  albums.set(key, { turn: album, timer: setTimeout(() => { albums.delete(key); run(album); }, ALBUM_WAIT_MS) });
 }
 
 export async function handleTelegramUpdate(webhook: Webhook, data: unknown): Promise<void> {
@@ -121,6 +279,10 @@ export async function handleTelegramUpdate(webhook: Webhook, data: unknown): Pro
     await addAssistantNotice(assistant, `telegram:joined:${verdict.chatId}:${verdict.messageId}`, `${verdict.names.join(", ")} joined ${verdict.chatName}. Everyone in this group can use ${assistant.name}.`, `Telegram · ${verdict.chatName}`);
     return;
   }
+  if (verdict.albumId) {
+    collectAlbum(webhook.id, verdict, album => { void runTurn(db, webhook, known, assistant, album).catch((error: unknown) => console.warn("Telegram album failed", error instanceof Error ? error.message : error)); });
+    return;
+  }
   await runTurn(db, webhook, known, assistant, verdict);
 }
 
@@ -133,8 +295,11 @@ export async function telegramStatus(entry: PersonalAssistant) {
   const known = telegramConnection(db, entry.id);
   if (!known) return { connected: false as const, bases: (await urlBases()).map(({ id, label }) => ({ id, label })) };
   const access = listTelegramAccess(db, known.webhookId);
+  updateLocalVoice();
+  const eleven = elevenLabsKey(entry.projectId);
   return {
     connected: true as const, botUsername: known.botUsername, readsAllGroupMessages: known.readsAllGroupMessages,
+    voice: { replies: known.voiceReplies, transcription: transcriptionEngine(entry.projectId), speech: narrationProvider(entry.projectId).provider, local: localVoiceStatus(), elevenLabsConflict: Boolean(eleven && "conflict" in eleven) },
     owner: known.ownerUserId ? { id: known.ownerUserId, name: known.ownerName ?? known.ownerUserId } : null,
     waiting: access.filter(item => item.state === "pending"), allowed: access.filter(item => item.state === "approved"), blocked: access.filter(item => item.state === "blocked"),
     calls: webhookDeliveries(db, known.webhookId).slice(0, 8),
@@ -192,6 +357,18 @@ export async function refreshTelegramBot(entry: PersonalAssistant) {
   const token = botToken(known);
   try { setTelegramReadsAll(db, known.webhookId, (await telegramBot(token)).readsAllGroupMessages); }
   catch (error) { throw new WebhookResourceError(`Telegram didn't answer: ${withoutToken(error, token)}`, 502); }
+  return telegramStatus(entry);
+}
+
+export async function setTelegramVoiceRepliesFor(entry: PersonalAssistant, enabled: boolean) {
+  const db = await personalAssistantDatabase();
+  setTelegramVoiceReplies(db, connected(db, entry).webhookId, enabled);
+  return telegramStatus(entry);
+}
+
+export async function installTelegramVoice(entry: PersonalAssistant) {
+  try { await startLocalVoiceInstall(); }
+  catch (error) { throw error instanceof GitReviewError ? new WebhookResourceError(error.message, error.status) : error; }
   return telegramStatus(entry);
 }
 

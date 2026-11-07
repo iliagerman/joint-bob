@@ -207,6 +207,37 @@ function telegramAccessRow(item, controls) {
     h("button", { type: "button", class: cls, onclick: () => telegramAct(() => put(`${telegramBase()}/access`, { kind: item.kind, id: item.id, state })) }, label))) });
 }
 
+let voiceInstallTimer = null;
+
+function telegramVoiceSummary(voice) {
+  const hears = voice.transcription === "local" ? "Voice messages are transcribed on this machine." : "Voice messages are sent to ElevenLabs to be transcribed, including every one the bot can see in a group.";
+  const says = voice.speech === "kokoro" ? "Answers are spoken on this machine, in English only; an answer in another language comes as text."
+    : voice.speech === "elevenlabs" ? "Answers are spoken by ElevenLabs." : "Answers come as text until a voice is set up.";
+  return `${hears} ${says} Choose the voice in Settings → Activity overview.`;
+}
+
+function telegramVoiceSetup(voice) {
+  const { local } = voice;
+  if (local.installing) return h("div", { class: "notice plain", "data-testid": "assistant-telegram-voice" }, icon("info"), h("span", {}, "Installing the open-source voice. This takes a few minutes, once."));
+  const conflict = voice.elevenLabsConflict ? "This project has more than one ElevenLabs account at the same level, so neither is used. Keep one in Settings → Secrets. " : "";
+  const failed = local.installError ? `Installing failed: ${local.installError} ` : "";
+  const install = local.allowed && !local.installed ? h("button", { type: "button", "data-testid": "assistant-telegram-voice-install", onclick: () => telegramAct(() => post(`${telegramBase()}/voice/install`, {})) }, "Install open-source voice") : null;
+  if (voice.transcription) return h("div", { class: "notice plain", "data-testid": "assistant-telegram-voice" }, icon("info"), h("span", {}, `${conflict}${failed}${telegramVoiceSummary(voice)}`), install);
+  const offer = install ? "Install the open-source voice to fix this: it installs once, about 800 MB, and needs no key." : local.reason ?? "";
+  return h("div", { class: "notice", "data-testid": "assistant-telegram-voice" }, icon("alert"), h("span", {}, `${conflict}${failed}Voice messages can't be transcribed or spoken yet, so the agent gets the audio file and answers in text. ${offer}`), install);
+}
+
+function telegramVoicePanel(voice) {
+  clearTimeout(voiceInstallTimer);
+  if (voice.local.installing) voiceInstallTimer = setTimeout(refreshTelegram, 5000);
+  return [
+    h("h3", { class: "sec" }, "Voice messages"),
+    h("div", { class: "sec-row" }, h("span", {}, "Answer voice messages with voice"),
+      switchButton({ checked: voice.replies, label: "Answer voice messages with voice", testid: "assistant-telegram-voice-replies", onToggle: () => telegramAct(() => put(`${telegramBase()}/voice-replies`, { enabled: !voice.replies })) })),
+    telegramVoiceSetup(voice),
+  ];
+}
+
 function telegramConnected(status) {
   const owner = status.owner
     ? h("div", { class: "res-bar", "data-testid": "assistant-telegram-owner" }, h("span", {}, `Linked to ${status.owner.name} (${status.owner.id})`),
@@ -225,6 +256,7 @@ function telegramConnected(status) {
     owner, linkNotice,
     status.readsAllGroupMessages ? null : h("div", { class: "notice", "data-testid": "assistant-telegram-privacy" }, icon("alert"), h("span", {}, "In groups, this bot only sees commands and replies to it. To let it read a whole group, send /setprivacy to @BotFather, turn privacy off, then add the bot to the group again. Or make it a group admin."),
       h("button", { type: "button", onclick: () => telegramAct(() => post(`${telegramBase()}/refresh`, {}), "Checked with Telegram.") }, "Check again")),
+    telegramVoicePanel(status.voice),
     list("Waiting for approval", status.waiting.map(item => telegramAccessRow(item, [["Block", "blocked", "ghost"], ["Approve", "approved", "primary"]]))),
     list("Can use it", status.allowed.map(item => telegramAccessRow(item, [["Remove", null, "ghost"]]))),
     list("Blocked", status.blocked.map(item => telegramAccessRow(item, [["Unblock", null, "ghost"]]))),
