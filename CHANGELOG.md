@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.226.0 — 2026-11-07
+
+- In Bob's chat, a message about a conversation is now a card in its project's own color. The project and the conversation's name are on top (click the name to open it), then how much it matters, who raised it in plain words ("Bob checked it when it stopped", "Guardian holds a risky step for your OK") and when, then what it says. The card no longer repeats the conversation's name in its text.
+
 ## 2.225.0 — 2026-11-07
 
 - The Activity overview's movie is written from the commits a conversation made and pushed, as they were committed. A conversation that pushed with `git commit-tree` and `git push` used to get a movie with no code. The movie uses the files on disk only when the conversation committed nothing, and **Rewrite** reads the conversation again.
