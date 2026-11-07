@@ -3,11 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.232.0 — 2026-11-07
 
-- Kiro uses a Joint Bob-managed CLI v3 installation instead of depending on a system executable. Downloads are checksum-verified and checked before replacing the working copy; missing installations are restored by the harness updater.
-- Kiro can be disabled in Settings without unavailable paths blocking saves. Disabling prevents new Kiro runs, background checks and updates while keeping saved conversations readable.
-- Joint Bob installed its own Kiro CLI v3 and restores it automatically when it goes missing, so Kiro no longer depends on a system install and Settings can turn it off without an unavailable path blocking saves.
+- Joint Bob installs and keeps its own Kiro CLI, so Kiro no longer needs Kiro installed on the system. Each download is checked before it replaces the working copy, and a missing copy is restored automatically.
+- Kiro can be turned off per machine in Settings, and a Kiro path that is unavailable no longer blocks saving other settings. While it is off, no new Kiro runs, background checks or updates started, and saved conversations stayed readable.
 
 ## 2.231.0 — 2026-11-07
 
