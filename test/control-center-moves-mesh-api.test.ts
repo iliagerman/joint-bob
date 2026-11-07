@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
@@ -163,6 +164,13 @@ test("two real servers move a conversation: now, after its turn, and by stopping
     sockets[2].send(JSON.stringify({ type: "prompt", message: "a long turn on B again", requestId: randomUUID() }));
     await until("the turn to start on B again", async () => (await runs(b)) === 3);
     await until("A to see the turn running on B", async () => (await call<{ cards: Array<{ conversationId: string; column: string }> }>(a, "GET", "/control-center/board")).body.cards.some((card) => card.conversationId === "mesh-session" && card.column === "running"));
+    // A's board shows the summary B keeps for the conversation it runs: A asks B for it.
+    const onB = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    try {
+      onB.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS transcript_summaries(kind TEXT NOT NULL, file TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind, file))");
+      onB.prepare("INSERT OR REPLACE INTO transcript_summaries VALUES ('conversation-digest', ?, ?)").run(`${project.id}:mesh-session`, JSON.stringify({ summary: "**Goal** — Check the mesh, kept on B.", turns: 1, updatedAt: new Date().toISOString() }));
+    } finally { onB.close(); }
+    await until("A's card to show B's summary", async () => (await call<{ cards: Array<{ conversationId: string; summary: string | null }> }>(a, "GET", "/control-center/board")).body.cards.find((card) => card.conversationId === "mesh-session")?.summary === "**Goal** — Check the mesh, kept on B.");
     const asked = await call<{ action: string; reply: Message }>(a, "POST", "/control-center/bob/message", { message: `move all my running jobs from ${b.name} to ${a.name}` });
     assert.equal(asked.status, 200, JSON.stringify(asked.body));
     const proposal = asked.body.reply;

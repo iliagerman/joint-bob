@@ -8,13 +8,37 @@ import { allPendingGuardianReviews } from "../guardian/reviews.js";
 import { storedDigest } from "../conversation-digest.js";
 import { bobDatabase } from "../control-center/bob-store.js";
 import { listReviewChecks } from "../control-center/review-check.js";
-import { currentActivity } from "../control-center/activity.js";
-import { harnessSessions, harnessTurnBusy } from "./harness-sessions.js";
+import { getClusterNode } from "../cluster.js";
+import { liveActivity } from "./control-center-live.js";
+import { askRemoteLive } from "./control-center-live-remote.js";
 import type { ProjectRecord } from "../types.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { noteUnannouncedRunChanges, sharedProjectSessions } from "./sessions-helpers.js";
 
 export interface LoadedBoard { cards: BoardCard[]; projects: ProjectRecord[] }
+
+/**
+ * A conversation another of the person's machines runs has its summary and its turn's activity there: each such machine is asked
+ * once, for all its cards, so the board shows them wherever it is opened.
+ */
+async function fillFromOtherMachines(cards: BoardCard[]): Promise<void> {
+  const here = (await getClusterNode()).id;
+  const byMachine = new Map<string, BoardCard[]>();
+  for (const card of cards) {
+    if (!card.executionNodeId || card.executionNodeId === here) continue;
+    byMachine.set(card.executionNodeId, [...byMachine.get(card.executionNodeId) ?? [], card]);
+  }
+  await Promise.all([...byMachine].map(async ([nodeId, theirs]) => {
+    const live = await askRemoteLive(nodeId, theirs.map(({ projectId, conversationId }) => ({ projectId, conversationId })));
+    for (const card of theirs) {
+      const found = live.get(`${card.projectId}:${card.conversationId}`);
+      if (!found) continue;
+      // The machine that runs it has the newest summary; one kept here is from before it moved.
+      card.summary = found.summary ?? card.summary;
+      if (card.column === "running") card.activity = found.activity;
+    }
+  }));
+}
 
 /** The board for one signed-in person: running and review-ready conversations across every project they can see. */
 export async function loadBoard(session: AuthSession): Promise<LoadedBoard> {
@@ -44,10 +68,8 @@ export async function loadBoard(session: AuthSession): Promise<LoadedBoard> {
     autoRespondStop: (projectId, conversationId) => autoStopped.get(`${projectId}:${conversationId}`) ?? null,
     controlledBy: (projectId, conversationId) => { const holder = leaseHolder(projectId, conversationId); return holder === null ? null : holder === session.accountId ? "you" : "someone-else"; },
     reviewCheck: (projectId, conversationId) => checks.get(`${projectId}:${conversationId}`) ?? null,
-    activityOf: (projectId, conversationId) => {
-      const shared = [...harnessSessions.values()].find((entry) => entry.projectId === projectId && entry.conversationId === conversationId && harnessTurnBusy(entry));
-      return shared ? currentActivity(shared.liveEvents) : null;
-    },
+    activityOf: liveActivity,
   });
+  await fillFromOtherMachines(cards);
   return { cards, projects };
 }
