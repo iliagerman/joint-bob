@@ -8,7 +8,7 @@ Every conversation that is running, one that waits for you, and one that finishe
 
 - **Needs you** cards show a step waiting for your OK (a Guardian review: what the agent wants to run, with **Allow once** and **Block**), or an agent whose auto respond stopped on something only you can settle.
 - **Running** cards show the title, the agent and model, and where the conversation stands. The first line, in the accent color, says what the turn is doing now: the tool it runs and what it runs on (*Bash · npm test*), or the last line it wrote, or *Thinking…*. Under it is the first sentence of the summary's *Current state*. Hover them for the whole summary. While something runs, the board reads them again every 10 seconds. What a turn does now is known only on the machine running it; a conversation running on another machine shows its summary line.
-- **Done · ready for review** cards are marked **To review** with a blue edge, and have a blue **Review** button. It opens the conversation over the board to read what it did; once you have looked, it leaves this lane. Take control is in the opened conversation. A card Bob checked says **✓ Bob checked: done** (see **Is it really done?** below).
+- **Done · ready for review** cards are marked **To review** with a blue edge, and have a blue **Review** button. It opens the conversation over the board to read what it did; once you have looked, it leaves this lane. Take control is in the opened conversation. **Done** closes it, after the same question about what to learn as marking it done in its project. A conversation marked done leaves the board until it runs again. A card Bob checked says **✓ Bob checked: done** (see **Is it really done?** below).
 - **Who drives it** is on the card: **⚙ System drives** when auto respond answers the agent for you, **👁 Bob watches** for a conversation Bob started (he tells you when it needs you), **✋ You're in it** once you take control. A card with none of these is yours alone. The line under the title counts them for the board (*2 driven by the system · 1 watched by Bob*).
 - A project's own buttons, such as its **Dashboard**, are on the project's group, not on each card.
 - **Every card is the same size.** The title gets two lines and the status two; longer text is cut, and you can hover it to read all of it. On a **Needs you** card, the step waiting for you replaces the status, with **Allow once** and **Block** (*· 2 more* when several wait, and the next one shows once you answer).
@@ -106,7 +106,12 @@ A conversation that stops and waits for review is not always finished: the agent
 - **What Bob does.**
   - *Done*: nothing; the card stays in review, marked **✓ Bob checked: done**.
   - *Not done*: Bob tells the agent to go on ("Continue with the task: you stopped before it was done… If you need something only I can decide, ask me"), says so in his chat, and the card shows **↻ Bob told it to go on (1 of 3)** and **⚙ System drives**. After three pushes in a row with no message from you between them, Bob stops and brings it to you instead.
-  - *Waits for you*: the card moves to **Needs you** with what it waits for, and Bob's chat has it with **Open** and **Push it on**.
+  - *Waits for you*: the card moves to **Needs you** with what it waits for. Bob's chat has it with:
+    - **Push it on**: tell it to go on anyway.
+    - **Done**: close it, as marking it done in its project does.
+    - **Abandon**: stop it (its turn, auto respond, a step waiting for an answer) and close it without finishing.
+    - **Open**: read it first.
+  - When Bob told it to go on, his message has **Abandon** too, in case you would rather drop it. Done and Abandon end Bob's check of that conversation, and it leaves the board.
 - **Your setting.** In Bob's settings, **When work stops unfinished**: **Bob tells it to go on** (the default), **Bob asks me first** (a *Needs you* message with **Push it on** and **Leave it**), or **Leave it in review**.
 
 ## Workspaces, projects and conversations

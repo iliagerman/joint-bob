@@ -173,7 +173,7 @@ body.control-popup:not(.control-held) #composer { display: none; }
 .control-card-body .control-need-actions .control-action { padding: 1px 8px; font-size: 11.5px; line-height: 16px; }
 .control-project-cards .control-card > .control-meta { line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .control-project-cards .control-card-actions { flex-wrap: nowrap; overflow: hidden; }
-.control-project-cards .control-card-action { white-space: nowrap; }
+.control-project-cards .control-card-action { white-space: nowrap; padding: 1px 5px; }
 /* What a running turn is doing now, above the summary's line. */
 .control-live-lines { display: flex; flex-direction: column; min-width: 0; }
 .control-live-now { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--accent); }

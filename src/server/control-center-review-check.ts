@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import type { AuthSession } from "../auth.js";
 import { actingAccountFromSession, runAsAccount, type ActingAccount } from "../account-context.js";
 import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import { bobSays, registerBobAction } from "../control-center/bob-actions.js";
@@ -18,12 +20,13 @@ import { getProject, projectVisible } from "../store.js";
 import type { HarnessId } from "../types.js";
 import { bobDecisionModel } from "./bob.js";
 import { titleOf } from "./control-center-start.js";
-import { queueConversationPrompt } from "./conversation-prompt.js";
+import { queueConversationPrompt, stopConversationTurn } from "./conversation-prompt.js";
 import { runGitReview } from "./git-review-run.js";
 import { harnessSessionBusy, onConversationMessage, type SharedHarnessSession } from "./harness-sessions.js";
 import { iconHarnessId } from "./label-icon.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { broadcastToAllClients } from "./realtime.js";
+import { markConversationDoneAsActor } from "./routes/projects.js";
 
 /** Long enough for a queued message or auto respond to start first, so Bob only judges a conversation nothing else is moving. */
 let checkDelayMs = 20_000;
@@ -69,8 +72,11 @@ async function push(actor: ActingAccount, conversation: Conversation, reason: st
   }));
 }
 
-const openAction = (conversation: Conversation): BobAction => ({ id: "open", label: "Open", data: { open: { projectId: conversation.projectId, conversationId: conversation.conversationId } } });
+// The open button names the conversation, so Bob's chat can say which one a message is about.
+const openAction = (conversation: Conversation): BobAction => ({ id: "open", label: "Open", data: { open: { projectId: conversation.projectId, conversationId: conversation.conversationId, title: conversation.title } } });
 const pushAction = (conversation: Conversation): BobAction => ({ id: "review.push", label: "Push it on", style: "primary", data: { ...conversation } });
+const doneAction = (conversation: Conversation): BobAction => ({ id: "conversation.done", label: "Done", data: { ...conversation } });
+const abandonAction = (conversation: Conversation): BobAction => ({ id: "conversation.abandon", label: "Abandon", style: "warn", data: { ...conversation } });
 
 /** Checks one conversation whose turn ended, as the person whose conversation it is, and acts on what is found. "busy" means the turn is still settling. */
 async function check(shared: SharedHarnessSession, actor: ActingAccount, turnEndedAt: number): Promise<"busy" | void> {
@@ -110,16 +116,16 @@ async function check(shared: SharedHarnessSession, actor: ActingAccount, turnEnd
   if (step === "push") {
     await push(actor, conversation, decided.reason);
     writeReviewCheck(db, { ...record, pushes: pushes + 1, pushPending: true });
-    appendBobMessage(db, actor.accountId, { role: "bob", importance: "fyi", text: `"${conversation.title}" stopped before it was done, so I told it to go on (${pushes + 1} of ${MAX_PUSHES}).${decided.reason ? `\n${decided.reason}` : ""}`, actions: [openAction(conversation)], ...label });
+    appendBobMessage(db, actor.accountId, { role: "bob", importance: "fyi", text: `"${conversation.title}" stopped before it was done, so I told it to go on (${pushes + 1} of ${MAX_PUSHES}).${decided.reason ? `\n${decided.reason}` : ""}`, actions: [openAction(conversation), abandonAction(conversation)], ...label });
   } else {
     writeReviewCheck(db, record);
     if (step === "ask") {
-      appendBobMessage(db, actor.accountId, { role: "bob", importance: "needs-you", text: `"${conversation.title}" stopped before it was done.${decided.reason ? `\n${decided.reason}` : ""}\nShall I tell it to go on?`, actions: [pushAction(conversation), openAction(conversation), { id: "review.leave", label: "Leave it", data: { projectId: project.id, conversationId: shared.conversationId } }], ...label });
+      appendBobMessage(db, actor.accountId, { role: "bob", importance: "needs-you", text: `"${conversation.title}" stopped before it was done.${decided.reason ? `\n${decided.reason}` : ""}\nShall I tell it to go on?`, actions: [pushAction(conversation), doneAction(conversation), abandonAction(conversation), openAction(conversation), { id: "review.leave", label: "Leave it", data: { projectId: project.id, conversationId: shared.conversationId } }], ...label });
     } else if (step === "tell") {
       const text = decided.verdict === "continue"
         ? `I told "${conversation.title}" to go on ${MAX_PUSHES} times and it is still not done.${decided.reason ? `\n${decided.reason}` : ""}`
         : `"${conversation.title}" waits for you.${decided.reason ? `\n${decided.reason}` : ""}`;
-      appendBobMessage(db, actor.accountId, { role: "bob", importance: "needs-you", text, actions: [openAction(conversation), pushAction(conversation)], ...label });
+      appendBobMessage(db, actor.accountId, { role: "bob", importance: "needs-you", text, actions: [pushAction(conversation), doneAction(conversation), abandonAction(conversation), openAction(conversation)], ...label });
     }
   }
   broadcastToAllClients({ type: "controlCenterChanged" }, actor.accountId);
@@ -174,6 +180,32 @@ registerBobAction("review.push", async ({ db, session, action }) => {
   await push(actingAccountFromSession(session), conversation, previous?.reason ?? "");
   if (previous) writeReviewCheck(db, { ...previous, pushes: previous.pushes + 1, pushPending: true, needsYou: false });
   return [bobSays(db, session, `Told "${conversation.title}" to go on.`, { importance: "done", projectId: conversation.projectId, projectName: conversation.projectName, via: "Review check · you pressed the button" })];
+});
+
+/**
+ * Closes the conversation as the person, as marking it done in its project does; abandoning stops it first (its turn, auto
+ * respond, a step waiting for an answer). Bob's check of it ends either way.
+ */
+async function closeConversation(session: AuthSession, db: DatabaseSync, conversation: Conversation, abandoned: boolean): Promise<void> {
+  await runAsAccount(actingAccountFromSession(session), async () => {
+    if (abandoned) await stopConversationTurn({ projectId: conversation.projectId, engine: conversation.engine, sessionId: conversation.sessionId, label: "Bob" });
+    await markConversationDoneAsActor(conversation.projectId, { engine: conversation.engine, sessionId: conversation.sessionId, done: true });
+  });
+  const previous = readReviewCheck(db, conversation.projectId, conversation.conversationId);
+  if (previous) writeReviewCheck(db, { ...previous, verdict: "done", reason: abandoned ? "You abandoned it." : "You marked it done.", by: "you", needsYou: false, pushPending: false });
+  broadcastToAllClients({ type: "controlCenterChanged" }, session.accountId);
+}
+
+registerBobAction("conversation.done", async ({ db, session, action }) => {
+  const conversation = conversationData.parse(action.data);
+  await closeConversation(session, db, conversation, false);
+  return [bobSays(db, session, `Marked "${conversation.title}" as done. It has left the board.`, { importance: "done", projectId: conversation.projectId, projectName: conversation.projectName, via: "Review check · you pressed Done" })];
+});
+
+registerBobAction("conversation.abandon", async ({ db, session, action }) => {
+  const conversation = conversationData.parse(action.data);
+  await closeConversation(session, db, conversation, true);
+  return [bobSays(db, session, `Abandoned "${conversation.title}": stopped and closed without finishing. It has left the board.`, { importance: "done", projectId: conversation.projectId, projectName: conversation.projectName, via: "Review check · you pressed Abandon" })];
 });
 
 registerBobAction("review.leave", async ({ db, session, action }) => {

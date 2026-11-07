@@ -18,6 +18,8 @@ export interface BoardCard {
   path: string;
   title: string;
   column: BoardColumn;
+  /** The conversation's own agent, which its project's routes name it by; `agentId` is the one that last drove it. */
+  harnessId: string;
   agentId: string;
   agentLabel: string;
   agentModel: string | null;
@@ -80,6 +82,7 @@ export function buildBoard(projects: BoardProject[], sources: BoardSources): Boa
         path: session.path,
         title: session.title,
         column: pendingReviews.length || autoRespondStop || checkedForYou ? "needs-you" : running ? "running" : "review",
+        harnessId: session.harnessId,
         agentId: session.agentId,
         agentLabel: session.agentLabel,
         agentModel: session.agentModel ?? null,

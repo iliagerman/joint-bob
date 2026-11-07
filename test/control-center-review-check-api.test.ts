@@ -55,7 +55,7 @@ async function eventually<T>(read: () => Promise<T | undefined>, label: string):
   throw new Error(`Never happened: ${label}`);
 }
 
-test("a conversation that stops before its task is done is told to go on, and one the decision model finds done is left for review", { timeout: 180_000 }, async () => {
+test("a conversation that stops before its task is done is told to go on, one the decision model finds done is left for review, and Abandon closes it", { timeout: 180_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-review-check-"));
   const classifier = await decisionModel();
   let child: ChildProcess | undefined;
@@ -80,6 +80,9 @@ test("a conversation that stops before its task is done is told to go on, and on
     const said = await eventually(async () => (await timeline()).find((message) => /stopped before it was done, so I told it to go on \(1 of 3\)/.test(message.text)), "Bob said he pushed it on");
     assert.equal(said.importance, "fyi");
     assert.match(said.via ?? "", /^Review check · Decision model 97%/);
+    // The message names its conversation, and while it runs on, the person can drop it.
+    assert.deepEqual(said.actions.map((action) => action.id), ["open", "conversation.abandon"]);
+    assert.equal((said.actions[0].data as { open: { title: string } }).open.title, "fix the mobile menu in Joint Bob");
 
     // The turn that answers the push is judged done: it is left for review, and no second push is sent.
     await eventually(async () => classifier.verdicts.length >= 2 ? true : undefined, "the second stop was checked");
@@ -89,6 +92,16 @@ test("a conversation that stops before its task is done is told to go on, and on
     const card = await eventually(async () => (await api<{ cards: Array<{ column: string; reviewCheck: { verdict: string } | null }> }>(node, auth, "GET", "/control-center/board")).body.cards.find((entry) => entry.reviewCheck), "the board shows the check");
     assert.equal(card.reviewCheck?.verdict, "done");
     assert.notEqual(card.column, "needs-you");
+
+    // Abandon stops it if it still runs and closes it as marking it done does: it leaves the board, and Bob's check ends.
+    const abandoned = await api<{ messages: BobMessage[] }>(node, auth, "POST", "/control-center/bob/action", { messageId: said.id, actionId: "conversation.abandon" });
+    assert.equal(abandoned.status, 200, JSON.stringify(abandoned.body));
+    assert.match(abandoned.body.messages[0].text, /^Abandoned "fix the mobile menu in Joint Bob": stopped and closed without finishing\./);
+    const sessions = (await api<{ sessions: Array<{ title: string; doneAt?: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`)).body.sessions;
+    assert.ok(sessions.find((session) => session.title === "fix the mobile menu in Joint Bob")?.doneAt, "the conversation is marked done");
+    const board = (await api<{ cards: Array<{ title: string }> }>(node, auth, "GET", "/control-center/board")).body.cards;
+    assert.equal(board.some((entry) => entry.title === "fix the mobile menu in Joint Bob"), false, "it left the board");
+    assert.deepEqual((await timeline()).find((message) => message.id === said.id)?.actions, [], "the buttons ran once");
   } finally {
     if (child) await stopDevNode(child);
     classifier.server.close();

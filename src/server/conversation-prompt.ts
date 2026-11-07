@@ -5,7 +5,9 @@ import { getConversationRecord } from "../conversation-records.js";
 import { cancelQueuedPrompt } from "../prompt-queue.js";
 import { runtimeSocketHeaders } from "./runtime-peers.js";
 import { encodeAuthor, type MessageAuthor } from "../message-authors.js";
+import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
 import { server } from "./state.js";
+import type { HarnessId } from "../types.js";
 
 interface ReadyStatus { model: { provider: string; id: string }; thinkingLevel: string }
 export interface PromptAttachment { name: string; mimeType: string; data: string }
@@ -38,17 +40,53 @@ export interface ConversationPromptOptions {
 }
 
 /** Queues a prompt in a local conversation through this node's own chat socket, as a browser would. */
-export async function queueConversationPrompt(options: ConversationPromptOptions): Promise<void> {
-  const { label } = options;
+/** This node's own chat socket for a local conversation, signed as the node, as a browser's would be. */
+async function localChatSocket(options: Pick<ConversationPromptOptions, "projectId" | "engine" | "sessionId" | "label" | "worktreeId" | "author" | "automationProfile">): Promise<{ url: URL; headers: Record<string, string> }> {
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error(`${label} executor server is not listening`);
+  if (!address || typeof address === "string") throw new Error(`${options.label} executor server is not listening`);
   const url = new URL(`ws://127.0.0.1:${address.port}/ws`);
   const parameters: Record<string, string> = { projectId: options.projectId, sessionId: options.sessionId, sessionPath: `draft:${options.engine}:${options.sessionId}`, nodeSession: "1", ...(options.worktreeId ? { worktreeId: options.worktreeId } : {}), ...(options.author ? { author: encodeAuthor(options.author) } : {}) };
   if (options.automationProfile) parameters.automationProfile = JSON.stringify(options.automationProfile);
   for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
+  return { url, headers: await runtimeSocketHeaders((await getClusterNode()).id, url) };
+}
+
+const STOP_TIMEOUT_MS = 15_000;
+
+/**
+ * Stops a local conversation as its stop button does: its running turn, auto respond, and any step waiting for an answer.
+ * Resolves once the conversation is no longer busy.
+ */
+export async function stopConversationTurn(options: { projectId: string; engine: string; sessionId: string; label: string }): Promise<void> {
+  const { url, headers } = await localChatSocket(options);
+  const busy = () => { const shared = findHarnessSession(options.projectId, options.engine as HarnessId, options.sessionId); return Boolean(shared && harnessSessionBusy(shared)); };
+  await new Promise<void>((resolve, reject) => {
+    const socket = new WebSocket(url, { headers });
+    let settled = false;
+    let poll: NodeJS.Timeout | undefined;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); clearInterval(poll); socket.close();
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error(`${options.label} could not stop the conversation within ${STOP_TIMEOUT_MS / 1000} seconds`)), STOP_TIMEOUT_MS);
+    socket.on("error", finish);
+    socket.on("close", () => finish(new Error(`${options.label} connection closed before the conversation stopped`)));
+    socket.on("message", (raw) => {
+      const event = JSON.parse(raw.toString()) as { type?: string; ownership?: unknown; readOnly?: unknown };
+      if (event.type !== "ready" || poll) return;
+      if (event.ownership || event.readOnly) { finish(new Error(`${options.label} conversation is not writable on this node`)); return; }
+      socket.send(JSON.stringify({ type: "stop" }));
+      poll = setInterval(() => { if (!busy()) finish(); }, 200);
+    });
+  });
+}
+
+export async function queueConversationPrompt(options: ConversationPromptOptions): Promise<void> {
+  const { label } = options;
+  const { url, headers } = await localChatSocket(options);
   const record = await getConversationRecord(options.projectId, options.engine, options.sessionId);
   const queueKey = `${options.projectId}:${record?.conversationId ?? options.sessionId}`;
-  const headers = await runtimeSocketHeaders((await getClusterNode()).id, url);
   await new Promise<void>((resolve, reject) => {
     const socket = new WebSocket(url, { headers });
     let queueId: string | undefined;
