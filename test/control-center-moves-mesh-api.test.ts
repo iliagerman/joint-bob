@@ -90,9 +90,10 @@ test("two real servers move a conversation: now, after its turn, and by stopping
     const transcript = path.join(sessionRoot, "mesh-session.jsonl");
     const log = path.join(root, "invocations.log");
     const holds = path.join(root, "holds");
-    await Promise.all([mkdir(sessionRoot, { recursive: true }), mkdir(holds, { recursive: true })]);
+    const stubs = path.join(root, "stubs");
+    await Promise.all([mkdir(sessionRoot, { recursive: true }), mkdir(holds, { recursive: true }), mkdir(stubs, { recursive: true })]);
     await writeFile(transcript, `${JSON.stringify({ type: "session", version: 3, id: "mesh-session", timestamp: "2026-01-01T00:00:00.000Z", cwd: project.path })}\n${JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "Continue this conversation" }] } })}\n`);
-    for (const node of [a, b]) children.push(await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holds, JOINT_BOB_TYPESAFE_ENDPOINT: classifier.url }));
+    for (const node of [a, b]) children.push(await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holds, JOINT_BOB_TYPESAFE_ENDPOINT: classifier.url, JOINT_BOB_TEST_AUTOMATION_DIR: stubs }));
     await pairTwinNodes(environment);
     const signed = new Map<SeededNode, SignedIn>([[a, await signIn(environment, a)], [b, await signIn(environment, b)]]);
     const call = <T>(node: SeededNode, method: string, endpoint: string, body?: unknown) => api<T>(node, signed.get(node)!, method, endpoint, body);
@@ -171,6 +172,15 @@ test("two real servers move a conversation: now, after its turn, and by stopping
       onB.prepare("INSERT OR REPLACE INTO transcript_summaries VALUES ('conversation-digest', ?, ?)").run(`${project.id}:mesh-session`, JSON.stringify({ summary: "**Goal** — Check the mesh, kept on B.", turns: 1, updatedAt: new Date().toISOString() }));
     } finally { onB.close(); }
     await until("A's card to show B's summary", async () => (await call<{ cards: Array<{ conversationId: string; summary: string | null }> }>(a, "GET", "/control-center/board")).body.cards.find((card) => card.conversationId === "mesh-session")?.summary === "**Goal** — Check the mesh, kept on B.");
+    // Asked on A to write it, Bob has B, which runs it, write it there: A's chat gets it, and A's card shows it.
+    const meshCard = (await call<{ cards: Array<{ conversationId: string; title: string }> }>(a, "GET", "/control-center/board")).body.cards.find((card) => card.conversationId === "mesh-session")!;
+    await writeFile(path.join(stubs, "organize.json"), JSON.stringify({ intent: "summarize-conversations", conversations: [`conversation-titled:${meshCard.title}`] }));
+    const summarizing = await call<{ reply: Message }>(a, "POST", "/control-center/bob/message", { message: "write the summary of that conversation" });
+    assert.equal(summarizing.body.reply?.text, `Writing the summary of "${meshCard.title}". I'll post it here when it is written.`, JSON.stringify(summarizing.body));
+    const written = await until("A's chat to get the summary B wrote", async () => (await call<{ messages: Message[] }>(a, "GET", "/control-center/bob/messages")).body.messages.find((message) => message.text.startsWith(`"${meshCard.title}": summary`)));
+    const summary = written.text.split("\n\n").slice(1).join("\n\n");
+    assert.match(summary, /^\*\*Goal\*\* — Continue this conversation/, "B wrote a new one from its transcript");
+    await until("A's card to show the summary B wrote", async () => (await call<{ cards: Array<{ conversationId: string; summary: string | null }> }>(a, "GET", "/control-center/board")).body.cards.find((card) => card.conversationId === "mesh-session")?.summary === summary);
     const asked = await call<{ action: string; reply: Message }>(a, "POST", "/control-center/bob/message", { message: `move all my running jobs from ${b.name} to ${a.name}` });
     assert.equal(asked.status, 200, JSON.stringify(asked.body));
     const proposal = asked.body.reply;

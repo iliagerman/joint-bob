@@ -79,7 +79,10 @@ export function startDevNode(environment: DevEnvironment, node: SeededNode, extr
       JOINT_BOB_RELEASE: "development",
       ...extraEnv,
     });
-    const preload = [...installStub ? ["./test/stub-harness-bootstrap.ts"] : [], ...extraEnv.JOINT_BOB_TEST_ASK_LOG ? ["./test/stub-ask-bootstrap.ts"] : []];
+    const preload = [
+      ...installStub ? ["./test/stub-harness-bootstrap.ts"] : [], ...extraEnv.JOINT_BOB_TEST_ASK_LOG ? ["./test/stub-ask-bootstrap.ts"] : [],
+      ...extraEnv.JOINT_BOB_TEST_AUTOMATION_DIR ? ["./test/stub-automation-bootstrap.ts"] : [],
+    ];
     const child = spawn(process.execPath, serverArgs(env, preload), { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
     waitForDevNode(child, node.key, node.url).then(resolve, reject);
   });

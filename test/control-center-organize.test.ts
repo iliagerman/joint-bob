@@ -7,12 +7,12 @@ const world: OrganizeWorld = {
   workspaces: [{ id: "work", label: "Work" }, { id: "personal", label: "Personal" }, { id: "empty", label: "Empty" }],
   projects: [{ id: "jb", name: "Joint Bob", workspaceId: "work" }, { id: "dak", name: "DAK Live", workspaceId: "personal" }],
   conversations: [
-    { key: "conversation_1", projectId: "dak", projectName: "DAK Live", engine: "claude", sessionId: "s1", conversationId: "c1", title: "slice 10", local: true },
-    { key: "conversation_2", projectId: "jb", projectName: "Joint Bob", engine: "pi", sessionId: "s2", conversationId: "c2", title: "Mac build", local: false },
+    { key: "conversation_1", projectId: "dak", projectName: "DAK Live", engine: "claude", sessionId: "s1", conversationId: "c1", title: "slice 10", nodeId: null },
+    { key: "conversation_2", projectId: "jb", projectName: "Joint Bob", engine: "pi", sessionId: "s2", conversationId: "c2", title: "Mac build", nodeId: "mac-node" },
   ],
 };
 const decision = (kind: BobDecision["kind"]): BobDecision => ({ kind, size: "short", projectId: null, autoRespond: false, confidence: 0.95 });
-const proposal = (intent: Exclude<OrganizeIntent, { intent: "none" }>) => {
+const proposal = (intent: Exclude<OrganizeIntent, { intent: "none" | "summarize-conversations" }>) => {
   const result = propose(intent, world);
   assert.notEqual(typeof result, "string", JSON.stringify(result));
   return result as Exclude<ReturnType<typeof propose>, string>;
@@ -21,7 +21,8 @@ const proposal = (intent: Exclude<OrganizeIntent, { intent: "none" }>) => {
 test("what Bob's agent answers is an intent only when it fits one of the shapes", () => {
   assert.deepEqual(parseOrganizeIntent('Sure:\n{"intent":"create-project","name":"Billing","workspaceId":"work"}'), { intent: "create-project", name: "Billing", workspaceId: "work" });
   assert.deepEqual(parseOrganizeIntent('{"intent":"none"}'), { intent: "none" });
-  for (const bad of ["", "create it", '{"intent":"create-project","name":"Billing"}', '{"intent":"drop-database"}', '{"intent":"rename-conversation","conversation":"conversation_1","title":""}']) {
+  assert.deepEqual(parseOrganizeIntent('{"intent":"summarize-conversations","conversations":["conversation_1","conversation_2"]}'), { intent: "summarize-conversations", conversations: ["conversation_1", "conversation_2"] });
+  for (const bad of ["", "create it", '{"intent":"create-project","name":"Billing"}', '{"intent":"drop-database"}', '{"intent":"rename-conversation","conversation":"conversation_1","title":""}', '{"intent":"summarize-conversations","conversations":[]}']) {
     assert.equal(parseOrganizeIntent(bad), null, bad);
   }
 });
@@ -35,6 +36,9 @@ test("a message is about arranging work when the decision model says so, it asks
   assert.equal(mayBeAboutOrganizing("pause the nightly schedule", decision("automation"), 0.9), false);
   assert.equal(mayBeAboutOrganizing("I want you to ask the internal assistant conversation under joint bob how to review", decision("task"), 0.9), true, "asking a conversation something");
   assert.equal(mayBeAboutOrganizing("tell me what is running in the project", null, 0.9), false, "telling the person is not messaging a conversation");
+  assert.equal(mayBeAboutOrganizing("update the summaries of these three cards", decision("question"), 0.9), true, "writing summaries");
+  assert.equal(mayBeAboutOrganizing("summarize the slice 10 conversation", decision("task"), 0.9), true);
+  assert.equal(mayBeAboutOrganizing("summarize this article for me", null, 0.9), false, "a summary of something else");
 });
 
 test("each change is said plainly, carries the exact ids, and a removal is marked as dangerous", () => {

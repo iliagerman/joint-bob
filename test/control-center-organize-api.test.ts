@@ -137,6 +137,14 @@ test("Bob starts a conversation, asks it something and brings back its answer, t
     assert.equal(answered.importance, "report");
     assert.deepEqual(answered.actions.map((action) => action.id), ["open"]);
 
+    // A summary is written at once, without a button, and posted in the chat when it is ready.
+    const summarizing = await say(node, auth, directory, "write the summary of the check the menu conversation", { intent: "summarize-conversations", conversations: ["conversation-titled:check the menu"] });
+    assert.equal(summarizing.text, `Writing the summary of "check the menu". I'll post it here when it is written.`);
+    assert.deepEqual(summarizing.actions, []);
+    const summary = await eventually(async () => (await messages()).find((message) => message.text.startsWith('"check the menu": summary')), "the summary was posted");
+    assert.match(summary.text, /^"check the menu": summary\n\n\*\*Goal\*\* — /);
+    assert.deepEqual([summary.importance, summary.via, summary.actions.map((action) => action.id)], ["report", "Organize · summary written", ["open"]]);
+
     // Deleting it is a warning button, and it is gone from the project afterwards.
     const remove = await say(node, auth, directory, "delete the check the menu conversation", { intent: "delete-conversation", conversation: "conversation-titled:check the menu" });
     assert.match(remove.text, /Delete the conversation "check the menu" in .+\? Its whole history goes/);
