@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Joint Bob · Cost control for coding agents</title>
+  <link rel="icon" href="../promo-video/landing/media/icon.svg">
+  <link rel="stylesheet" href="deck.css">
+</head>
+<body>
+  <canvas id="sky" aria-hidden="true"></canvas>
+
+  <!-- One 1920×1080 stage, scaled to the window, so the projector shows what the laptop shows. -->
+  <div class="viewport">
+    <div class="stage" id="stage">
+
+      <!-- 0 · Title -->
+      <section class="slide title-slide" data-time="10" data-enter="zoom">
+        <img class="logo" src="../promo-video/landing/media/icon.svg" alt="">
+        <p class="eyebrow rise" style="--d:0.2s">Sela Cloud · Joint Bob</p>
+        <h1 class="rise" style="--d:0.35s">Cost control<br><em>for coding agents</em></h1>
+        <p class="lede rise" style="--d:0.6s">Claude Code, Pi and Kiro, on machines you own, with every token accounted for.</p>
+        <svg class="title-art" viewBox="0 0 760 600" aria-hidden="true">
+          <defs>
+            <linearGradient id="curveGrad" x1="0" x2="1"><stop offset="0" stop-color="#e0564e"/><stop offset="0.35" stop-color="#d0a63c"/><stop offset="1" stop-color="#37cfab"/></linearGradient>
+            <linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="rgba(55,207,171,0.18)"/><stop offset="1" stop-color="rgba(55,207,171,0)"/></linearGradient>
+          </defs>
+          <g class="grid"><line x1="0" y1="120" x2="760" y2="120"/><line x1="0" y1="240" x2="760" y2="240"/><line x1="0" y1="360" x2="760" y2="360"/><line x1="0" y1="480" x2="760" y2="480"/></g>
+          <path class="area" d="M10 70 C 120 80, 150 200, 200 210 S 320 300, 380 320 S 500 400, 560 410 S 690 470, 750 475 L750 600 L10 600 Z"/>
+          <path class="curve" d="M10 70 C 120 80, 150 200, 200 210 S 320 300, 380 320 S 500 400, 560 410 S 690 470, 750 475"/>
+          <g class="mark" style="animation-delay:1.5s"><circle cx="200" cy="210" r="22" fill="#37cfab"/><text x="200" y="217" text-anchor="middle">1</text></g>
+          <g class="mark" style="animation-delay:2s"><circle cx="380" cy="320" r="22" fill="#37cfab"/><text x="380" y="327" text-anchor="middle">2</text></g>
+          <g class="mark" style="animation-delay:2.5s"><circle cx="560" cy="410" r="22" fill="#37cfab"/><text x="560" y="417" text-anchor="middle">3</text></g>
+          <g class="mark" style="animation-delay:3s"><circle cx="750" cy="475" r="22" fill="#37cfab"/><text x="750" y="482" text-anchor="middle">4</text></g>
+        </svg>
+        <p class="hint rise" style="--d:1.2s">Click to continue</p>
+      </section>
+
+      <!-- 1 · The film -->
+      <section class="slide film-slide" data-time="101" data-enter="zoom" data-film>
+        <video id="film" src="../promo-video/landing/media/monday-1080.mp4" poster="../promo-video/landing/media/monday-1080.jpg" preload="auto" playsinline></video>
+        <div class="film-bar"><i id="filmProgress"></i></div>
+        <button class="film-play" id="filmPlay" type="button"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg><span>Play the film</span></button>
+      </section>
+
+      <!-- 2 · The problem -->
+      <section class="slide problem-slide" data-time="25" data-enter="right">
+        <p class="eyebrow rise">The problem</p>
+        <h2 class="rise" style="--d:0.1s">Agents work fast.<br><em>The bill grows faster.</em></h2>
+        <div class="pains">
+          <article class="pain" data-step="1"><span class="pain-n">01</span><h3>Every prompt goes to the top model</h3><p>A commit message costs as much as an architecture review.</p><b class="lever">Smart model selection</b></article>
+          <article class="pain" data-step="1"><span class="pain-n">02</span><h3>Seats sit idle while others hit limits</h3><p>One subscription runs out mid-sprint and that developer stops.</p><b class="lever">Subscription pools</b></article>
+          <article class="pain" data-step="1"><span class="pain-n">03</span><h3>Nobody sees spend until the invoice</h3><p>No limit per team, project or task, and no early warning.</p><b class="lever">Budgets and limits</b></article>
+          <article class="pain" data-step="1"><span class="pain-n">04</span><h3>The same mistake is paid for again</h3><p>Each new conversation rediscovers what the last one learned.</p><b class="lever">Self-learning</b></article>
+        </div>
+        <p class="answer" data-step="2">Four levers. All built in. <em>All under your control.</em></p>
+      </section>
+
+      <!-- 3 · Smart model selection -->
+      <section class="slide model-slide" data-time="60" data-enter="up" data-scene="router">
+        <header class="slide-head">
+          <p class="eyebrow"><span class="chip">1</span> Smart model selection</p>
+          <h2>The right model <em>for every message.</em></h2>
+        </header>
+        <div class="router">
+          <div class="prompt-col">
+            <p class="label">Incoming message</p>
+            <div class="prompt-card" id="promptCard"><span class="who">Developer</span><p id="promptText"></p></div>
+            <p class="label">Task type</p>
+            <p class="task" id="taskText"></p>
+          </div>
+          <div class="judge">
+            <svg viewBox="0 0 300 180" class="dial">
+              <defs><linearGradient id="dialGrad" x1="0" x2="1"><stop offset="0" stop-color="#3cb474"/><stop offset="0.55" stop-color="#d0a63c"/><stop offset="1" stop-color="#b39bff"/></linearGradient></defs>
+              <path d="M30 160 A120 120 0 0 1 270 160" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="18" stroke-linecap="round"/>
+              <path id="dialArc" d="M30 160 A120 120 0 0 1 270 160" fill="none" stroke="url(#dialGrad)" stroke-width="18" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/>
+              <g id="needle" style="transform-origin:150px 160px"><line x1="150" y1="160" x2="150" y2="62" stroke="#ebeced" stroke-width="4" stroke-linecap="round"/><circle cx="150" cy="160" r="9" fill="#ebeced"/></g>
+            </svg>
+            <p class="level"><span id="levelNum">–</span><small>/10</small></p>
+            <p class="label">Difficulty · <span id="confText">confidence –</span></p>
+            <p class="judge-note">Scored on every message by a decision model: TypeSafe Jev, or Laya on your own machine.</p>
+          </div>
+          <div class="lanes">
+            <div class="lane" data-lane="light"><span class="model">Light</span><span class="price">$</span><span class="tag">questions · git · small edits</span><span class="count">0</span><span class="prov"><i class="c">Claude Haiku</i><i class="o">OpenAI gpt-6-luna</i><i class="k">Kiro: your pick</i></span></div>
+            <div class="lane" data-lane="standard"><span class="model">Standard</span><span class="price">$$</span><span class="tag">features across files</span><span class="count">0</span><span class="prov"><i class="c">Claude Sonnet</i><i class="o">OpenAI gpt-6.1-sol</i><i class="k">Kiro: your pick</i></span></div>
+            <div class="lane" data-lane="deep"><span class="model">Deep</span><span class="price">$$$</span><span class="tag">debugging · planning</span><span class="count">0</span><span class="prov"><i class="c">Claude Opus</i><i class="o">OpenAI gpt-6-astra</i><i class="k">Kiro: your pick</i></span></div>
+            <p class="label lanes-foot">One mapping per agent: Claude Code, Pi (OpenAI) and Kiro</p>
+          </div>
+        </div>
+        <div class="facts" data-step="1">
+          <p><b>10 levels, your mapping.</b> Each level picks the model and thinking effort for Claude, OpenAI or Kiro.</p>
+          <p><b>Not sure? No switch.</b> Below the confidence threshold the conversation keeps its model.</p>
+          <p><b>One policy for the team.</b> Shared to every machine in the cluster.</p>
+        </div>
+      </section>
+
+      <!-- 4 · Subscription pools -->
+      <section class="slide pools-slide" data-time="55" data-enter="right" data-scene="pools">
+        <header class="slide-head">
+          <p class="eyebrow"><span class="chip">2</span> Connection pools of subscriptions</p>
+          <h2>Use every seat <em>you already pay for.</em></h2>
+        </header>
+        <div class="pool">
+          <div class="turn-token" id="turnToken">turn</div>
+          <div class="accounts">
+            <div class="account" data-acc="0"><span class="acc-name"><i class="dot c"></i>Claude account</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+            <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div class="account" data-acc="1"><span class="acc-name"><i class="dot o"></i>ChatGPT account A</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+            <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div class="account" data-acc="2"><span class="acc-name"><i class="dot o"></i>ChatGPT account B</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+          </div>
+          <p class="pool-log" id="poolLog">&nbsp;</p>
+        </div>
+        <div class="relay" data-step="1">
+          <div class="relay-node"><span class="label">Relay</span><b>Holds the sign-ins</b><small>Passes on model requests only, never account routes</small></div>
+          <div class="beams"><i></i><i></i><i></i></div>
+          <div class="members">
+            <span>Dana's laptop</span><span>Omer's laptop</span><span>Build server</span>
+          </div>
+          <p class="relay-note">Members get a placeholder token that works only on their own machine. <b>No access or refresh token ever reaches them.</b></p>
+        </div>
+        <div class="facts" data-step="2">
+          <p><b>Failover in order.</b> Same provider first, then the next provider, each with its own mapped model.</p>
+          <p><b>Never pays twice.</b> Switches only before any output or tool call. Work is never replayed.</p>
+          <p><b>Any scope.</b> Everywhere, a workspace, a cluster, one project or one conversation.</p>
+        </div>
+        <button class="clip-btn" type="button" data-clip="pools">▶ See it in the app <kbd>V</kbd></button>
+      </section>
+
+      <!-- 5 · Budgets and limits -->
+      <section class="slide budget-slide" data-time="55" data-enter="left" data-scene="budget">
+        <header class="slide-head">
+          <p class="eyebrow"><span class="chip">3</span> Budgets and limits</p>
+          <h2>A limit for every team, <em>project and task.</em></h2>
+        </header>
+        <div class="budget">
+          <div class="scopes">
+            <div class="scope s1"><span>Cluster</span><b>$2,000 / month</b></div>
+            <div class="scope s2"><span>Workspace · Payments team</span><b>$600 / month</b></div>
+            <div class="scope s3"><span>Project · Checkout</span><b>$20 / day</b></div>
+            <div class="scope s4"><span>Conversation</span><b>$5 / total</b></div>
+            <p class="label scopes-foot">A turn starts only when every level still has room. Owners can tighten, never loosen.</p>
+          </div>
+          <div class="meter">
+            <svg viewBox="0 0 260 260" class="ring">
+              <circle cx="130" cy="130" r="108" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="20"/>
+              <circle id="ringArc" cx="130" cy="130" r="108" fill="none" stroke="#37cfab" stroke-width="20" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 130 130)"/>
+            </svg>
+            <div class="meter-copy"><span class="label">Checkout · today</span><b id="spendNum">$0.00</b><small>of $20.00</small></div>
+            <div class="warn" id="warn80">80% · warning</div>
+          </div>
+          <div class="refusal" id="refusal">
+            <span class="label">Turn refused</span>
+            <p>Budget reached: the daily limit of $20.00 for project Checkout is used up…</p>
+            <small>Resets at 00:00 · queued prompts stay queued</small>
+          </div>
+        </div>
+        <div class="periods" data-step="1"><span>hour</span><span>day</span><span>week</span><span>month</span><span>year</span><span>total</span></div>
+        <div class="facts" data-step="1">
+          <p><b>Stops runaway work.</b> A running turn is stopped within about a minute.</p>
+          <p><b>Same rules everywhere.</b> Pushed to every member, reset together on calendar periods.</p>
+          <p><b>See every dollar.</b> Costs by project, model, skill and difficulty.</p>
+        </div>
+        <button class="clip-btn" type="button" data-clip="budgets">▶ See it in the app <kbd>V</kbd></button>
+      </section>
+
+      <!-- 6 · Self-learning -->
+      <section class="slide learn-slide" data-time="55" data-enter="up" data-scene="learn">
+        <header class="slide-head">
+          <p class="eyebrow"><span class="chip">4</span> Self-learning</p>
+          <h2>Every mistake is paid for <em>once.</em></h2>
+        </header>
+        <div class="learn">
+          <div class="loop">
+            <svg viewBox="0 0 520 520" class="loop-ring"><circle cx="260" cy="260" r="200" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="2" stroke-dasharray="4 10"/><circle id="loopDot" r="9" fill="#37cfab"/></svg>
+            <div class="stop" style="--a:-90deg"><b>Conversation</b><small>an agent hits a problem</small></div>
+            <div class="stop" style="--a:-18deg"><b>Summary spots it</b><small>the same problem, twice</small></div>
+            <div class="stop" style="--a:54deg"><b>Rule suggested</b><small>with its evidence</small></div>
+            <div class="stop" style="--a:126deg"><b>You accept</b><small>nothing is installed alone</small></div>
+            <div class="stop" style="--a:198deg"><b>Every agent knows</b><small>.agents/knowledge/, synced</small></div>
+            <div class="loop-core"><span class="label">Retries on known problems</span><b id="waste">12</b><small id="wasteNote">turns this week</small></div>
+          </div>
+          <div class="rule-card" data-step="1">
+            <p class="label">.agents/knowledge/database-access.md</p>
+            <h3>Connect to the dev database through the SSH tunnel on port 5433.</h3>
+            <p>Direct connections time out.</p>
+            <small>Evidence: 3 conversations timed out connecting directly</small>
+          </div>
+        </div>
+        <div class="facts" data-step="2">
+          <p><b>Fewer tokens to start.</b> Agents get the list of subjects and open only the one the task needs.</p>
+          <p><b>Done means feedback.</b> Good or Bad on close becomes lessons for review.</p>
+          <p><b>Stays current.</b> A nightly check removes stale rules when it is over 95% sure, otherwise it asks you.</p>
+          <p><b>Skills that pay off.</b> Suggests a new skill for repeated work and a fix for costly ones.</p>
+        </div>
+      </section>
+
+      <!-- 7 · Close -->
+      <section class="slide close-slide" data-time="20" data-enter="zoom">
+        <div class="levers">
+          <div class="lv rise" style="--d:.1s"><span class="chip">1</span>Smart model selection</div>
+          <div class="lv rise" style="--d:.25s"><span class="chip">2</span>Subscription pools</div>
+          <div class="lv rise" style="--d:.4s"><span class="chip">3</span>Budgets and limits</div>
+          <div class="lv rise" style="--d:.55s"><span class="chip">4</span>Self-learning</div>
+        </div>
+        <h2 class="rise" style="--d:.8s">Every token <em>earns its place.</em></h2>
+        <p class="slogan rise" style="--d:1.2s">Ship faster. Stay in charge.</p>
+        <div class="go-row rise" style="--d:1.5s"><a class="url-big" href="https://joint-bob.bobthebot.io">joint-bob.bobthebot.io</a><div class="qr"><img src="qr.svg" alt="QR code for joint-bob.bobthebot.io"><small>Scan to open</small></div></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- A feature film from the landing page, played large over the slide. -->
+  <div class="clip" id="clip" hidden><video id="clipVideo" playsinline controls></video><button type="button" id="clipClose" aria-label="Close">×</button></div>
+
+  <!-- Presenter aids: N for notes, the clock always runs once the film starts. -->
+  <div class="hud">
+    <button type="button" id="btnBack" title="Previous slide (left arrow)" aria-label="Previous slide"><svg viewBox="0 0 24 24"><path d="M15 5l-8 7 8 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button type="button" id="btnRestart" title="Restart this slide (R)" aria-label="Restart this slide"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2.3-5.2M5 4v4h4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Restart</span></button>
+    <button type="button" id="btnNext" title="Next slide (right arrow)" aria-label="Next slide"><svg viewBox="0 0 24 24"><path d="M9 5l8 7-8 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <div class="dots" id="dots"></div>
+    <span class="clock" id="clock">0:00 / 7:00</span>
+  </div>
+  <aside class="notes" id="notes" hidden></aside>
+  <div class="timeline"><i id="timeline"></i></div>
+
+  <script src="deck.js"></script>
+</body>
+</html>
