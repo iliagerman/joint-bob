@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.231.0 — 2026-11-07
+
+- Bob's chat keeps only what still waits for you. Press a button on an item (Done, Abandon, Push it on…) and it shows a check with what you pressed, then slides out of the chat as the rest closes up. A conversation's card marked done leaves the board the same way, and the other cards glide into place. Done and Abandon no longer add a message of their own.
+- Bob checks his open items again every 2 minutes, and at once when you review or close a conversation, answer a Guardian step, or write to him. An item about a conversation you marked done, looked at or answered, or one a newer item replaced, is cleared. For the rest, the decision model reads what happened since (your later messages, Bob's answers, the items cleared after it) and clears an item only when it is sure; unsure keeps it.
+- The new **Cleared** filter in Bob's chat lists cleared items with when and why, so nothing disappears without a trace.
+
 ## 2.230.0 — 2026-11-07
 
 - Cards on the board show the summary and what the turn is doing now for conversations that run on another of your machines. Before, the board read summaries only from the machine it was opened on, so those cards said "Finished. Open it to review." even though the other machine had a summary. The board now asks that machine, once per machine each time it is drawn.
