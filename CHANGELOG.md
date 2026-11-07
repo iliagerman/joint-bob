@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.226.1 — 2026-11-07
+
+- Bob now acknowledges a message as soon as you send it ("Got it. Working on …", with a running timer) until his answer comes. The waiting sign used to disappear as soon as your message was saved, so nothing showed that Bob was working.
+- Your message no longer shows twice in Bob's chat when his answer arrives.
+
 ## 2.226.0 — 2026-11-07
 
 - In Bob's chat, a message about a conversation is now a card in its project's own color. The project and the conversation's name are on top (click the name to open it), then how much it matters, who raised it in plain words ("Bob checked it when it stopped", "Guardian holds a risky step for your OK") and when, then what it says. The card no longer repeats the conversation's name in its text.
