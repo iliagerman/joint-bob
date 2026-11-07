@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
 
 // The whole path with a real server: a Telegram update is authorized by code, the decision model
 // judges it, an agent answers and the answer returns to the chat. Only the outside world is
@@ -14,6 +15,7 @@ import { openChat, waitFor } from "./queued-prompt-harness.js";
 
 function kiroFixture(promptLog: string, note: string): string {
   return `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const { execFileSync } = require("node:child_process");
 const { appendFileSync, writeFileSync } = require("node:fs");
 const { randomUUID } = require("node:crypto");
@@ -27,8 +29,8 @@ let sessionId = "";
 require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
-  if (request.method === "session/new") { sessionId = randomUUID(); return send({ jsonrpc: "2.0", id: request.id, result: { sessionId } }); }
-  if (request.method === "session/load") { sessionId = request.params.sessionId; return send({ jsonrpc: "2.0", id: request.id, result: null }); }
+  if (request.method === "session/new") { sessionId = randomUUID(); return send({ jsonrpc: "2.0", id: request.id, result: v3Session(request, sessionId) }); }
+  if (request.method === "session/load") { sessionId = request.params.sessionId; return send({ jsonrpc: "2.0", id: request.id, result: v3Session(request, sessionId) }); }
   if (request.method === "session/prompt") {
     const text = request.params.prompt.map(block => block.text ?? "").join("");
     appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify({ sessionId, text, botToken: process.env.TELEGRAM_BOT_TOKEN ?? null }) + "\\n");

@@ -8,6 +8,7 @@ import test from "node:test";
 import type WebSocket from "ws";
 import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
 
 // A real Kiro ACP fixture that lets a test hold `whoami` (which the harness runs
 // during preflight, before the ACP process is spawned and `this.running` is
@@ -16,6 +17,7 @@ import { openChat, waitFor } from "./queued-prompt-harness.js";
 // running". The fix must tolerate that instead of surfacing an error and
 // leaving the forced prompt stuck.
 const fixtureSource = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
@@ -39,8 +41,8 @@ const rl = readline.createInterface({input:process.stdin});
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-fixed"}});
-  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:null});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-fixed")});
+  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-fixed")});
   if (request.method === "session/prompt") {
     const text = request.params.prompt[0].text;
     notify({sessionUpdate:"agent_message_chunk",content:{type:"text",text}});

@@ -24,7 +24,8 @@ import { configuredRuntime } from "../runtime-configuration.js";
 import { expandKiroPrompt, kiroAgentProfile, kiroToolCategories, kiroTrustedTools } from "./resources.js";
 import type { GuardianIdentity } from "../../guardian/check.js";
 import { guardKiroPrompt, kiroChecksTools, kiroPermission } from "../../guardian/kiro.js";
-import { appendKiroRecord, initializeKiroSession, readKiroSession } from "./storage.js";
+import { appendKiroRecord, initializeKiroSession, readKiroSession, type KiroEngine } from "./storage.js";
+import { KiroV3Protocol, kiroV3Configuration, kiroV3ToolAllowed } from "./v3.js";
 import { createKiroConnection } from "./transport.js";
 import { kiroThinkingLevels as levels } from "./models.js";
 import { projectProviderProfile } from "../../provider-profiles/service.js";
@@ -75,6 +76,9 @@ class KiroSession implements HarnessSession {
   private transcript: ChatMessage[] = [];
   private model: HarnessModelSettings;
   private nativeSessionId: string | null = null;
+  private nativeEngine: KiroEngine = "v3";
+  private agentMode = "";
+  private v3: KiroV3Protocol | undefined;
   private nativeProfileId: string | null = null;
   private readonly profileContext = new AsyncLocalStorage<ProviderProfile | undefined>();
   private get profile(): ProviderProfile | undefined { return this.profileContext.getStore(); }
@@ -119,6 +123,7 @@ class KiroSession implements HarnessSession {
     const stored = await readKiroSession(this.aliasFile);
     this.transcript = stored.messages;
     this.nativeSessionId = stored.nativeSessionId;
+    this.nativeEngine = stored.nativeEngine;
     this.nativeProfileId = stored.nativeProfileId;
     this.title = stored.title;
     this.handoffPending = stored.handoffPending;
@@ -266,14 +271,17 @@ class KiroSession implements HarnessSession {
     const env = await this.environment();
     this.throwIfCancelled();
     const credentialContext = agentCredentialContext(this.options.projectId, { engine: "kiro", sessionId: this.id });
-    const profile = await kiroAgentProfile({ ...this.options, accountIds: undefined }, credentialContext, this.trustedTools, env.KIRO_HOME);
+    const profile = await kiroAgentProfile({ ...this.options, accountIds: undefined }, credentialContext, this.trustedTools, env.KIRO_HOME, this.nativeEngine);
+    this.agentMode = profile;
     this.throwIfCancelled();
-    const args = ["acp", "--agent-engine", "v2", "--agent", profile, "--effort", this.model.reasoning];
+    const args = this.nativeEngine === "v3" ? ["acp", "--agent-engine=v3"] : ["acp", "--agent-engine", "v2", "--agent", profile, "--effort", this.model.reasoning];
     // With Guardian on, Kiro trusts no tool and asks before each call; serverRequest answers with
     // Guardian's decision. The profile already leaves out disabled tools.
     this.guarded = await kiroChecksTools();
-    if (!this.guarded) args.push(this.trustedTools === undefined ? "--trust-all-tools" : `--trust-tools=${kiroTrustedTools(profile, this.trustedTools).join(",")}`);
-    if (this.model.modelId !== "default") args.push("--model", this.model.modelId);
+    if (this.nativeEngine === "v2") {
+      if (!this.guarded) args.push(this.trustedTools === undefined ? "--trust-all-tools" : `--trust-tools=${kiroTrustedTools(profile, this.trustedTools).join(",")}`);
+      if (this.model.modelId !== "default") args.push("--model", this.model.modelId);
+    }
     const selectedProfileId = this.profile?.id ?? null;
     if (this.nativeProfileId !== selectedProfileId) {
       this.nativeSessionId = null;
@@ -296,6 +304,7 @@ class KiroSession implements HarnessSession {
       clientInfo: { name: "joint-bob", version: "1" },
     }), "initialize response");
     if (initialized.protocolVersion !== 1) throw new Error(`Unsupported Kiro ACP protocol version: ${String(initialized.protocolVersion)}`);
+    if (this.nativeEngine === "v3") { await this.initializeV3(initialized); return; }
     if (this.nativeSessionId) {
       const capabilities = object(initialized.agentCapabilities, "agent capabilities");
       if (capabilities.loadSession !== true) throw new Error("Kiro ACP does not support session/load");
@@ -317,10 +326,37 @@ class KiroSession implements HarnessSession {
     this.flushPendingNotifications();
     for (const metadata of this.pendingMetadata) this.handleMetadata(metadata);
     this.pendingMetadata = [];
-    if (!this.aliasFile) this.aliasFile = await initializeKiroSession(this.options, this.settings());
+    if (!this.aliasFile) this.aliasFile = await initializeKiroSession(this.options, this.settings(), this.nativeEngine);
     this.nativeProfileId = this.profile?.id ?? null;
     this.queueRecord({ type: "native-session", id: this.nativeSessionId, profileId: this.nativeProfileId, handoffPending: this.handoffPending, timestamp: new Date().toISOString() });
     this.emit({ type: "sessionFile", sessionId: this.id, sessionFile: this.file });
+  }
+
+  private async initializeV3(initialized: JsonObject): Promise<void> {
+    const capabilities = object(initialized.agentCapabilities, "agent capabilities");
+    if (this.nativeSessionId && capabilities.loadSession !== true) throw new Error("Kiro V3 does not support session/load; check sign-in on this node");
+    this.v3 = new KiroV3Protocol(this.connection!, capabilities);
+    const creating = this.nativeSessionId === null;
+    this.replaying = true;
+    try {
+      const result = await this.v3.open(this.options.cwd, this.agentMode, this.model, this.nativeSessionId);
+      this.nativeSessionId = result.sessionId;
+      this.applyV3Configuration(result.config);
+    } finally { this.replaying = false; }
+    this.flushPendingNotifications();
+    if (!creating) return;
+    if (!this.aliasFile) this.aliasFile = await initializeKiroSession(this.options, this.settings(), "v3");
+    this.nativeProfileId = this.profile?.id ?? null;
+    this.queueRecord({ type: "native-session", id: this.nativeSessionId, profileId: this.nativeProfileId, handoffPending: this.handoffPending, timestamp: new Date().toISOString() });
+    this.emit({ type: "sessionFile", sessionId: this.id, sessionFile: this.file });
+  }
+
+  private applyV3Configuration(config: ReturnType<typeof kiroV3Configuration>): void {
+    const model = config.find(option => option.id === "model");
+    if (model) this.captureModels({ currentModelId: model.currentValue, availableModels: model.options.map(choice => ({ modelId: choice.value, name: choice.name })) });
+    const effort = config.find(option => option.id === "effortLevel");
+    if (effort) this.displayedReasoning = effort.currentValue;
+    this.emit({ type: "status", status: this.status() });
   }
 
   private flushPendingNotifications(): void {
@@ -343,13 +379,17 @@ class KiroSession implements HarnessSession {
       else this.handleMetadata(metadata);
       return;
     }
-    if (method.startsWith("_kiro.dev/error/")) {
+    if (method.startsWith("_kiro.dev/error/") || this.nativeEngine === "v3" && method.startsWith("_kiro/error/")) {
       const message = object(params, "error notification").message;
       if (typeof message === "string" && message.trim()) this.turnError = message.trim();
       return;
     }
     if (method === "_kiro.dev/compaction/status") {
       this.handleCompactionStatus(object(params, "compaction status"));
+      return;
+    }
+    if (this.nativeEngine === "v3" && method === "_kiro/mcp/governance_disabled") {
+      this.emit({ type: "progress", text: "Kiro disabled MCP access through its governance check. Check this account's MCP policy and governance-service access." });
       return;
     }
     if (method !== "session/update" && method !== "session/notification") return;
@@ -362,7 +402,7 @@ class KiroSession implements HarnessSession {
     // Each turn owns its kiro-cli process, so another session ID on this pipe is
     // a sub-agent this turn spawned. The parent reports its result as a tool call.
     if (envelope.sessionId !== this.nativeSessionId) return;
-    if (this.replaying) return;
+    if (this.replaying || this.nativeEngine === "v3" && (update._meta as { kiro?: { replay?: boolean } } | undefined)?.kiro?.replay === true) return;
     this.handleUpdate(update);
   }
 
@@ -420,6 +460,15 @@ class KiroSession implements HarnessSession {
 
   private handleUpdate(update: JsonObject): void {
     const kind = requiredString(update.sessionUpdate, "session update type");
+    if (this.nativeEngine === "v3" && kind === "config_option_update") {
+      this.applyV3Configuration(kiroV3Configuration(update.configOptions));
+      return;
+    }
+    if (this.nativeEngine === "v3" && kind === "session_info_update") {
+      const metadata = (update._meta as { kiro?: JsonObject } | undefined)?.kiro;
+      if (metadata?.kind === "context_usage") this.handleMetadata({ contextUsagePercentage: metadata.usagePercentage });
+      return;
+    }
     if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
       const content = object(update.content, "content chunk");
       if (content.type !== "text" || typeof content.text !== "string") return;
@@ -438,7 +487,7 @@ class KiroSession implements HarnessSession {
       const title = requiredString(update.title, "tool title");
       const metadata = update._meta === undefined ? undefined : object(update._meta, "tool metadata");
       const kiro = metadata?.kiro === undefined ? undefined : object(metadata.kiro, "Kiro tool metadata");
-      const toolName = kiro?.toolName === undefined ? title : requiredString(kiro.toolName, "native tool name");
+      const toolName = kiro?.toolName === undefined ? this.nativeEngine === "v3" ? typeof update.kind === "string" ? update.kind : "tool" : title : requiredString(kiro.toolName, "native tool name");
       this.toolCalls.set(id, { title, toolName, rawInput: update.rawInput, startedAt: Date.now() });
       // Kiro speaks again after a tool call. Closing the message here keeps the
       // saved transcript in the same pieces the live stream showed.
@@ -552,12 +601,16 @@ class KiroSession implements HarnessSession {
 
   private async serverRequest(method: string, params: unknown): Promise<unknown> {
     if (method !== "session/request_permission") throw new Error(`Unsupported Kiro ACP request: ${method}`);
+    if (this.nativeEngine === "v3") {
+      const request = object(params, "permission request");
+      if (request.sessionId !== this.nativeSessionId || this.trustedTools !== undefined && !kiroV3ToolAllowed(request, kiroTrustedTools(this.agentMode, this.trustedTools))) return { outcome: { outcome: "cancelled" } };
+    }
     if (this.guarded) {
       const request = object(params, "permission request");
       const toolCall = request.toolCall === undefined ? undefined : object(request.toolCall, "permission tool call");
       return kiroPermission(this.guardianIdentity(), request, typeof toolCall?.toolCallId === "string" ? this.toolCalls.get(toolCall.toolCallId) : undefined);
     }
-    if (this.trustedTools !== undefined) return { outcome: { outcome: "cancelled" } };
+    if (this.nativeEngine === "v2" && this.trustedTools !== undefined) return { outcome: { outcome: "cancelled" } };
     const request = object(params, "permission request");
     if (!Array.isArray(request.options)) return { outcome: { outcome: "cancelled" } };
     for (const value of request.options) {
@@ -637,7 +690,7 @@ class KiroSession implements HarnessSession {
       await beforeStart?.();
       this.throwIfCancelled();
       const terminal = new Promise<CompactionTerminal>((resolve) => { this.compactionTerminal = resolve; });
-      const operation = (async () => {
+      const operation = this.nativeEngine === "v3" ? this.v3!.compact(this.nativeSessionId, instructions) : (async () => {
         const value = instructions?.trim();
         const response = object(await this.connection!.request("_kiro.dev/commands/execute", {
           sessionId: this.nativeSessionId,

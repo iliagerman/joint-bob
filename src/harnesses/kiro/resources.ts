@@ -15,6 +15,7 @@ import { builtinCommands, type CommandDiscoveryOptions, type HarnessCommand } fr
 import { defaultSkillRoots, parseResourceFrontmatter, readConfiguredSkillPath, readSkillDirectory, type SkillRoots, type SkillSummary } from "../../skills.js";
 import type { HarnessResources } from "../resource-contract.js";
 import type { HarnessOpenOptions } from "../runtime.js";
+import type { KiroEngine } from "./storage.js";
 import { managedMcpBridgeConfigs } from "../../mcp/agent.js";
 import { JOINT_BOB_TOOL_SERVER, jointBobTools, withoutReservedMcpServers } from "../../assistant-collaboration/bridge-tools.js";
 import { configuredRuntime } from "../runtime-configuration.js";
@@ -165,7 +166,7 @@ const INHERIT_SETTING = "chat.disableInheritingDefaultResources";
 
 /** Kiro gives every custom agent its default resources too: global and workspace steering, skills,
     and marker files such as the project's AGENTS.md. This setting stops that for custom agents only. */
-export async function disableInheritedKiroResources(configPath: string): Promise<void> {
+export async function disableInheritedKiroResources(configPath: string, nativeEngine: KiroEngine = "v2"): Promise<void> {
   const file = path.join(configPath, "settings", "cli.json");
   let settings: Record<string, unknown> = {};
   try {
@@ -175,14 +176,14 @@ export async function disableInheritedKiroResources(configPath: string): Promise
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  if (settings[INHERIT_SETTING] === true) return;
+  if (settings[INHERIT_SETTING] === true && (nativeEngine === "v2" || settings["chat.enableAutoAgentUpgrade"] === false)) return;
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ ...settings, [INHERIT_SETTING]: true }, null, 2)}\n`, { mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify({ ...settings, [INHERIT_SETTING]: true, ...(nativeEngine === "v3" ? { "chat.enableAutoAgentUpgrade": false } : {}) }, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, file);
 }
 
-export async function kiroAgentProfile(options: HarnessOpenOptions, credentialContext?: string, enabledTools?: string[], selectedConfigPath?: string): Promise<string> {
+export async function kiroAgentProfile(options: HarnessOpenOptions, credentialContext?: string, enabledTools?: string[], selectedConfigPath?: string, nativeEngine: KiroEngine = "v2"): Promise<string> {
   if (!/^[a-zA-Z0-9_-]+$/.test(options.sessionId)) throw new Error("Kiro profile session ID must be safe");
   if (enabledTools !== undefined && (!Array.isArray(enabledTools) || enabledTools.some((name) => typeof name !== "string" || !kiroToolCategories.includes(name)))) {
     throw new Error("Unknown Kiro tool");
@@ -197,7 +198,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   const relativeAgents = path.relative(path.resolve(configPath), path.resolve(agents));
   if (relativeAgents.startsWith("..") || path.isAbsolute(relativeAgents)) throw new Error("Kiro agents path is outside KIRO_HOME");
   const strict = getSettings().strictResourceIsolation;
-  if (strict) await disableInheritedKiroResources(configPath);
+  if (strict) await disableInheritedKiroResources(configPath, nativeEngine);
   const scoped = withProjectFolderResources(getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId, "kiro"), options.cwd);
   const resources = agentResourcePaths();
   const memory = strict ? await prepareProjectMemory(options.projectId, options.sessionId) : undefined;
@@ -237,7 +238,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     prompt,
     resources: skills,
     tools: enabledTools === undefined ? ["*"] : [...enabledTools, ...builtIn],
-    allowedTools: [],
+    ...(nativeEngine === "v3" ? { permissions: { rules: [{ capability: "all", match: ["*"], effect: "ask" }] }, includePowers: false } : { allowedTools: [] }),
     mcpServers,
     includeMcpJson: !strict,
   };

@@ -7,11 +7,14 @@ import { listDiscoveredHarnesses } from "../src/harnesses/registry.js";
 import { getSettings, updateSettings } from "../src/settings.js";
 import { addProject } from "../src/store.js";
 
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
+
 // Kiro reports a quota problem twice: a `_kiro.dev/error/*` notification with the
 // human-readable reason, then a JSON-RPC error whose `message` is only
 // "Internal error" and whose `data` carries the detail. The user must see the
 // reason, never the bare "Internal error".
 const fixtureSource = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const readline = require("node:readline");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
 const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -19,10 +22,10 @@ const rl = readline.createInterface({input:process.stdin});
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-limited"}});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-limited")});
   if (request.method !== "session/prompt") return;
   if (process.env.KIRO_FIXTURE_EMPTY_TURN === "1") return send({jsonrpc:"2.0",id:request.id,result:{stopReason:"end_turn"}});
-  if (process.env.KIRO_FIXTURE_NOTIFY === "1") send({jsonrpc:"2.0",method:"_kiro.dev/error/rate_limit",params:{sessionId:"native-limited",message:"The monthly usage limit has been reached"}});
+  if (process.env.KIRO_FIXTURE_NOTIFY === "1") send({jsonrpc:"2.0",method:"_kiro/error/rate_limit",params:{sessionId:"native-limited",message:"The monthly usage limit has been reached"}});
   send({jsonrpc:"2.0",id:request.id,error:{code:-32603,message:"Internal error",data:"Encountered an error in the response stream: The monthly usage limit has been reached (request_id: abc)"}});
 });
 rl.on("close", () => process.exit(0));

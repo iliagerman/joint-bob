@@ -8,8 +8,10 @@ import test from "node:test";
 import type WebSocket from "ws";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
 
 const fixtureSource = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const fs = require("node:fs");
 const readline = require("node:readline");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
@@ -22,8 +24,8 @@ rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
   const models = {currentModelId:"auto",availableModels:[{modelId:"auto",name:"Auto"}]};
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-fixed",models}});
-  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:{models}});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{...v3Session(request,"native-fixed"),models}});
+  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:{...v3Session(request,request.params.sessionId),models}});
   if (request.method === "session/prompt") {
     notify({sessionUpdate:"agent_message_chunk",content:{type:"text",text:"held"}});
     const deadline = Date.now() + 10000;

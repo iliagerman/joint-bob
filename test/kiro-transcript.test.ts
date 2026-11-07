@@ -8,10 +8,13 @@ import { readKiroSession } from "../src/harnesses/kiro/storage.js";
 import { getSettings, updateSettings } from "../src/settings.js";
 import { addProject } from "../src/store.js";
 
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
+
 // One Kiro turn: talk, read a file, talk again, edit a file. The agent splits
 // its prose into two separate messages around each tool call, so a transcript
 // that merges them loses every sentence boundary.
 const fixtureSource = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const readline = require("node:readline");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
 const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -20,7 +23,7 @@ const rl = readline.createInterface({input:process.stdin});
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-fixed"}});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-fixed")});
   if (request.method !== "session/prompt") return;
   notify({sessionUpdate:"agent_message_chunk",content:{type:"text",text:"Reading the plan."}});
   notify({sessionUpdate:"tool_call",toolCallId:"t1",title:"Read plan.md",rawInput:{path:"plan.md"},_meta:{kiro:{toolName:"fs_read"}}});

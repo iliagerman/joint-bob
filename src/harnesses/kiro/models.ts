@@ -19,13 +19,13 @@ function requiredString(value: unknown, label: string): string {
 
 export async function kiroModels(): Promise<HarnessModel[]> {
   const settings = configuredRuntime("kiro", getSettings().runtimes.kiro);
+  const executable = settings.executable || "kiro-cli";
+  const options = { env: { ...process.env, KIRO_HOME: settings.configPath }, timeout: 5_000, maxBuffer: 1024 * 1024 };
   let stdout: string;
   try {
-    ({ stdout } = await execute(settings.executable || "kiro-cli", ["chat", "--list-models", "--format", "json"], {
-      env: { ...process.env, KIRO_HOME: settings.configPath },
-      timeout: 5_000,
-      maxBuffer: 1024 * 1024,
-    }));
+    // Background discovery must never launch browser sign-in. Authentication is a user action.
+    await execute(executable, ["whoami"], options);
+    ({ stdout } = await execute(executable, ["chat", "--no-interactive", "--list-models", "--format", "json"], options));
   } catch (error) {
     console.warn("Kiro model discovery unavailable", { code: (error as NodeJS.ErrnoException).code });
     return [{ provider: "kiro", id: "default", label: "Kiro default", thinkingLevels: kiroThinkingLevels }];

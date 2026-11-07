@@ -14,8 +14,11 @@ import { configuredSessionPath } from "../runtime-configuration.js";
 const safeId = /^[a-zA-Z0-9_-]+$/;
 type KiroRecord = Record<string, unknown>;
 
+export type KiroEngine = "v2" | "v3";
+
 export interface KiroStoredSession {
   id: string;
+  nativeEngine: KiroEngine;
   cwd: string;
   nativeSessionId: string | null;
   nativeProfileId: string | null;
@@ -88,6 +91,7 @@ async function validateFilePath(sessionPath: string): Promise<string> {
 function validateHeader(value: KiroRecord, file: string): void {
   const valid = value.type === "joint-bob-kiro"
     && value.version === 1
+    && (value.nativeEngine === undefined || value.nativeEngine === "v2" || value.nativeEngine === "v3")
     && typeof value.id === "string"
     && safeId.test(value.id)
     && path.basename(file, ".jsonl") === value.id
@@ -180,6 +184,7 @@ export async function readKiroSession(sessionPath: string): Promise<KiroStoredSe
   const createdAt = timestamp(header.timestamp);
   const session: KiroStoredSession = {
     id: header.id as string,
+    nativeEngine: header.nativeEngine === undefined ? "v2" : header.nativeEngine as KiroEngine,
     cwd: header.cwd as string,
     nativeSessionId: header.nativeSessionId as string | null,
     nativeProfileId: null,
@@ -198,6 +203,7 @@ export async function readKiroSession(sessionPath: string): Promise<KiroStoredSe
 function validateAppendRecord(value: KiroRecord): void {
   const clone: KiroStoredSession = {
     id: "validation",
+    nativeEngine: "v2",
     cwd: "/",
     nativeSessionId: null,
     nativeProfileId: null,
@@ -217,7 +223,7 @@ export async function appendKiroRecord(sessionPath: string, value: KiroRecord): 
   await appendFile(file, `${JSON.stringify(value)}\n`, { encoding: "utf8" });
 }
 
-export async function initializeKiroSession(options: HarnessOpenOptions, settings: HarnessModelSettings): Promise<string> {
+export async function initializeKiroSession(options: HarnessOpenOptions, settings: HarnessModelSettings, nativeEngine: KiroEngine = "v3"): Promise<string> {
   assertId(options.sessionId);
   if (!path.isAbsolute(options.cwd)) throw new Error("Kiro session cwd must be absolute");
   nonempty(settings.modelId, "model ID");
@@ -229,6 +235,7 @@ export async function initializeKiroSession(options: HarnessOpenOptions, setting
   const header = {
     type: "joint-bob-kiro",
     version: 1,
+    nativeEngine,
     id: options.sessionId,
     cwd: options.cwd,
     nativeSessionId: null,

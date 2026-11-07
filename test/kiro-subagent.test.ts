@@ -8,10 +8,13 @@ import { readKiroSession } from "../src/harnesses/kiro/storage.js";
 import { getSettings, updateSettings } from "../src/settings.js";
 import { addProject } from "../src/store.js";
 
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
+
 // One Kiro turn that delegates to a sub-agent. Kiro streams the sub-agent's
 // work on the same connection under the sub-agent's own session ID, so the
 // parent turn must keep going instead of treating those updates as fatal.
 const fixtureSource = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const readline = require("node:readline");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
 const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -20,7 +23,7 @@ const rl = readline.createInterface({input:process.stdin});
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-parent"}});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-parent")});
   if (request.method !== "session/prompt") return;
   notify("native-parent", {sessionUpdate:"agent_message_chunk",content:{type:"text",text:"Delegating."}});
   notify("native-parent", {sessionUpdate:"tool_call",toolCallId:"t1",title:"Run sub-agent",_meta:{kiro:{toolName:"subagent"}}});

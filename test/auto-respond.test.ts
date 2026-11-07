@@ -15,6 +15,7 @@ import { claudeProjectDir } from "../src/session-paths.js";
 import type { ChatMessage } from "../src/types.js";
 import { getHarnessRuntime } from "../src/harnesses.js";
 import type { HarnessSession } from "../src/harnesses/runtime.js";
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
 
 const config: AutoRespondConfig = { harnessId: "kiro", provider: "kiro", modelId: "default", thinkingLevel: "medium", instructions: "Keep going.", stopInstructions: "- Stop when finished.", maxResponses: 2, useTools: true };
 
@@ -95,6 +96,7 @@ test("runtime events reopen an answered decision without treating them as human 
 });
 
 const fixtureSource = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const readline = require("node:readline");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
 const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -102,8 +104,8 @@ const rl = readline.createInterface({input:process.stdin});
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-fixed"}});
-  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:null});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-fixed")});
+  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,request.params.sessionId)});
   if (request.method === "session/prompt") {
     const text = request.params.prompt[0].text;
     send({jsonrpc:"2.0",method:"session/update",params:{sessionId:"native-fixed",update:{sessionUpdate:"agent_message_chunk",content:{type:"text",text:"agent heard: " + text}}}});

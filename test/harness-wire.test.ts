@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { buildHandoffContext } from "../src/handoff-context.js";
 import { kiroAgentProfile } from "../src/harnesses/kiro/resources.js";
-import { readKiroSession } from "../src/harnesses/kiro/storage.js";
+import { initializeKiroSession, readKiroSession } from "../src/harnesses/kiro/storage.js";
+import type { HarnessOpenOptions } from "../src/harnesses/runtime.js";
 import { listDiscoveredHarnesses } from "../src/harnesses/registry.js";
 import { conversationScopeId, getScopeSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "../src/secrets.js";
 import { getSettings, updateSettings } from "../src/settings.js";
@@ -14,7 +15,7 @@ import { addProject } from "../src/store.js";
 const fixtureSource = `#!/usr/bin/env node
 const readline = require("node:readline");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
-if (JSON.stringify(process.argv.slice(2)) === JSON.stringify(["chat", "--list-models", "--format", "json"])) {
+if (JSON.stringify(process.argv.slice(2)) === JSON.stringify(["chat", "--no-interactive", "--list-models", "--format", "json"])) {
   process.stdout.write(JSON.stringify({models:[{model_id:"fixture-model-current",model_name:"Fixture Current"},{model_id:"fixture-model-alternative",model_name:"Fixture Alternative"}],default_model:"fixture-model-current"}));
   process.exit(0);
 }
@@ -76,7 +77,7 @@ rl.on("line", line => {
 rl.on("close", () => process.exit(0));
 `;
 
-test("synthetic Kiro ACP covers new, resume, frontend events, empty turns, and credential refresh", async () => {
+test("synthetic legacy Kiro ACP covers first turn, resume, frontend events, empty turns, and credential refresh", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "harness-wire-"));
   const previousSettings = getSettings();
   let session: Awaited<ReturnType<NonNullable<ReturnType<typeof listDiscoveredHarnesses>[number]["runtime"]>["open"]>> | undefined;
@@ -91,8 +92,13 @@ test("synthetic Kiro ACP covers new, resume, frontend events, empty turns, and c
     const account = await saveSecretAccount({ label: "fixture", provider: "custom", variables: [{ name: "WIRE_SECRET", kind: "value", value: "test-only-value" }] });
     const adapter = listDiscoveredHarnesses().find(({ id }) => id === "kiro")!;
     const runtime = await adapter.runtime!();
+    const openLegacy = async (options: HarnessOpenOptions & { sessionId: string }) => {
+      const file = await initializeKiroSession(options, { provider: "kiro", modelId: "default", reasoning: "medium" }, "v2");
+      if (options.accountIds) await setScopeSecretAccounts("conversation", conversationScopeId("kiro", options.sessionId), options.accountIds);
+      return runtime.open({ ...options, sessionPath: `kiro:${file}` });
+    };
 
-    session = await runtime.open({ projectId: project.id, cwd: root, sessionId: "permission_restricted" });
+    session = await openLegacy({ projectId: project.id, cwd: root, sessionId: "permission_restricted" });
     await session.setTools(["read"]);
     const restrictedEvents: unknown[] = [];
     session.subscribe((event) => { if (event.type === "textDelta") restrictedEvents.push(event); });
@@ -114,14 +120,14 @@ test("synthetic Kiro ACP covers new, resume, frontend events, empty turns, and c
     assert.deepEqual(session.tools().filter(({ active }) => active).map(({ name }) => name), []);
     session.dispose();
 
-    session = await runtime.open({ projectId: project.id, cwd: root, sessionId: "permission_default" });
+    session = await openLegacy({ projectId: project.id, cwd: root, sessionId: "permission_default" });
     const defaultEvents: unknown[] = [];
     session.subscribe((event) => { if (event.type === "textDelta") defaultEvents.push(event); });
     await session.prompt({ text: "permission-probe" });
     assert.deepEqual(defaultEvents, [{ type: "textDelta", text: "selected" }]);
     session.dispose();
 
-    session = await runtime.open({ projectId: project.id, cwd: root, sessionId: "wire_session", accountIds: [account.id] });
+    session = await openLegacy({ projectId: project.id, cwd: root, sessionId: "wire_session", accountIds: [account.id] });
     const events: unknown[] = [];
     session.subscribe((event) => { if (["textDelta", "toolStart", "toolEnd", "sessionFile"].includes(String(event.type))) events.push(event); });
     let fencedStarts = 0;

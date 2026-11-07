@@ -9,11 +9,13 @@ import test, { after, before } from "node:test";
 import type WebSocket from "ws";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
 
 // Drives the full difficulty-routing path against a real server: the Kiro harness
 // runs on a synthetic ACP fixture, the TypeSafe classifier against a local fake
 // endpoint, and the API key comes from a real project-scoped secret account.
 const kiroFixture = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
 if (process.argv.includes("--list-models")) {
   process.stdout.write(JSON.stringify({ models: [{ model_id: "default", model_name: "Fixture default" }, { model_id: "big", model_name: "Fixture big" }] }));
@@ -26,8 +28,8 @@ const rl = readline.createInterface({input:process.stdin});
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-fixed"}});
-  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:null});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-fixed")});
+  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,request.params.sessionId)});
   if (request.method === "session/prompt") {
     notify({sessionUpdate:"agent_message_chunk",content:{type:"text",text:"done"}});
     return send({jsonrpc:"2.0",id:request.id,result:{stopReason:"end_turn"}});

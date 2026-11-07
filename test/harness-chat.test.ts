@@ -9,8 +9,10 @@ import test from "node:test";
 import type WebSocket from "ws";
 import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
 
 const fixtureSource = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
@@ -22,8 +24,8 @@ let blocker = null;
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
-  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:{sessionId:"native-fixed"}});
-  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:null});
+  if (request.method === "session/new") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,"native-fixed")});
+  if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:v3Session(request,request.params.sessionId)});
   if (request.method === "session/prompt") {
     const text = request.params.prompt[0].text;
     if (text === "silent") return send({jsonrpc:"2.0",id:request.id,result:{stopReason:"end_turn"}});

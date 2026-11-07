@@ -13,7 +13,10 @@ import { setResourceOwner } from "../src/ownership.js";
 import { listDiscoveredHarnesses } from "../src/harnesses/registry.js";
 import { readKiroSession } from "../src/harnesses/kiro/storage.js";
 
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
+
 const fixture = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const fs=require('node:fs'),path=require('node:path'),readline=require('node:readline');
 if(process.argv.includes('--version'))process.exit(0);
 if(process.argv.includes('whoami'))process.exit(fs.existsSync(path.join(process.env.HOME,'fixture-login'))?0:1);
@@ -24,8 +27,8 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  const request=JSON.parse(line);fs.appendFileSync(path.join(process.cwd(),'kiro-events.jsonl'),JSON.stringify({method:request.method,home:process.env.HOME,kiroHome:process.env.KIRO_HOME,params:request.params})+'\\n');
  const result=value=>send({jsonrpc:'2.0',id:request.id,result:value});
  if(request.method==='initialize')return result({protocolVersion:1,agentCapabilities:{loadSession:true}});
- if(request.method==='session/new')return result({sessionId:native});
- if(request.method==='session/load')return request.params.sessionId===native?result(null):send({jsonrpc:'2.0',id:request.id,error:{code:-1,message:'Wrong account native session'}});
+ if(request.method==='session/new')return result(v3Session(request,native));
+ if(request.method==='session/load')return request.params.sessionId===native?result(v3Session(request,native)):send({jsonrpc:'2.0',id:request.id,error:{code:-1,message:'Wrong account native session'}});
  if(request.method==='session/prompt'){
   send({jsonrpc:'2.0',method:'session/update',params:{sessionId:native,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Fixture account answer'}}}});
   return result({stopReason:'end_turn'});

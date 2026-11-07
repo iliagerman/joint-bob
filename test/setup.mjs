@@ -40,7 +40,8 @@ if (process.platform === "darwin" || process.platform === "linux") {
   writeFileSync(path.join(testBin, "kiro-cli"), `#!${process.execPath}
 const expected = ["chat", "--list-models", "--format", "json"];
 const args = process.argv.slice(2);
-if (JSON.stringify(args) !== JSON.stringify(expected)) {
+if (args.length === 1 && args[0] === "whoami") process.exit(0);
+if (JSON.stringify(args.filter(arg => arg !== "--no-interactive")) !== JSON.stringify(expected)) {
   process.stderr.write(\`Unsupported kiro-cli fixture invocation: \${args.join(" ")}\\n\`);
   process.exit(2);
 }

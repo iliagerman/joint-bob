@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,8 +11,12 @@ const fallback = [{ provider: "kiro", id: "default", label: "Kiro default", thin
 const fixtureSource = `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
-if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(["chat", "--list-models", "--format", "json"])) process.exit(2);
+const args = process.argv.slice(2);
+fs.appendFileSync(path.join(process.env.KIRO_HOME, "calls.jsonl"), JSON.stringify(args) + "\\n");
 const catalogue = fs.readFileSync(path.join(process.env.KIRO_HOME, "catalogue.json"), "utf8");
+if (args.length === 1 && args[0] === "whoami") process.exit(catalogue === "__SIGNED_OUT__" ? 1 : 0);
+if (catalogue === "__SIGNED_OUT__") { fs.writeFileSync(path.join(process.env.KIRO_HOME, "opened-login"), "1"); process.exit(1); }
+if (JSON.stringify(args.filter(arg => arg !== "--no-interactive")) !== JSON.stringify(["chat", "--list-models", "--format", "json"])) process.exit(2);
 if (catalogue === "__FAIL__") process.exit(2);
 process.stdout.write(catalogue);
 `;
@@ -46,6 +50,9 @@ test("Kiro discovers and refreshes the native model catalogue before a session",
       { provider: "kiro", id: "opus-fixture", label: "Opus Fixture", thinkingLevels: levels },
     ]);
 
+    assert.deepEqual((await readFile(path.join(configPath, "calls.jsonl"), "utf8")).trim().split('\n').map(line => JSON.parse(line)), [
+      ["whoami"], ["chat", "--no-interactive", "--list-models", "--format", "json"],
+    ]);
     await writeFile(cataloguePath, JSON.stringify({
       models: [{ model_id: "third-fixture", model_name: "Third Fixture" }],
       default_model: "third-fixture",
@@ -78,6 +85,12 @@ test("Kiro discovers and refreshes the native model catalogue before a session",
     await writeFile(cataloguePath, "__FAIL__");
     assert.deepEqual(await kiroModels(), fallback);
     assert.equal(warnings.length, 2);
+
+    await writeFile(cataloguePath, "__SIGNED_OUT__");
+    await writeFile(path.join(configPath, "calls.jsonl"), "");
+    assert.deepEqual(await kiroModels(), fallback);
+    assert.deepEqual((await readFile(path.join(configPath, "calls.jsonl"), "utf8")).trim().split('\n').map(line => JSON.parse(line)), [["whoami"]]);
+    await assert.rejects(readFile(path.join(configPath, "opened-login")), { code: "ENOENT" });
   } finally {
     console.warn = originalWarn;
     updateSettings({ runtimes: previousSettings.runtimes, syncthing: { endpoint: previousSettings.syncthing.endpoint } });

@@ -5,8 +5,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { kiroV3SessionFixture } from "./kiro-v3-fixture.js";
 
 const fixture = `#!/usr/bin/env node
+${kiroV3SessionFixture}
 const fs=require("node:fs");
 const path=require("node:path");
 const readline=require("node:readline");
@@ -14,7 +16,7 @@ if(process.argv.includes("whoami")&&fs.existsSync(path.join(path.dirname(process
 if(process.argv.includes("--version")||process.argv.includes("whoami"))process.exit(0);
 const send=v=>process.stdout.write(JSON.stringify(v)+"\\n");
 const rl=readline.createInterface({input:process.stdin});
-rl.on("line",line=>{const r=JSON.parse(line);if(r.method==="initialize")return send({jsonrpc:"2.0",id:r.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});if(r.method==="session/new")return send({jsonrpc:"2.0",id:r.id,result:{sessionId:"native-fixed"}});if(r.method==="session/load")return send({jsonrpc:"2.0",id:r.id,result:null});if(r.method==="session/prompt"){const text=r.params.prompt[0].text;if(text.includes("FAIL TASK"))return send({jsonrpc:"2.0",id:r.id,error:{code:-32000,message:"fixture failure"}});send({jsonrpc:"2.0",method:"session/update",params:{sessionId:"native-fixed",update:{sessionUpdate:"agent_message_chunk",content:{type:"text",text:"completed"}}}});return send({jsonrpc:"2.0",id:r.id,result:{stopReason:"end_turn"}})}});
+rl.on("line",line=>{const r=JSON.parse(line);if(r.method==="initialize")return send({jsonrpc:"2.0",id:r.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});if(r.method==="session/new")return send({jsonrpc:"2.0",id:r.id,result:v3Session(r,"native-fixed")});if(r.method==="session/load")return send({jsonrpc:"2.0",id:r.id,result:v3Session(r,r.params.sessionId)});if(r.method==="session/prompt"){const text=r.params.prompt[0].text;if(text.includes("FAIL TASK"))return send({jsonrpc:"2.0",id:r.id,error:{code:-32000,message:"fixture failure"}});send({jsonrpc:"2.0",method:"session/update",params:{sessionId:"native-fixed",update:{sessionUpdate:"agent_message_chunk",content:{type:"text",text:"completed"}}}});return send({jsonrpc:"2.0",id:r.id,result:{stopReason:"end_turn"}})}});
 `;
 
 function configure(dataDir: string, executable: string, configPath: string, sessionPath: string): void {
