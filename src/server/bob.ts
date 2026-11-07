@@ -27,6 +27,9 @@ import { assertProjectEditable, projectsWithSharedNames } from "./projects.js";
 import { isLeased } from "../control-center/leases.js";
 import { storedDigest } from "../conversation-digest.js";
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { listMoveNodes } from "../control-center/moves-runtime.js";
 import { queueConversationPrompt } from "./conversation-prompt.js";
 import { sharedProjectSessions } from "./sessions-helpers.js";
 
@@ -90,20 +93,36 @@ function viaText(reason: string | null, decision: BobDecision | null, projectNam
  * Bob's own agent answers from what is running and each project's recent work; with a project in view it can also read that
  * project's files. What the person attached is saved in the project and named in the question, with read-only tools to open it.
  */
-export async function answerWithAgent(args: { message: string; attachments: BobAttachments; recentChat: string[]; project: ProjectRecord | undefined; projectChosen: boolean; options: BobProjectOption[]; settings: BobSettings; session: AuthSession; turn: BobTurn }): Promise<{ text: string; via: string[] }> {
+export async function answerWithAgent(args: { message: string; attachments: BobAttachments; recentChat: string[]; project: ProjectRecord | undefined; projectChosen: boolean; projects: ProjectRecord[]; options: BobProjectOption[]; settings: BobSettings; session: AuthSession; turn: BobTurn }): Promise<{ text: string; via: string[] }> {
   const { cards } = await loadBoard(args.session);
   if (!args.project) return { text: "There are no projects yet, so there is nothing for me to look at.", via: [] };
   const contributed = await collectBobContext(args.turn);
   const harnessId = (args.settings.harnessId || iconHarnessId()) as HarnessId;
-  const saved = await saveBobAttachments(args.project, args.attachments);
+  const source = jointBobSource(args.projects);
+  // A question about no project in particular is often about Joint Bob itself: Bob runs in its source then, where its docs are.
+  const project = args.projectChosen || !source ? args.project : source;
+  const saved = await saveBobAttachments(project, args.attachments);
   const message = promptTextWithAttachments(args.message, saved.filter((item) => item.kind === "image"), saved.filter((item) => item.kind === "file"));
+  const [machines, local] = await Promise.all([listMoveNodes(), getClusterNode()]);
+  const facts = { localNodeId: local.id, machineName: (id: string) => machines.find((machine) => machine.id === id)?.name ?? "another machine", jointBobSource: source ? { name: source.name, path: source.path } : null };
   const result = await runGitReview({
-    projectId: args.project.id, cwd: args.project.path, harnessId, provider: args.settings.provider, modelId: args.settings.modelId, thinkingLevel: args.settings.thinkingLevel,
-    selection: { scope: "context", label: "Bob" }, question: args.message, diff: bobMaterial({ message, recentChat: args.recentChat, context: bobContext(cards, args.options), contributed: contributed.text }),
+    projectId: project.id, cwd: project.path, harnessId, provider: args.settings.provider, modelId: args.settings.modelId, thinkingLevel: args.settings.thinkingLevel,
+    selection: { scope: "context", label: "Bob" }, question: args.message, diff: bobMaterial({ message, recentChat: args.recentChat, context: bobContext(cards, args.options, facts), contributed: contributed.text }),
     images: args.attachments.images.map(({ mimeType, data }) => ({ type: "image" as const, mimeType, data })),
-    instructions: BOB_INSTRUCTIONS, readOnlyTools: args.projectChosen || saved.length > 0,
+    // Read-only tools always: Bob looks things up (a transcript, Joint Bob's docs) to explain them, and can change nothing.
+    instructions: BOB_INSTRUCTIONS, readOnlyTools: true,
   });
   return { text: result.answer.trim(), via: contributed.via };
+}
+
+/** The person's project that holds Joint Bob's own source: its package is joint-bob and it has the docs. Bob reads it to explain Joint Bob. */
+export function jointBobSource(projects: ProjectRecord[]): ProjectRecord | undefined {
+  return projects.find((project) => {
+    const manifest = path.join(project.path, "package.json");
+    if (!existsSync(manifest) || !existsSync(path.join(project.path, "docs"))) return false;
+    try { return (JSON.parse(readFileSync(manifest, "utf8")) as { name?: unknown }).name === "joint-bob"; }
+    catch (error) { if (error instanceof SyntaxError) return false; throw error; }
+  });
 }
 
 /** `appearance` is the page's new display settings, when Bob's display agent changed them; the page applies them. */
@@ -196,7 +215,7 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
 
   const reason = !model ? "no-decision-model" : !decision ? "no-answer" : sure ? sure.kind : "low-confidence";
   const answerProject = project ?? projects[0];
-  const answered = await answerWithAgent({ message: input.message, attachments, recentChat: recent, project: answerProject, projectChosen: Boolean(project), options, settings, session, turn });
+  const answered = await answerWithAgent({ message: input.message, attachments, recentChat: recent, project: answerProject, projectChosen: Boolean(project), projects, options, settings, session, turn });
   const via = [viaText(reason, decision, project?.name ?? null), ...answered.via].join(" · ");
   const reply = appendBobMessage(db, session.accountId, { role: "bob", text: answered.text || "I have nothing to add.", via, projectId: project?.id ?? null, projectName: project?.name ?? null });
   notifyBobExchange(turn, reply.text);

@@ -8,22 +8,31 @@ const card = (overrides: Partial<BoardCard>): BoardCard => ({
   agentId: "claude", agentLabel: "Claude", agentModel: null, executionNodeId: null, updatedAt: null, turnRunning: true, backgroundRunning: false,
   summary: "Running the UI tests", autoRespondActive: false, startedBy: "you", ...overrides,
 });
+const facts = { localNodeId: "mac", machineName: (id: string) => ({ server: "Homeserver" })[id] ?? "another machine", jointBobSource: null };
 
 test("Bob's context lists what is running, what waits for review and each project's recent work", () => {
   const text = bobContext(
-    [card({}), card({ title: "Review counter", column: "review", summary: null, startedBy: "bob" })],
+    [card({ path: "/home/me/.pi/sessions/menu.jsonl", activity: "Bash · npm test" }), card({ title: "Review counter", column: "review", summary: null, startedBy: "bob", executionNodeId: "server" })],
     [{ id: "p", name: "Joint Bob", headlines: ["Mobile menu", "Review counter"] }, { id: "q", name: "Empty", headlines: [] }],
+    facts,
   );
-  assert.match(text, /\[Joint Bob\] Mobile menu \(running, Claude\) — Running the UI tests/);
-  assert.match(text, /\[Joint Bob\] Review counter \(finished, waiting for review, Claude, started by Bob\)/);
+  // Where each conversation runs, whether it has a summary, and the transcript of one this machine runs, so Bob can look.
+  assert.match(text, /\[Joint Bob\] Mobile menu \(running, Claude, runs on this machine\) — summary: Running the UI tests; now: Bash · npm test; transcript: \/home\/me\/\.pi\/sessions\/menu\.jsonl/);
+  assert.match(text, /\[Joint Bob\] Review counter \(finished, waiting for review, Claude, runs on Homeserver, started by Bob\) — no summary on the board$/m);
   assert.match(text, /- Joint Bob: Mobile menu; Review counter/);
   assert.match(text, /- Empty: no recent conversations/);
 });
 
 test("with nothing running the context says so, and it is bounded", () => {
-  assert.match(bobContext([], []), /- none/);
+  assert.match(bobContext([], [], facts), /- none/);
   const many = Array.from({ length: 500 }, (_, index) => card({ title: `Conversation ${index} ${"x".repeat(60)}`, summary: "y".repeat(300) }));
-  assert.ok(bobContext(many, []).length <= 12_000);
+  assert.ok(bobContext(many, [], facts).length <= 12_000);
+});
+
+test("when the person has Joint Bob's own source as a project, Bob is told where its docs and code are", () => {
+  const text = bobContext([], [], { ...facts, jointBobSource: { name: "Joint Bob", path: "/home/me/joint_bob" } });
+  assert.match(text, /Joint Bob's own source code and documentation: the project "Joint Bob" at \/home\/me\/joint_bob\. Its docs\/ folder explains each feature/);
+  assert.doesNotMatch(bobContext([], [], facts), /own source code/);
 });
 
 test("what Bob's agent is shown starts with the person's message and the recent chat", async () => {
