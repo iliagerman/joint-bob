@@ -17,7 +17,14 @@ const IMPORTANCE_LABELS = { "needs-ok": "Needs OK", urgent: "Urgent", "needs-you
 
 let settings = null;
 let messages = [];
-const filter = { project: "", importance: "" };
+/**
+ * How much a message must matter to be shown is kept on this device, so a phone can stay on what needs the person. The cleared
+ * view is a look back, not a way of working, so it is not kept.
+ */
+const IMPORTANCE_KEY = "jointBobChatImportance";
+const KEPT_IMPORTANCE = ["", "important", "reports", "fyi"];
+const keptImportance = localStorage.getItem(IMPORTANCE_KEY);
+const filter = { project: "", importance: KEPT_IMPORTANCE.includes(keptImportance) ? keptImportance : "" };
 let settingsLoaded = false;
 let catalog = { harnesses: [], models: [] };
 /** Files and images picked, pasted or dropped for the next message, read as the conversation composer reads them. */
@@ -235,10 +242,18 @@ async function readMessages() {
   renderMessages();
 }
 
-// One reading at a time, so an animation is not cut short by the next drawing.
-let reading = Promise.resolve();
+// One reading at a time, so an animation is not cut short by the next drawing. Asks that come while one runs share one more
+// reading after it, so a busy server cannot pile them up and a change of filter is never stuck behind them.
+let reading = null;
+let readAgain = false;
 function loadMessages() {
-  reading = reading.catch(() => undefined).then(readMessages);
+  if (reading) { readAgain = true; return reading; }
+  reading = (async () => {
+    do {
+      readAgain = false;
+      await readMessages();
+    } while (readAgain);
+  })().finally(() => { reading = null; });
   return reading;
 }
 
@@ -421,8 +436,10 @@ elements.controlChatFilterProject.addEventListener("change", () => {
   void loadMessages().catch((error) => toast(error.message));
 });
 for (const chip of elements.controlChatFilters.querySelectorAll("[data-importance]")) {
+  chip.classList.toggle("active", chip.dataset.importance === filter.importance);
   chip.addEventListener("click", () => {
     filter.importance = chip.dataset.importance;
+    if (KEPT_IMPORTANCE.includes(filter.importance)) localStorage.setItem(IMPORTANCE_KEY, filter.importance);
     for (const other of elements.controlChatFilters.querySelectorAll("[data-importance]")) other.classList.toggle("active", other === chip);
     void loadMessages().catch((error) => toast(error.message));
   });
@@ -475,15 +492,21 @@ elements.controlChatInput.addEventListener("keydown", (event) => {
   }
 });
 
-// The project lists follow the board's, so a person can pick or filter by project.
+// The project lists follow the board's, so a person can pick or filter by project. They are filled again only when the
+// projects changed: the board is drawn every few seconds while agents run, and refilling a list closes it on a phone.
+let listedProjects = "";
 window.addEventListener("control-center-rendered", (event) => {
   const choose = (select, first) => {
     const chosen = select.value;
     select.replaceChildren(...first, ...event.detail.projects.map((project) => new Option(project.name, project.id)));
     select.value = chosen;
   };
-  choose(elements.controlChatProject, [new Option("Auto", "")]);
-  choose(elements.controlChatFilterProject, [new Option("All projects", ""), new Option("General", "general")]);
+  const projects = JSON.stringify(event.detail.projects.map((project) => [project.id, project.name]));
+  if (projects !== listedProjects) {
+    listedProjects = projects;
+    choose(elements.controlChatProject, [new Option("Auto", "")]);
+    choose(elements.controlChatFilterProject, [new Option("All projects", ""), new Option("General", "general")]);
+  }
   applyLayout();
   // The board's own project chips focus the chat too: one project chosen there filters it here.
   const focus = event.detail.focus.length === 1 ? event.detail.focus[0] : "";

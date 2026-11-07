@@ -83,10 +83,19 @@ window.addEventListener("control-bob-settings", (event) => {
   agentChip.textContent = harnessId ? `${harnessId[0].toUpperCase()}${harnessId.slice(1)} · ${modelId || "default model"}` : "Bob's agent";
 });
 
+// The strip and the sheet are drawn again only when what they show changed. The board is drawn every few seconds while agents
+// run, and a chip or button replaced while a finger is on it loses the tap.
+let drawnStrip = "";
+let drawnSheet = "";
+
 function renderStrip() {
   const all = entries();
-  const chips = GROUPS.map((group) => {
-    const count = all.filter((entry) => entry.group === group.id).length;
+  const counts = GROUPS.map((group) => all.filter((entry) => entry.group === group.id).length);
+  const drawing = JSON.stringify([counts, openGroup]);
+  if (drawing === drawnStrip) return;
+  drawnStrip = drawing;
+  const chips = GROUPS.map((group, index) => {
+    const count = counts[index];
     if (!count) return null;
     const chip = button(group.chip(count), `phone-chip ${group.id}`, `control-phone-chip-${group.id}`, () => toggleSheet(group.id));
     chip.dataset.count = String(count);
@@ -120,6 +129,7 @@ elements.controlChat.append(sheet);
 function openSheet(group) {
   openGroup = group;
   jumpTo = group;
+  drawnSheet = "";
   sheet.hidden = false;
   document.body.classList.add("control-phone-sheet");
   renderSheet();
@@ -219,9 +229,15 @@ function paginate(sections, capacity, headingHeight) {
   return pages;
 }
 
+/** What a sheet row shows and can do, to tell whether the sheet must be drawn again. */
+const rowDrawing = (entry) => [entry.group, entry.card.projectId, entry.card.conversationId, entry.card.title, detail(entry), entry.review?.id ?? null, cardActionList(entry.card).map((action) => action.id)];
+
 function renderSheet() {
   if (sheet.hidden) return;
   const all = entries();
+  const drawing = JSON.stringify([all.map(rowDrawing), page, jumpTo, innerHeight]);
+  if (drawing === drawnSheet) return;
+  drawnSheet = drawing;
   sheetTitle.textContent = `Agents · ${all.length}`;
   const capacity = Math.min(440, Math.floor(innerHeight * 0.55));
   list.style.maxHeight = `${capacity}px`;

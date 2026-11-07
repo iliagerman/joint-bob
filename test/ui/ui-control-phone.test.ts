@@ -84,7 +84,7 @@ test("on a phone the control center is Bob's chat, with chips, an agents sheet a
     window.fetch = async (...args) => {
       const path = new URL(String(args[0]), location.href).pathname;
       const reply = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
-      if (path === '/api/control-center/board') return reply(window.__board());
+      if (path === '/api/control-center/board') { window.__boards = (window.__boards || 0) + 1; return reply(window.__board()); }
       if (path === '/api/control-center/summary') return reply({ waiting: 2 });
       if (path === '/api/control-center/guardian/decide') {
         window.__decisions.push(JSON.parse(args[1].body));
@@ -275,6 +275,37 @@ test("on a phone the control center is Bob's chat, with chips, an agents sheet a
   assert.deepEqual(sent.map(({ message, projectId }) => ({ message, projectId })), [{ message: "what is running?", projectId: "p1" }]);
   assert.ok(sent[0].appearance?.settings, "the display settings go along, for Bob's display agent");
 
+  // While agents run the board is drawn again every few seconds, with what each turn does now. What the phone shows stays put
+  // when it did not change, so a tap is not lost and an open list stays open.
+  await page.evaluate(() => {
+    const w = window as unknown as { __board: () => { cards: Array<Record<string, unknown>> }; __boards: number };
+    const base = w.__board;
+    w.__board = () => { const board = base(); board.cards = board.cards.map((card) => card.column === "running" ? { ...card, activity: `step ${Date.now()}` } : card); return board; };
+    w.__boards = 0;
+    (document.querySelector('[data-testid="control-phone-chip-running"]') as unknown as { kept: boolean }).kept = true;
+    (document.querySelector("#controlChatFilterProject option") as unknown as { kept: boolean }).kept = true;
+  });
+  for (let refresh = 0; refresh < 3; refresh += 1) {
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("running-refreshed")));
+    await page.waitForFunction((count) => (window as unknown as { __boards: number }).__boards > count, refresh);
+  }
+  assert.equal(await page.evaluate(() => (document.querySelector('[data-testid="control-phone-chip-running"]') as unknown as { kept?: boolean }).kept), true, "the chip was not drawn again");
+  assert.equal(await page.evaluate(() => (document.querySelector("#controlChatFilterProject option") as unknown as { kept?: boolean }).kept), true, "the project list was not filled again");
+  // A tap held as long as a finger holds it opens the sheet while the board keeps refreshing.
+  const chip = (await page.getByTestId("control-phone-chip-running").boundingBox())!;
+  await page.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2);
+  await page.mouse.down();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("running-refreshed")));
+  await page.waitForTimeout(200);
+  await page.mouse.up();
+  await page.getByTestId("control-phone-sheet").waitFor({ state: "visible" });
+  await page.getByTestId("control-phone-sheet-close").click();
+
+  // Needs me shows only what needs the person, and the phone keeps that view.
+  await page.getByTestId("control-chat-importance-important").click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="control-chat-entry"]')].every((entry) => ["needs-ok", "needs-you", "urgent"].includes(entry.getAttribute("data-importance") ?? "")));
+  assert.equal(await page.evaluate(() => localStorage.getItem("jointBobChatImportance")), "important");
+
   // The back button leaves the control center, and the app icon's shortcut comes straight to it.
   await page.getByTestId("control-phone-back").click();
   assert.equal(await page.locator("body.view-control").count(), 0);
@@ -282,6 +313,7 @@ test("on a phone the control center is Bob's chat, with chips, an agents sheet a
   await page.goto(`${node.url}/?action=control-center`);
   await page.locator("body.view-control").waitFor();
   await page.getByTestId("control-phone-strip").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("control-chat-importance-important").evaluate((chip) => chip.classList.contains("active")), true, "the chat opens on Needs me again");
   assert.deepEqual(errors, []);
 });
 

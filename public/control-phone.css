@@ -31,6 +31,8 @@
 
   /* The strip wraps instead of scrolling sideways. */
   .phone-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px max(12px, env(safe-area-inset-right, 0px)) 8px max(12px, env(safe-area-inset-left, 0px)); border-bottom: 1px solid var(--line); }
+  /* A tap acts at once: no wait to see whether it is a double tap. */
+  .phone-chip, .phone-action, .control-chip, .control-action { touch-action: manipulation; }
   .phone-chip { display: inline-flex; align-items: center; min-height: 32px; max-width: 100%; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; white-space: nowrap; }
   .phone-chip[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
   .phone-chip.ok { border-color: transparent; background: color-mix(in srgb, var(--danger) 82%, #000); color: #fff; font-weight: 600; }
