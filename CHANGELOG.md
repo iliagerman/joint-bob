@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.223.1 — 2026-11-07
 
 - Opening a project you have already used this session shows its conversations at once while the latest list loads. The tasks board loads alongside the list, and the server waits on the disk less often while it is busy.
 
