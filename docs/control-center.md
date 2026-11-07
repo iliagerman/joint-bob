@@ -30,7 +30,7 @@ Colors, the filter, and the chat's side and width are kept with your account. Bo
 
 ## Bob
 
-Bob is the chat beside the board. It acts for you across projects. Drag its edge to make it wider, and use the arrows button to put it on the left or the right.
+Bob is the chat beside the board. It acts for you across projects. Drag its edge to make it wider, and use the arrows button to put it on the left or the right. When you send a message, Bob acknowledges it at once (*Got it. Working on “…”*), with how long he has worked on it so far, until his answer comes.
 
 Each message goes to the decision model first (TypeSafe or Laya, your choice in Bob's settings, with a key from the first project that has one attached). In one request it judges what the message is (a question, a task, an automation, a change to how the app looks or something else), how big the job is, which project it is about, and whether auto respond suits the work; with many projects they are asked in groups at the same time. The line under Bob's replies shows what was decided and how sure the model was.
 

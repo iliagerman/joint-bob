@@ -43,6 +43,14 @@ test("the control center shows the live board, filters by project, colors cards 
         const make = (role, text, extra = {}) => ({ id: 'm' + window.__timeline.length, role, text, via: null, importance: 'fyi', actions: [], createdAt: new Date().toISOString(), ...project, ...extra });
         const user = make('user', body.message);
         window.__timeline.push(user);
+        if (body.message.startsWith('slow')) {
+          // As the server does: the message is saved and the page told at once; the answer comes when the test lets it.
+          window.dispatchEvent(new CustomEvent('control-center-changed'));
+          await new Promise((resolve) => { window.__release = resolve; });
+          const answer = make('bob', 'Here is your report.');
+          window.__timeline.push(answer);
+          return new Response(JSON.stringify({ action: 'answer', user, reply: answer, projectId: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
         const reply = started
           ? make('bob', 'Started in ' + project.projectName + '. It is on the board now.', { via: 'Decision model 93% · task' })
           : make('bob', '**Two conversations are running.**\\n- Mobile menu\\n- Slice 7', { via: "Decision model 60% is under the threshold, so Bob's agent decided" });
@@ -157,12 +165,29 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.deepEqual(attached.files?.map((file) => [file.name, Buffer.from(file.data, "base64").toString()]), [["notes.txt", "the map is wrong"]]);
   assert.equal(await page.locator('[data-testid="control-chat-attachments"] .attachment-chip').count(), 0);
 
+  // Bob acknowledges a message at once and says how long he has worked on it, until his answer comes; reading the timeline
+  // again meanwhile keeps the acknowledgement, and the person's message is shown once.
+  await page.getByTestId("control-chat-input").fill("slow: I need my latest report");
+  await page.getByTestId("control-chat-send").click();
+  const pending = page.getByTestId("control-chat-pending");
+  await pending.waitFor();
+  assert.match(await pending.innerText(), /^Got it\. Working on “slow: I need my latest report”\s+\d+ s$/);
+  await page.getByTestId("control-chat-messages").getByText("slow: I need my latest report", { exact: true }).waitFor();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("control-center-changed")));
+  await page.waitForTimeout(1200);
+  assert.equal(await pending.isVisible(), true, "the acknowledgement stays while the timeline is read again");
+  assert.equal(await page.getByTestId("control-chat-send").isDisabled(), true);
+  await page.evaluate("window.__release()");
+  await page.getByTestId("control-chat-messages").getByText("Here is your report.").waitFor();
+  assert.equal(await pending.count(), 0);
+  assert.equal(await page.getByTestId("control-chat-messages").getByText("slow: I need my latest report", { exact: true }).count(), 1, "the message is not shown twice");
+
   // A display request carries the page's display settings; Bob's display agent's change is applied here, and Undo puts them back.
   const before = await page.evaluate(() => ({ palette: document.documentElement.dataset.palette ?? null, zoom: document.documentElement.style.getPropertyValue("--ui-zoom-chat") }));
   await page.getByTestId("control-chat-input").fill("make it midnight and larger");
   await page.getByTestId("control-chat-send").click();
   await page.waitForFunction(() => document.documentElement.dataset.palette === "midnight");
-  const sentDisplay = (await page.evaluate("window.__bobRequests") as Array<{ appearance?: { themes: Array<{ id: string }>; sections: Array<{ id: string }>; settings: { global: number } } }>)[3].appearance!;
+  const sentDisplay = (await page.evaluate("window.__bobRequests") as Array<{ appearance?: { themes: Array<{ id: string }>; sections: Array<{ id: string }>; settings: { global: number } } }>).at(-1)!.appearance!;
   assert.ok(sentDisplay.themes.some((theme) => theme.id === "midnight") && sentDisplay.sections.some((section) => section.id === "chat"), "the page says what it allows");
   assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue("--ui-zoom-chat")), "1.15");
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("jointBobAppearance")!).theme), "midnight", "kept like a change made in Settings → Appearance");

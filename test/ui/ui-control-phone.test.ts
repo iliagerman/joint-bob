@@ -103,9 +103,11 @@ test("on a phone the control center is Bob's chat, with chips, an agents sheet a
         const body = JSON.parse(args[1].body);
         window.__sent.push(body);
         const make = (role, text) => ({ id: 'm' + window.__timeline.length, role, text, via: null, importance: 'fyi', actions: [], createdAt: new Date().toISOString(), projectId: body.projectId ?? null, projectName: body.projectId ? 'Contigos · Julian' : null });
+        // Each message has its own id, as the server's do.
         const user = make('user', body.message);
+        window.__timeline.push(user);
         const answer = make('bob', 'Two agents are running.');
-        window.__timeline.push(user, answer);
+        window.__timeline.push(answer);
         return reply({ action: 'answer', user, reply: answer, projectId: body.projectId ?? null });
       }
       return originalFetch(...args);

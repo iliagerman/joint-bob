@@ -156,9 +156,42 @@ function renderMessage(message) {
   return about ? renderConversationNotice(message, about) : renderChatMessage(message);
 }
 
+/**
+ * What was sent and not answered yet, and what could not be sent. They are kept here, not in the timeline, so reading the
+ * timeline again (which happens as soon as the server saves the message) does not take them away.
+ */
+const pending = new Map();
+let sendError = null;
+let pendingTicker = null;
+
+const elapsed = (since) => {
+  const seconds = Math.floor((Date.now() - since) / 1000);
+  return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+};
+
+/** Bob's acknowledgement: he has the message and is working on it, for how long so far. */
+function renderPending({ text, startedAt }) {
+  const wrap = element("div", "control-entry bob control-pending");
+  wrap.dataset.testid = "control-chat-pending";
+  const line = element("div", "control-msg bob");
+  line.append(element("span", "control-pulse running"), element("span", "", `Got it. Working on “${text.length > 80 ? `${text.slice(0, 77)}…` : text}”`));
+  const time = element("span", "control-pending-time", elapsed(startedAt));
+  time.dataset.since = String(startedAt);
+  line.append(time);
+  wrap.append(line);
+  return wrap;
+}
+
+function tickPending() {
+  for (const time of elements.controlChatMessages.querySelectorAll(".control-pending-time")) time.textContent = elapsed(Number(time.dataset.since));
+}
+
 function renderMessages() {
-  elements.controlChatMessages.replaceChildren(...messages.map(renderMessage));
+  const extra = [...[...pending.values()].map(renderPending), ...(sendError ? [element("div", "control-msg error", sendError)] : [])];
+  elements.controlChatMessages.replaceChildren(...messages.map(renderMessage), ...extra);
   elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
+  clearInterval(pendingTicker);
+  pendingTicker = pending.size ? setInterval(tickPending, 1000) : null;
 }
 
 function matchesFilter(message) {
@@ -220,25 +253,26 @@ const ofKind = (list, kind) => list.filter((attachment) => attachment.kind === k
 async function send(text, sent, answerOnly) {
   const projectId = elements.controlChatProject.value || undefined;
   elements.controlChatSend.disabled = true;
-  const waiting = element("div", "control-msg bob", "…");
-  elements.controlChatMessages.append(waiting);
-  elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
+  const key = crypto.randomUUID();
+  pending.set(key, { text, startedAt: Date.now() });
+  sendError = null;
+  renderMessages();
   const files = sent.length ? { images: ofKind(sent, "image"), files: ofKind(sent, "file") } : {};
   try {
     // The display settings go along, so Bob's display agent can change them in this page.
     const result = await api("/api/control-center/bob/message", { method: "POST", body: JSON.stringify({ message: text, ...files, appearance: appearanceContext(), ...(projectId ? { projectId } : {}), ...(answerOnly ? { answerOnly: true } : {}) }) });
-    waiting.remove();
     if (result.appearance) applyAppearance(result.appearance);
-    for (const message of [result.user, result.reply]) if (matchesFilter(message)) messages.push(message);
-    renderMessages();
+    // The timeline may already hold the person's message: it was read again while Bob worked.
+    for (const message of [result.user, result.reply]) if (matchesFilter(message) && !messages.some((shown) => shown.id === message.id)) messages.push(message);
     if (result.action === "started") void refreshControlCenter().catch(() => undefined);
   } catch (error) {
-    waiting.remove();
-    elements.controlChatMessages.append(element("div", "control-msg error", error.message));
+    sendError = error.message;
     // Nothing reached Bob, so what was sent comes back to the box unless the person already wrote something new.
     if (!elements.controlChatInput.value) elements.controlChatInput.value = text;
     if (!attachments.length) { attachments = sent; renderChatAttachments(); }
   } finally {
+    pending.delete(key);
+    renderMessages();
     elements.controlChatSend.disabled = false;
   }
 }
