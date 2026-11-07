@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.230.0 — 2026-11-07
+
+- Cards on the board show the summary and what the turn is doing now for conversations that run on another of your machines. Before, the board read summaries only from the machine it was opened on, so those cards said "Finished. Open it to review." even though the other machine had a summary. The board now asks that machine, once per machine each time it is drawn.
+- Bob looks things up before he answers. He knows where each conversation runs, whether its card has a summary, and where the transcript is for one his machine runs. He can read files but change nothing. When one of your projects is Joint Bob's own source, he reads its docs and code to explain why Joint Bob shows or does something, and says what he checked.
+
 ## 2.229.1 — 2026-11-07
 
 - Conversation titles named by the agent read in title case, and abbreviations such as UX and API stay in capitals. Titles you type are kept as you wrote them.
