@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Kiro uses a Joint Bob-managed CLI v3 installation instead of depending on a system executable. Downloads are checksum-verified and checked before replacing the working copy; missing installations are restored by the harness updater.
+- Kiro can be disabled in Settings without unavailable paths blocking saves. Disabling prevents new Kiro runs, background checks and updates while keeping saved conversations readable.
+- Joint Bob installed its own Kiro CLI v3 and restores it automatically when it goes missing, so Kiro no longer depends on a system install and Settings can turn it off without an unavailable path blocking saves.
+
 ## 2.231.0 — 2026-11-07
 
 - Bob's chat keeps only what still waits for you. Press a button on an item (Done, Abandon, Push it on…) and it shows a check with what you pressed, then slides out of the chat as the rest closes up. A conversation's card marked done leaves the board the same way, and the other cards glide into place. Done and Abandon no longer add a message of their own.

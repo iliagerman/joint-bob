@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { enableCompileCache } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -71,6 +71,11 @@ if (process.platform !== "win32") process.env.SHELL = "/bin/sh";
 delete process.env.JOINT_BOB_DATA_DIR;
 process.env.PI_WEB_DATA_DIR = path.join(testHome, "data");
 mkdirSync(process.env.PI_WEB_DATA_DIR, { recursive: true });
+if (process.platform === "darwin" || process.platform === "linux") {
+  const managedBin = path.join(process.env.PI_WEB_DATA_DIR, "harnesses/kiro/bin");
+  mkdirSync(managedBin, { recursive: true });
+  copyFileSync(path.join(testHome, "bin/kiro-cli"), path.join(managedBin, "kiro-cli"));
+}
 
 if (process.env.JOINT_BOB_TEST_STATIC_TRANSPORT === "1") {
   await import("./static-browser-transport.mjs").then((module) => module.installStaticBrowserTransport());

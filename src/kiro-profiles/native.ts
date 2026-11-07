@@ -38,6 +38,7 @@ export function kiroProfileEnvironment(inherited: NodeJS.ProcessEnv, paths: Awai
   return { ...environment, ...paths, BROWSER: "true", KIRO_NO_AUTO_UPDATE: "1" };
 }
 export async function kiroProfileLaunch(profile: ProviderProfile, inherited: NodeJS.ProcessEnv, args: string[]) {
+  if (!getSettings().kiroEnabled) throw new Error("Kiro is disabled on this node");
   const paths = await prepareKiroProfile(profile);
   const executable = configuredRuntime("kiro", getSettings().runtimes.kiro).executable || "kiro-cli";
   // The OS-account helper deliberately sets HOME. Override it inside that account,
@@ -51,6 +52,7 @@ async function run(profile: ProviderProfile, args: string[]): Promise<void> {
   await execute(wrapped.command, wrapped.args, { env: wrapped.env, timeout: 10_000, maxBuffer: 16_384 });
 }
 export async function kiroProfileLoginState(profile: ProviderProfile): Promise<{ signedIn: boolean; message: string }> {
+  if (!getSettings().kiroEnabled) return { signedIn: false, message: "Kiro is disabled on this node" };
   try {
     await run(profile, ["whoami", "--format", "json"]);
     return { signedIn: true, message: "Kiro IAM Identity Center is signed in on this node" };

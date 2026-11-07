@@ -181,6 +181,7 @@ class KiroSession implements HarnessSession {
   }
 
   private async withProfile<T>(work: () => Promise<T>): Promise<T> {
+    if (!getSettings().kiroEnabled) throw new Error("Kiro is disabled on this node");
     const profile = await projectProviderProfile(this.options.projectId, this.options.conversationId ?? this.id, "kiro", "kiro");
     return useProviderProfile(profile, () => this.profileContext.run(profile, async () => {
       if (profile && kiroProfileAuthBusy(profile)) throw new Error(`Finish Kiro sign-in or sign-out before using profile ${profile.label}`);
@@ -210,6 +211,7 @@ class KiroSession implements HarnessSession {
       ...agentEnvironment(this.options.projectId, conversation),
       ...agentCapabilityEnvironment(this.options.projectId, "kiro", logicalConversationId, conversation),
       KIRO_HOME: runtimeSettings().configPath,
+      KIRO_NO_AUTO_UPDATE: "1",
     };
     return this.profile ? kiroProfileEnvironment(environment, await prepareKiroProfile(this.profile)) : environment;
   }
@@ -772,12 +774,13 @@ const runtime: HarnessRuntime = {
   },
 
   async readiness(cwd, env) {
+    if (!getSettings().kiroEnabled) return ["Kiro is disabled on this node"];
     const settings = runtimeSettings();
     const executable = settings.executable || "kiro-cli";
     try {
       if (!ownedKiroProfiles().length) await access(settings.configPath);
       if (executable.includes("/") || executable.includes("\\")) await access(executable);
-      const launch = runtimeExec(executable, ["--version"], { ...process.env, ...env, KIRO_HOME: settings.configPath });
+      const launch = runtimeExec(executable, ["--version"], { ...process.env, ...env, KIRO_HOME: settings.configPath, KIRO_NO_AUTO_UPDATE: "1" });
       await execute(launch.command, launch.args, { cwd: usingServiceRuntime() ? cwd : undefined, env: launch.env, timeout: 5_000 });
       return [];
     } catch (error) {
@@ -786,10 +789,11 @@ const runtime: HarnessRuntime = {
   },
 
   async signInProblems() {
+    if (!getSettings().kiroEnabled) return ["Kiro is disabled on this node"];
     const settings = runtimeSettings();
     // `kiro-cli whoami` exits non-zero with "Not logged in" when no account is signed in.
     try {
-      await execute(settings.executable || "kiro-cli", ["whoami"], { env: { ...process.env, KIRO_HOME: settings.configPath }, timeout: 5_000 });
+      await execute(settings.executable || "kiro-cli", ["whoami"], { env: { ...process.env, KIRO_HOME: settings.configPath, KIRO_NO_AUTO_UPDATE: "1" }, timeout: 5_000 });
       return [];
     } catch {
       const problems = [];

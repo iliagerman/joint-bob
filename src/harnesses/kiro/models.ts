@@ -18,9 +18,10 @@ function requiredString(value: unknown, label: string): string {
 }
 
 export async function kiroModels(): Promise<HarnessModel[]> {
+  if (!getSettings().kiroEnabled) return [];
   const settings = configuredRuntime("kiro", getSettings().runtimes.kiro);
   const executable = settings.executable || "kiro-cli";
-  const options = { env: { ...process.env, KIRO_HOME: settings.configPath }, timeout: 5_000, maxBuffer: 1024 * 1024 };
+  const options = { env: { ...process.env, KIRO_HOME: settings.configPath, KIRO_NO_AUTO_UPDATE: "1" }, timeout: 5_000, maxBuffer: 1024 * 1024 };
   let stdout: string;
   try {
     // Background discovery must never launch browser sign-in. Authentication is a user action.

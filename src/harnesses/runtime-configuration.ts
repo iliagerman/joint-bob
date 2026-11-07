@@ -6,6 +6,7 @@ import { confinedToRuntime, currentRuntime, usingServiceRuntime } from "../accou
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type HarnessUpdateInstructions =
+  | { type: "kiro" }
   | { type: "self"; args: string[] }
   | { type: "npm"; packageName: string; binaryName: string };
 

@@ -94,6 +94,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.match(presetId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, "legacy presets receive a stable ID");
     Object.assign(conversationCommands.presets[0], { id: presetId });
     assert.deepEqual(JSON.parse(savedText), {
+      kiroEnabled: true,
       strictResourceIsolation: true,
       autoActivateSharedSkills: true,
       gitPullFileLimit: 750,
@@ -140,6 +141,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const readText = await read.text();
     assert.doesNotMatch(readText, /secret-api-key/);
     assert.deepEqual(JSON.parse(readText), {
+      kiroEnabled: true,
       strictResourceIsolation: true,
       autoActivateSharedSkills: true,
       gitPullFileLimit: 750,

@@ -152,6 +152,8 @@ export function syncSettingsAccess() {
 let runtimeDefaults;
 let harnessDescriptors = [];
 let selectedHarnessId = null;
+let kiroEnabledInput;
+function kiroEnabledValue() { return !kiroEnabledInput || kiroEnabledInput.checked; }
 const clearedHarnessesOnSave = new Set();
 const globalResourceFields = { skills: elements.settingsResourceSkillsPaths, prompts: elements.settingsResourcePromptsPaths, rules: elements.settingsResourceRulesPaths, plugins: elements.settingsResourcePluginsPaths };
 const runtimeFields = {};
@@ -254,6 +256,22 @@ function createHarnessPanel(descriptor, settings, defaults) {
   const runtime = createRuntimeControls(descriptor, settings, defaults, prefix);
   conversationFields[descriptor.id] = conversation.fields; runtimeFields[descriptor.id] = runtime.fields; defaultsOutputs[descriptor.id] = output;
   runtimeLabels[descriptor.id] = { executable: `${descriptor.label} executable`, configPath: `${descriptor.label} config path`, sessionPath: `${descriptor.label} session path` };
+  if (descriptor.id === "kiro") {
+    kiroEnabledInput = document.createElement("input");
+    kiroEnabledInput.type = "checkbox";
+    kiroEnabledInput.dataset.testid = "settings-kiro-enabled";
+    kiroEnabledInput.checked = settings.kiroEnabled !== false;
+    const label = document.createElement("label");
+    label.className = "checkbox-row";
+    label.append(kiroEnabledInput, "Enable Kiro on this machine");
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Uses Joint Bob's managed Kiro CLI v3. When disabled, no Kiro runs, background checks or updates start. Saved conversations remain readable.";
+    const syncEnabled = () => { runtime.fieldset.disabled = !kiroEnabledInput.checked; };
+    kiroEnabledInput.addEventListener("change", syncEnabled);
+    syncEnabled();
+    panel.append(label, hint);
+  }
   panel.append(output, ...conversation.controls, runtime.fieldset); return panel;
 }
 
@@ -275,6 +293,7 @@ function bindHarnessTab(tab) {
 }
 
 function renderHarnessSettings(descriptors, settings, defaults) {
+  kiroEnabledInput = undefined;
   const previous = selectedHarnessId;
   for (const map of [runtimeFields, runtimeLabels, defaultsOutputs, conversationFields]) for (const key of Object.keys(map)) delete map[key];
   const tabs = document.querySelector("#harnessTabs"); const panels = document.querySelector("#harnessPanels"); tabs.replaceChildren(); panels.replaceChildren();
@@ -368,7 +387,7 @@ function renderRuntimeReadiness(readiness) {
 }
 async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
 function useHarnessDefaults(id) { clearedHarnessesOnSave.add(id); for (const input of Object.values(runtimeFields[id])) input.value = ""; checkRuntimePaths().catch((error) => toast(error.message)); }
-function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[id][field] !== runtimeDefaults[id][field]).map(([field]) => runtimeLabels[id][field])); }
+function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).filter(([id]) => id !== "kiro" || kiroEnabledValue()).flatMap(([id, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[id][field] !== runtimeDefaults[id][field]).map(([field]) => runtimeLabels[id][field])); }
 export const projectResourceFields = { skills: elements.projectResourceSkillsPaths, prompts: elements.projectResourcePromptsPaths, rules: elements.projectResourceRulesPaths, plugins: elements.projectResourcePluginsPaths };
 export function fillResourceFields(fields, resources) { for (const [type, field] of Object.entries(fields)) field.value = (resources[type] || []).join("\n"); }
 export function resourceFieldsValue(fields) { return Object.fromEntries(Object.entries(fields).map(([type, field]) => [type, field.value.split("\n").map((line) => line.trim()).filter(Boolean)])); }
@@ -568,6 +587,7 @@ async function saveSettings(event) {
   event.preventDefault();
   if (!settingsReady || settingsLoading) return;
   for (const descriptor of harnessDescriptors) {
+    if (descriptor.id === "kiro" && !kiroEnabledValue()) continue;
     const { provider, model } = conversationFields[descriptor.id];
     if (provider && !provider.value) throw new Error(`Choose a ${descriptor.label} provider for new conversations`);
     if (!model.value) throw new Error(`Choose a ${descriptor.label} model for new conversations`);
@@ -586,6 +606,7 @@ async function saveSettings(event) {
     method: "PUT",
     body: JSON.stringify({
       runtimes: runtime,
+      kiroEnabled: kiroEnabledValue(),
       conversationDefaults: conversationDefaultsValue(),
       syncthing: { endpoint: state.syncthingEndpoint },
       projects: { homePath: elements.settingsProjectHome.value.trim() },

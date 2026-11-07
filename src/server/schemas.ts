@@ -379,6 +379,7 @@ const conversationCommandSchema = z.object({ enabled: z.boolean(), prompt: z.str
 const conversationCommandsSchema = z.object({ start: conversationCommandSchema, end: conversationCommandSchema, presets: z.array(z.object({ id: z.string().uuid().optional(), name: z.string().trim().min(1).max(80), prompt: z.string().trim().min(1).max(10_000) }).strict()).max(50).refine((items) => new Set(items.flatMap((p) => p.id ? [p.id] : [])).size === items.filter((p) => p.id).length, "Duplicate command IDs").optional() }).strict();
 
 export const settingsSchema = z.object({
+  kiroEnabled: z.boolean().optional(),
   conversationDefaults: conversationDefaultsSchema.optional(),
   runtimes: z.record(z.string(), runtimeSettingsSchema).optional().refine((runtimes) => !runtimes || Object.keys(runtimes).every((id) => configuredRuntimeIds.has(id)), "Runtime is not configured"),
   syncthing: z.object({ endpoint: z.string().max(500), apiKey: z.string().max(500).nullable().optional() }).optional(),

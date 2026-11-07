@@ -75,6 +75,11 @@ for (const name of ["claude", "kiro-cli"]) {
   await writeFile(path.join(standInRoot, name), standInScript);
   await chmod(path.join(standInRoot, name), 0o755);
 }
+for (const node of nodeSpecs) {
+  const managedBin = path.join(node.dataDir, "harnesses/kiro/bin");
+  await mkdir(managedBin, { recursive: true });
+  await writeFile(path.join(managedBin, "kiro-cli"), standInScript, { mode: 0o755 });
+}
 // Pi offers only models whose provider has a key; a dummy key on a loopback address is enough.
 await writeFile(path.join(home, ".pi", "models.json"), `${JSON.stringify({
   providers: { "dev-environment": { baseUrl: "http://127.0.0.1:9/v1", api: "openai-completions", apiKey: "dev-environment", models: [{ id: "dev-model" }] } },

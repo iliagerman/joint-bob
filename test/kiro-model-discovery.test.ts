@@ -12,6 +12,7 @@ const fixtureSource = `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
+if (process.env.KIRO_NO_AUTO_UPDATE !== "1") process.exit(23);
 fs.appendFileSync(path.join(process.env.KIRO_HOME, "calls.jsonl"), JSON.stringify(args) + "\\n");
 const catalogue = fs.readFileSync(path.join(process.env.KIRO_HOME, "catalogue.json"), "utf8");
 if (args.length === 1 && args[0] === "whoami") process.exit(catalogue === "__SIGNED_OUT__" ? 1 : 0);

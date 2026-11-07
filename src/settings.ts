@@ -194,6 +194,7 @@ export function remoteTerminalAllowed(settings: RemoteTerminalSettings, peerIsTw
 }
 
 export interface SettingsInput {
+  kiroEnabled?: boolean;
   pi?: RuntimeSettings;
   claude?: RuntimeSettings;
   runtimes?: Record<string, RuntimeSettings>;
@@ -236,6 +237,7 @@ export interface SettingsInput {
 }
 
 export interface SettingsResponse {
+  kiroEnabled: boolean;
   /** @deprecated Use runtimes.pi. */ pi: RuntimeSettings;
   /** @deprecated Use runtimes.claude. */ claude: RuntimeSettings;
   runtimes: Record<string, RuntimeSettings>;
@@ -509,6 +511,7 @@ export function nodeSettings(): SettingsResponse {
     ...runtimes,
     runtimes,
     runtimeOverrides: runtimeRecord((adapter) => runtimeOverrides(adapter.id)),
+    kiroEnabled: value("kiro.enabled", "true") === "true",
     syncthing: {
       endpoint: value("syncthing.endpoint"),
       apiKeyConfigured: Boolean(setting("syncthing.apiKey")),
@@ -613,6 +616,7 @@ export function checkRuntimeSettings(input: Record<string, RuntimeSettings>): Re
 export function updateSettings(input: SettingsInput, actorId?: string): SettingsResponse {
   if (input.syncthing && !loopbackEndpoint(input.syncthing.endpoint)) throw new Error("Syncthing endpoint must use a loopback host");
   const previous = getSettings();
+  const kiroEnabled = input.kiroEnabled === undefined ? previous.kiroEnabled : z.boolean().parse(input.kiroEnabled);
   const suppliedRuntimes = runtimeRecord((adapter) => resolveRuntimeInput(
     adapter.id,
     input.runtimes?.[adapter.id],
@@ -665,6 +669,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
       save(db, `${id}.configPath`, runtimeSettings.configPath);
       save(db, `${id}.sessionPath`, runtimeSettings.sessionPath);
     }
+    save(db, "kiro.enabled", String(kiroEnabled));
     if (input.syncthing) save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
@@ -704,6 +709,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
       entityType: "settings",
       details: {
         runtimesChanged: JSON.stringify(runtimeAdapters().filter((adapter) => JSON.stringify(previous.runtimes[adapter.id]) !== JSON.stringify(settings.runtimes[adapter.id])).map((adapter) => adapter.id)),
+        kiroEnabledChanged: previous.kiroEnabled !== settings.kiroEnabled,
         syncthingChanged: previous.syncthing.endpoint !== settings.syncthing.endpoint || previous.syncthing.apiKeyConfigured !== settings.syncthing.apiKeyConfigured,
         projectHomeChanged: previous.projects.homePath !== settings.projects.homePath,
         resourcesChanged: JSON.stringify(previous.resources) !== JSON.stringify(settings.resources),

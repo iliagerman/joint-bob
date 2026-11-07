@@ -183,6 +183,30 @@ exit 0
   }
 });
 
+test("managed Kiro activation migrates the standard external launcher but preserves custom paths and disabled state", async () => {
+  const { managedKiroExecutable } = await import("../src/kiro-install.js");
+  const executable = managedKiroExecutable();
+  await mkdir(path.dirname(executable), { recursive: true });
+  await writeFile(executable, "#!/bin/sh\n");
+  await chmod(executable, 0o755);
+  const kiro = adapter("kiro", executable, { type: "kiro" });
+  save(settingsDatabase(), "kiro.executable", path.join(os.homedir(), ".local/bin/kiro-cli"));
+  save(settingsDatabase(), "kiro.enabled", "false");
+  const previousPath = process.env.PATH;
+  try {
+    activateManagedHarnesses([kiro]);
+    assert.equal(value("kiro.executable"), executable);
+    assert.equal(value("kiro.enabled"), "false", "updates never re-enable an explicitly disabled harness");
+    save(settingsDatabase(), "kiro.executable", "/custom/kiro-cli");
+    activateManagedHarnesses([kiro]);
+    assert.equal(value("kiro.executable"), "/custom/kiro-cli");
+  } finally {
+    process.env.PATH = previousPath;
+    save(settingsDatabase(), "kiro.executable", "");
+    save(settingsDatabase(), "kiro.enabled", "true");
+  }
+});
+
 test("each harness shows the version its configured executable reports", async () => {
   const { harnessUpdateStatus, loadHarnessVersions } = await import("../src/harness-updater.js");
   const root = await mkdtemp(path.join(os.tmpdir(), "harness-versions-"));

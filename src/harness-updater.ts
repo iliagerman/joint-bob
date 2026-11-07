@@ -11,6 +11,7 @@ import { resolveDataDirectory } from "./data-directory.js";
 import { save, settingsDatabase, value } from "./settings-store.js";
 import { piSdkStatus, readPiPackage } from "./pi-sdk.js";
 import { pendingPiSdkVersion, piHarnessInstalled } from "./pi-sdk-switch.js";
+import { installManagedKiro, managedKiroExecutable } from "./kiro-install.js";
 
 const execute = promisify(execFile);
 const UPDATE_INTERVAL_MS = 24 * 60 * 60_000;
@@ -25,7 +26,7 @@ async function verifyPiInstall(nodeModules: string): Promise<void> {
   catch (error) { throw new Error(`The new Pi failed Joint Bob's check and was not installed: ${updateError(error)}`); }
 }
 
-export type HarnessUpdateState = "idle" | "running" | "succeeded" | "failed" | "unsupported";
+export type HarnessUpdateState = "idle" | "running" | "succeeded" | "failed" | "unsupported" | "disabled";
 export interface HarnessUpdateStatus {
   id: string;
   label: string;
@@ -43,7 +44,7 @@ interface UpdateCommand {
 }
 
 function status(adapter: HarnessAdapter, state: HarnessUpdateState, error: string | null = null): HarnessUpdateStatus {
-  return { id: adapter.id, label: adapter.label, state, checkedAt: ["idle", "unsupported"].includes(state) ? null : new Date().toISOString(), error, version: null };
+  return { id: adapter.id, label: adapter.label, state, checkedAt: ["idle", "unsupported", "disabled"].includes(state) ? null : new Date().toISOString(), error, version: null };
 }
 
 function updateError(error: unknown): string {
@@ -78,14 +79,29 @@ function activateManagedHarness(id: string, binaryName: string): void {
   }
 }
 
+function activateManagedKiro(): void {
+  const executable = managedKiroExecutable();
+  const configured = value("kiro.executable");
+  const legacyPaths = [path.join(os.homedir(), ".local/bin/kiro-cli"), "/usr/local/bin/kiro-cli", "/opt/homebrew/bin/kiro-cli"];
+  if (usesBundledExecutable(configured, "kiro-cli", executable) || legacyPaths.includes(configured)) {
+    save(settingsDatabase(), "kiro.executable", executable);
+  }
+}
+
+function kiroDisabled(adapter: HarnessAdapter): boolean {
+  return adapter.id === "kiro" && value("kiro.enabled", "true") === "false";
+}
+
 export function activateManagedHarnesses(adapters = listDiscoveredHarnesses()): void {
   for (const adapter of adapters) {
     const update = adapter.configuration?.update;
     if (update?.type === "npm") activateManagedHarness(adapter.id, update.binaryName);
+    if (update?.type === "kiro") activateManagedKiro();
   }
 }
 
 export function harnessUpdateCommand(id: string, executable: string, instructions: HarnessUpdateInstructions): UpdateCommand {
+  if (instructions.type === "kiro") throw new Error("Kiro uses a verified native package, not an update command");
   if (instructions.type === "self") return { executable, args: instructions.args, cwd: os.homedir() };
   const installRoot = managedHarnessRoot(id);
   return {
@@ -98,6 +114,7 @@ export function harnessUpdateCommand(id: string, executable: string, instruction
 export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): Promise<HarnessUpdateStatus[]> {
   const results: HarnessUpdateStatus[] = [];
   for (const adapter of adapters) {
+    if (kiroDisabled(adapter)) { results.push(status(adapter, "disabled")); continue; }
     const configuration = adapter.configuration;
     if (!configuration?.update) {
       results.push(status(adapter, "unsupported"));
@@ -105,6 +122,12 @@ export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): P
     }
     const runtime = configuredRuntime(adapter.id, configuration.defaults(os.homedir()));
     try {
+      if (configuration.update.type === "kiro") {
+        await installManagedKiro();
+        activateManagedKiro();
+        results.push(status(adapter, "succeeded"));
+        continue;
+      }
       const command = harnessUpdateCommand(adapter.id, runtime.executable, configuration.update);
       if (configuration.update.type === "npm") {
         // npm removes the old .bin link before downloading the replacement. Install away
@@ -149,6 +172,7 @@ let active: Promise<void> | null = null;
 /** The version a harness's configured executable reports. A harness that is not installed yet,
     or cannot say, shows none; its update row reports the failure itself. */
 async function installedVersion(adapter: HarnessAdapter): Promise<string | null> {
+  if (kiroDisabled(adapter)) return null;
   const configuration = adapter.configuration;
   if (!configuration) return null;
   const { executable } = configuredRuntime(adapter.id, configuration.defaults(os.homedir()));
@@ -189,6 +213,7 @@ export function startHarnessUpdateScheduler(): void {
   if (!/^[0-9a-f]{40}$/i.test(process.env.JOINT_BOB_RELEASE ?? "") || schedulerStarted) return;
   schedulerStarted = true;
   const run = (): void => { if (!active) startHarnessUpdates(); };
-  setTimeout(run, 5 * 60_000).unref();
+  const kiroNeedsInstall = value("kiro.enabled", "true") !== "false" && !existsSync(managedKiroExecutable());
+  setTimeout(run, kiroNeedsInstall ? 0 : 5 * 60_000).unref();
   setInterval(run, UPDATE_INTERVAL_MS).unref();
 }
