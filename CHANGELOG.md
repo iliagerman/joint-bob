@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.225.0 — 2026-11-07
+
+- The Activity overview's movie is written from the commits a conversation made and pushed, as they were committed. A conversation that pushed with `git commit-tree` and `git push` used to get a movie with no code. The movie uses the files on disk only when the conversation committed nothing, and **Rewrite** reads the conversation again.
+- The movie's hosts stand, with legs, in the street, matrix and rooftop rooms, behind a low curb. Their arms move smoothly between gestures, so an elbow no longer flips while they speak.
+
 ## 2.224.0 — 2026-11-07
 
 - Each message in Bob's chat opens with where it comes from (Review check, Guardian, Auto respond, Bob), the conversation it is about, its project and its time. Click the conversation's name to open it. How it was decided is a small line under the message.
