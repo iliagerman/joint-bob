@@ -53,55 +53,107 @@ function conversationOf(message) {
   return { open, title: open?.title ?? quoted ?? "the conversation" };
 }
 
-/** One line on top of each message: who it is from, which conversation it is about (click to open it), the project, how much it matters and when. */
-function renderHead(message) {
-  const head = element("div", "control-entry-head");
-  const source = sourceOf(message);
-  head.append(element("b", "control-source", source.label));
-  const about = conversationOf(message);
-  if (about) {
-    head.append(element("span", "control-head-muted", "about"));
-    const link = element(about.open ? "button" : "span", "control-about", about.title);
-    link.dataset.testid = "control-chat-about";
-    if (about.open) {
-      link.type = "button";
-      link.title = "Open this conversation";
-      link.addEventListener("click", () => { openConversation(about.open).catch((error) => toast(error.message)); });
-    }
-    head.append(link);
-  }
-  head.append(element("span", "control-label project", message.projectName ?? "General"));
-  head.append(element("span", `control-label importance ${message.importance}`, IMPORTANCE_LABELS[message.importance] ?? message.importance));
-  const time = element("time", "control-time", formatDate(message.createdAt));
-  time.dateTime = message.createdAt;
-  head.append(time);
-  return { head, detail: source.detail };
+/** What a source means, in words, for the line under a conversation's name. */
+const SOURCE_WORDS = {
+  "Review check": "Bob checked it when it stopped",
+  Guardian: "Guardian holds a risky step for your OK",
+  "Auto respond ended": "Auto respond stopped",
+  Organize: "Bob",
+};
+
+/** A steady color for each project, so its messages are told apart at a glance: an FNV-1a hash, so like ids get unlike hues. */
+function projectHue(key) {
+  let hash = 0x811c9dc5;
+  for (const character of key) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
+  return (hash >>> 0) % 360;
 }
 
-function renderMessage(message) {
-  const wrap = element("div", `control-entry ${message.role}`);
+/** The message without the conversation's name it starts with: the card already shows it on top. */
+function withoutTitle(text, title) {
+  const prefix = `"${title}"`;
+  if (!text.startsWith(prefix)) return text;
+  const rest = text.slice(prefix.length).replace(/^:?\s*/, "");
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+function importanceLabel(message) {
+  return element("span", `control-label importance ${message.importance}`, IMPORTANCE_LABELS[message.importance] ?? message.importance);
+}
+
+function timeOf(message) {
+  const time = element("time", "control-time", formatDate(message.createdAt));
+  time.dateTime = message.createdAt;
+  return time;
+}
+
+function renderBody(message, text) {
+  const body = element("div", `control-msg ${message.role === "user" ? "user" : "bob"}`);
+  // Bob's agent answers in Markdown. What the person typed, and system notices that quote commands, stay as written.
+  if (message.role === "bob") { body.classList.add("markdown"); renderMarkdown(body, text); }
+  else body.textContent = text;
+  return body;
+}
+
+function renderActions(message) {
+  const actions = element("div", "control-actions");
+  for (const action of message.actions) {
+    const button = element("button", `control-action ${action.style ?? ""}`, action.label);
+    button.type = "button";
+    button.addEventListener("click", () => runAction(message, action, button));
+    actions.append(button);
+  }
+  return actions;
+}
+
+function entry(message, className) {
+  const wrap = element("div", `control-entry ${message.role}${className ? ` ${className}` : ""}`);
   wrap.dataset.testid = "control-chat-entry";
   wrap.dataset.importance = message.importance;
   wrap.dataset.project = message.projectId ?? "";
-  const { head, detail } = renderHead(message);
-  const body = element("div", `control-msg ${message.role === "user" ? "user" : "bob"}`);
-  // Bob's agent answers in Markdown. What the person typed, and system notices that quote commands, stay as written.
-  if (message.role === "bob") { body.classList.add("markdown"); renderMarkdown(body, message.text); }
-  else body.textContent = message.text;
-  wrap.append(head, body);
+  return wrap;
+}
+
+/**
+ * A message about one conversation is a card in its project's color. On top, the project and the conversation's name (click it
+ * to open the conversation); under them, how much it matters, who raised it and when; then what it says and its buttons.
+ */
+function renderConversationNotice(message, about) {
+  const wrap = entry(message, "about");
+  wrap.style.setProperty("--project-hue", String(projectHue(message.projectId ?? message.projectName ?? "")));
+  const source = element("div", "control-entry-source");
+  const name = element(about.open ? "button" : "span", "control-entry-conversation", about.title);
+  name.dataset.testid = "control-chat-about";
+  if (about.open) {
+    name.type = "button";
+    name.title = "Open this conversation";
+    name.addEventListener("click", () => { openConversation(about.open).catch((error) => toast(error.message)); });
+  }
+  source.append(element("span", "control-entry-project", message.projectName ?? "General"), name);
+  const { label, detail } = sourceOf(message);
+  const raised = element("div", "control-entry-event");
+  raised.append(importanceLabel(message), element("span", "control-entry-raised", SOURCE_WORDS[label] ?? label), timeOf(message));
+  wrap.append(source, raised, renderBody(message, withoutTitle(message.text, about.title)));
+  if (message.actions?.length) wrap.append(renderActions(message));
+  if (detail) wrap.append(element("div", "control-via", detail));
+  return wrap;
+}
+
+/** Any other message reads as chat: who wrote it, its project, how much it matters and when, over what it says. */
+function renderChatMessage(message) {
+  const wrap = entry(message, "");
+  const head = element("div", "control-entry-head");
+  const { label, detail } = sourceOf(message);
+  head.append(element("b", "control-source", label), element("span", "control-label project", message.projectName ?? "General"), importanceLabel(message), timeOf(message));
+  wrap.append(head, renderBody(message, message.text));
   // How it was decided goes under the message, small: the head already says where it came from.
   if (detail) wrap.append(element("div", "control-via", detail));
-  if (message.actions?.length) {
-    const actions = element("div", "control-actions");
-    for (const action of message.actions) {
-      const button = element("button", `control-action ${action.style ?? ""}`, action.label);
-      button.type = "button";
-      button.addEventListener("click", () => runAction(message, action, button));
-      actions.append(button);
-    }
-    wrap.append(actions);
-  }
+  if (message.actions?.length) wrap.append(renderActions(message));
   return wrap;
+}
+
+function renderMessage(message) {
+  const about = message.role === "user" ? null : conversationOf(message);
+  return about ? renderConversationNotice(message, about) : renderChatMessage(message);
 }
 
 function renderMessages() {

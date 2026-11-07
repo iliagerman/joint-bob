@@ -41,12 +41,14 @@ Each message goes to the decision model first (TypeSafe or Laya, your choice in 
 - **Project.** Choose a project in the chat to skip the guess.
 - **Files and images.** Attach files with **+**, paste a screenshot into the message box, or drop files on it. The message box's limits apply: 4 images and 6 files, each under 4 MB. Write what Bob should do with them too. They go where the message goes: they are saved in the project, and Bob's agent is told where they are, with read-only access to open them and the images themselves. They also go to the conversation Bob starts or continues, as if you had attached them there. Your message in Bob's chat lists them (*Attached: screen.png*). Requests that do not reach an agent leave them out: creating or moving a project, scheduling, moving jobs and making dashboards.
 
-Bob keeps its conversation: every message and reply is saved with the project it concerns and how much it matters (**Needs OK**, **Urgent**, **Needs you**, **Report**, **Done**, **FYI**). Each message opens with one line that says where it comes from and what it is about:
-- **Who wrote it:** you, Bob answering you, or the part of Joint Bob that wrote it: **Review check**, **Guardian**, **Auto respond ended**, a report, and so on.
-- **Which conversation it is about:** click the name to open that conversation.
-- **The rest:** the project, how much it matters, and when.
+Bob keeps its conversation: every message and reply is saved with the project it concerns and how much it matters (**Needs OK**, **Urgent**, **Needs you**, **Report**, **Done**, **FYI**).
 
-How it was decided (*Decision model 96%*) is the small line under the message. Messages that need you carry buttons; a button runs once.
+A message about one conversation is a card in its project's color, so you can tell projects apart at a glance:
+- **On top:** the project, and under it the conversation's name. Click the name to open that conversation; the card does not repeat it.
+- **Under that:** how much it matters, who raised it in plain words (*Bob checked it when it stopped*, *Guardian holds a risky step for your OK*, *Auto respond stopped*, a webhook…), and when.
+- **Then** what it says and its buttons.
+
+Bob's answers to you, reports and your own messages read as chat, with who wrote them, the project, how much they matter and when on top. How it was decided (*Decision model 96%*) is the small line under the message. Messages that need you carry buttons; a button runs once.
 
 **Focus on one project.** Choosing a project in the chat's filter focuses the whole control center on it: the chat shows that project's messages, the board shows only its cards, and a new message goes to it. Choosing one project in the board's chips does the same, and **All projects** or **All** shows everything again. Filter by importance with **Needs me**, **Reports** and **FYI**.
 

@@ -200,7 +200,12 @@ test("the control center shows the live board, filters by project, colors cards 
   });
   const check = page.getByTestId("control-chat-entry").filter({ hasText: "It asks which plan to use" });
   await check.waitFor();
-  assert.match(await check.locator(".control-entry-head").innerText(), /^Review check\s+about\s+Review counter\s+Joint Bob\s+Needs you\s+\S/);
+  // A message about a conversation is a card: its project and the conversation's name on top, then who raised it, then what it says.
+  assert.equal(await check.locator(".control-entry-project").textContent(), "Joint Bob");
+  assert.equal(await check.getByTestId("control-chat-about").textContent(), "Review counter");
+  assert.match(await check.locator(".control-entry-event").innerText(), /^Needs you\s+Bob checked it when it stopped\s+\S/);
+  assert.equal(await check.locator(".control-msg").innerText(), "Waits for you.\nIt asks which plan to use.", "the name is not repeated");
+  assert.notEqual(await check.evaluate((card) => getComputedStyle(card).borderLeftColor), await page.getByTestId("control-chat-entry").filter({ hasText: "Morning report" }).evaluate((entry) => getComputedStyle(entry).borderLeftColor), "drawn in its project's color");
   assert.equal(await check.getByTestId("control-chat-about").evaluate((link) => link.tagName), "BUTTON", "the conversation opens from its name");
   assert.equal(await check.locator(".control-via").textContent(), "Decision model 96%");
   assert.deepEqual(await check.locator(".control-action").allTextContents(), ["Push it on", "Done", "Abandon", "Open"]);
