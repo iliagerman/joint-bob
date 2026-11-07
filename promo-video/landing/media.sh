@@ -12,7 +12,7 @@ mkdir -p "$MEDIA"
 cp "$HERE/../public/icon.svg" "$MEDIA/icon.svg"
 
 # Each film, and the second its still is taken from.
-FILMS="monday:55.0 lid:30.2 team:32.0 pools:44.1 budgets:29.5 guardian:28.7 story:34.6 dashboards:23.7 assistant:24.3 schedule:36.4 alerts:26.7 phone:31.1 browser:17.5 secrets:13.3 analytics:14.7"
+FILMS="monday:55.0 control:26.0 lid:30.2 team:32.0 pools:44.1 budgets:29.5 guardian:28.7 story:34.6 dashboards:23.7 assistant:24.3 schedule:36.4 alerts:26.7 phone:31.1 browser:17.5 secrets:13.3 analytics:14.7"
 # The drawn films: flat colour on paper grain. Tuned for animation, they keep their look at less
 # than half the size the default settings give them.
 DRAWN="monday"

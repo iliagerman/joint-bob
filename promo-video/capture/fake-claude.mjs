@@ -6,7 +6,7 @@
 import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { scenarios, fallbackScenario } from "./scenarios.mjs";
+import { scenarios, fallbackScenario, summaries } from "./scenarios.mjs";
 
 const args = process.argv.slice(2);
 if (args[0] === "--version") { console.log("2.1.0 (Claude Code)"); process.exit(0); }
@@ -28,8 +28,21 @@ const prompt = await new Promise((resolve) => {
 
 // An assistant's prompt carries its instructions and earlier exchanges before the newest message,
 // so a scenario is matched against that message first.
-const latest = prompt.includes("User question:") ? prompt.slice(prompt.lastIndexOf("User question:")) : prompt.slice(-500);
-const scenario = scenarios.find((candidate) => candidate.match.test(latest)) ?? scenarios.find((candidate) => candidate.match.test(prompt)) ?? fallbackScenario;
+// Bob (the control center) marks the message the same way in each of its prompts: after "The user's
+// message" when it answers, inside <message> tags when it reads an automation, and before the notes it
+// adds to a task it starts.
+// The automation instructions mention the tags themselves, so the message is the last pair.
+const tagged = prompt.lastIndexOf("<message>") >= 0 && prompt.lastIndexOf("</message>") > prompt.lastIndexOf("<message>") ? prompt.slice(prompt.lastIndexOf("<message>") + 9, prompt.lastIndexOf("</message>")) : undefined;
+const bobAsked = /The user's message \(answer this\):\n([^\n]+)/.exec(prompt)?.[1] ?? tagged;
+const bobTask = prompt.includes("\n---\nNotes about how I work") ? prompt.slice(0, prompt.indexOf("\n---\nNotes about how I work")) : undefined;
+const latest = bobAsked ?? bobTask ?? (prompt.includes("User question:") ? prompt.slice(prompt.lastIndexOf("User question:")) : prompt.slice(-500));
+// A running summary is asked for with the conversation's messages in the prompt, so it would match
+// the conversation's own scenario; it gets a short summary of that work instead.
+const summaryRun = /You keep a running summary of a conversation/.test(prompt);
+const summary = summaryRun ? (summaries.find((candidate) => candidate.match.test(prompt)) ?? summaries.at(-1)) : undefined;
+const scenario = summary
+  ? { steps: [{ say: summary.text, wordMs: 4 }], thinkMs: 300 }
+  : scenarios.find((candidate) => candidate.match.test(latest)) ?? scenarios.find((candidate) => candidate.match.test(prompt)) ?? fallbackScenario;
 // A line per run in the scratch home, for working out why a take went wrong.
 appendFileSync(path.join(process.env.HOME, "promo-agent.log"), `${JSON.stringify({ at: new Date().toISOString(), sessionId, resumed: args.includes("--resume"), scenario: String(scenario.match), prompt: prompt.slice(0, 400) })}\n`);
 
@@ -69,7 +82,8 @@ async function guardian(tool) {
 }
 
 let lastText = "";
-let steps = scenario.steps;
+// A scenario may work out its steps from the prompt, such as a project id it was given.
+let steps = typeof scenario.steps === "function" ? scenario.steps(prompt) : scenario.steps;
 for (let index = 0; index < steps.length; index++) {
   const step = steps[index];
   const content = [];

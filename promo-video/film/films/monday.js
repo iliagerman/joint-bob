@@ -1,7 +1,7 @@
 // The main film: one developer's Monday, drawn on paper. Alex starts a long test migration at his
 // desk, one of his Claude accounts runs out and the next in his pool takes over, he is asked before
-// an agent deletes files, gets a dashboard, asks his assistant how the fix is going and schedules
-// the launch from his phone at the café, sees Maya join and fork his work from her desk, hears the
+// an agent deletes files, gets a dashboard, asks Bob in the control center how the fix is going and
+// has it schedule the launch from his phone at the café, sees Maya join and fork his work from her desk, hears the
 // change explained, moves the work to his home server at 5:40, closes the laptop, merges from the
 // train, and at six the launch he scheduled goes out. The real recordings play inside the screens drawn on the sheet.
 import { beats, events, fit, frameOf, say, score, sfx, spoken } from "../feature.js";
@@ -24,7 +24,7 @@ const lines = [
   say(limit, "Halfway through, one of his Claude accounts hits its limit. Joint Bob *moves the task to the next account in his pool,* and the agent doesn't miss a step."),
   say(guard, "Then an agent cleaning up old exports tries to delete customer files. *Guardian stops it and asks him first,* so he blocks it, and the agent archives them instead.", { tone: "sun" }),
   say(dash, "Something looks off at checkout, so *he asks for a dashboard,* and a minute later he's looking at the errors, hour by hour."),
-  say(lunch, "At lunch, his assistant tells him how the fix is going, and from his phone, *he schedules the launch for six.*"),
+  say(lunch, "At lunch, he asks Bob how the fix is going, and from his phone, *he has Bob schedule the launch for six.*"),
   say(maya, "Meanwhile his teammate Maya *opens his conversation from her own machine,* adds a request, and forks it to try a fix of her own."),
   say(story, "Before the review, *two hosts walk him through the whole change,* so he knows exactly what he's approving."),
   say(handoff, "At five forty, *he moves the work to his home server,* and closes the laptop. The agent keeps going."),
@@ -39,9 +39,10 @@ const hand = events("movePhone");
 const pools = events("pools");
 const guardian = events("guardian");
 const dashboard = events("dashboards");
-const lunchPhone = events("assistantPhone");
-const launchPhone = events("launchPhone");
-const assistant = events("assistant");
+// The control center: Bob on his phone at lunch, the board on the laptop he left, and the launch at six.
+const bobPhone = events("controlPhone");
+const launchBob = events("launchBob");
+const board = events("control");
 const mate = events("teammate");
 const podcast = events("story");
 const sameMoment = events("server").teammateSend - mate.teammateSend;
@@ -54,11 +55,11 @@ const card = fit("guardian", guard.from, halfGuard, guardian.review - 2.4, guard
 const archive = fit("guardian", halfGuard, guard.to, guardian.blocked - 0.4, guardian.archived + 1.6);
 const ask = fit("dashboards", dash.from, dash.at + 70, dashboard.typed - 1.2, dashboard.typed + 0.4);
 const built = fit("dashboards", dash.at + 70, dash.to, dashboard.tested - 3.2, dashboard.tested - 0.4);
-const saved = { clip: "assistant", from: lunch.from, to: maya.from, start: assistant.synced + 0.5, rate: 0.3 };
-// At lunch, on his phone: the assistant's answer, then (past the form loading) the launch for six, saved.
-const lunchAnswer = fit("assistantPhone", lunch.from - 4, lunch.from + 130, lunchPhone.opened + 3.0, lunchPhone.answered + 2.6);
-const lunchForm = fit("assistantPhone", lunch.from + 130, lunch.from + 200, lunchPhone.scheduled - 6.6, lunchPhone.scheduled + 0.2);
-const lunchSaved = fit("assistantPhone", lunch.from + 200, maya.from, lunchPhone.scheduled + 1.2, lunchPhone.scheduled + 4.4);
+const saved = { clip: "control", from: lunch.from, to: maya.from, start: board.answered + 1.0, rate: 0.3 };
+// At lunch, on his phone: Bob's answer, then the launch for six, proposed and created with Create it.
+const lunchAnswer = fit("controlPhone", lunch.from - 4, lunch.from + 130, bobPhone.ask - 0.4, bobPhone.answered + 2.0);
+const lunchForm = fit("controlPhone", lunch.from + 130, lunch.from + 200, bobPhone.schedule - 0.4, bobPhone.scheduled + 0.2);
+const lunchSaved = fit("controlPhone", lunch.from + 200, maya.from, bobPhone.scheduled + 0.2, bobPhone.scheduled + 3.4);
 const herMessage = fit("teammate", maya.from - 4, maya.at + 140, mate.teammateRead + 2.0, mate.teammateAnswered + 1.4);
 const herFork = fit("teammate", maya.at + 140, story.from, mate.forkClick - 0.8, mate.forkAnswered + 1.0);
 const hisSide = fit("server", maya.from, story.from, mate.teammateRead + 2.0 + sameMoment, mate.forkAnswered + 1.0 + sameMoment);
@@ -158,8 +159,8 @@ export default defineSketch({
     trainPhone: [
       fit("movePhone", train.from - 6, train.at + 70, hand.done - 1.2, hand.done + 1.0),
       fit("movePhone", train.at + 70, shipped.from, hand.phoneSend - 1.4, hand.merged + 0.4),
-      fit("launchPhone", shipped.from, launched + 60, launchPhone.report - 0.4, launchPhone.report + 2.6),
-      { clip: "launchPhone", from: launched + 60, to: duration, start: launchPhone.report + 2.6, rate: 0.4 },
+      fit("launchBob", shipped.from, launched + 60, launchBob.report - 1.0, launchBob.report + 2.0),
+      { clip: "launchBob", from: launched + 60, to: duration, start: launchBob.report + 2.0, rate: 0.4 },
     ],
   }),
   shots: [

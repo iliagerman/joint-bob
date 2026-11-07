@@ -11,6 +11,7 @@ import agentBrowser from "./films/browser.js";
 import alerts from "./films/alerts.js";
 import assistant from "./films/assistant.js";
 import budgets from "./films/budgets.js";
+import control from "./films/control.js";
 import dashboards from "./films/dashboards.js";
 import guardian from "./films/guardian.js";
 import lid from "./films/lid.js";
@@ -23,4 +24,4 @@ import short from "./films/short.js";
 import story from "./films/story.js";
 import team from "./films/team.js";
 
-export const films = Object.fromEntries([monday, short, lid, team, pools, budgets, guardian, dashboards, assistant, pocket, story, schedule, alerts, agentBrowser, secrets, analytics].map((film) => [film.id, film]));
+export const films = Object.fromEntries([monday, short, lid, team, pools, budgets, guardian, control, dashboards, assistant, pocket, story, schedule, alerts, agentBrowser, secrets, analytics].map((film) => [film.id, film]));

@@ -17,9 +17,10 @@ import { api, pairTwins, seed, signIn, startNode, stopNode } from "./env.js";
 import { glideClick, openBrowser, openConversation, openStage, record, tap, type Recording } from "./browser.js";
 import { takes as useCaseTakes } from "./takes.js";
 import { featureTakes } from "./feature-takes.js";
+import { controlTakes } from "./control-take.js";
 import { decisionsPort, startDecisions } from "./decisions.js";
 
-const takes = { ...useCaseTakes, ...featureTakes };
+const takes = { ...useCaseTakes, ...featureTakes, ...controlTakes };
 import { chromeExecutable } from "../../test/ui/launch-chrome.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -103,9 +104,11 @@ const [laptopNode, serverNode, teammateNode] = environment.nodes;
 // The app's own browser, which one film shows, runs the same Chrome the capture does.
 const browserExecutable = await chromeExecutable();
 const nodeLog: string[] = [];
-// The assistant routes each message with a decision model; its take answers those questions locally.
-const decisions = only === "assistant" ? await startDecisions() : undefined;
+// The assistant and Bob route each message with a decision model; their takes answer those questions locally.
+const decisions = only === "assistant" || only === "control" ? await startDecisions(only) : undefined;
 const routing: Record<string, string> = decisions ? { JOINT_BOB_TYPESAFE_ENDPOINT: `http://127.0.0.1:${decisionsPort}/v1/systemone` } : {};
+// Bob says when a task it schedules will run in the machine's own time; the take's browser is in New York.
+if (only === "control") routing.TZ = "America/New_York";
 const nodes = await Promise.all(environment.nodes.map((node) => startNode(node, (line) => { nodeLog.push(line); if (nodeLog.length > 400) nodeLog.shift(); }, { JOINT_BOB_BROWSER_EXECUTABLE: browserExecutable, JOINT_BOB_DASHBOARD_AGENT: path.join(here, "dashboard-agent.mjs"), ...routing })));
 let browser: Awaited<ReturnType<typeof openBrowser>> | undefined;
 try {

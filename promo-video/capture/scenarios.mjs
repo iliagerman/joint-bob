@@ -17,7 +17,101 @@ const tool = (variable, ...args) => new Promise((resolve) => {
 });
 const browser = (...args) => tool("JOINT_BOB_BROWSER_CLI", ...args);
 
+
+// ---------- Control center (the `control` take) ----------
+// Long jobs keep their conversation running while the board is filmed: a step, a tool, a pause.
+const longRun = (steps) => steps.map(([say, command, result]) => ({ say, tool: { name: "Bash", input: { command, description: say.replace(/[.`*]/g, "").slice(0, 60) }, ms: 2_600, result }, pauseMs: 24_000 }));
+// The board's running jobs: a short plan first (so the summary has something to say), then the long run.
+const controlScenarios = [
+  { match: /Plan moving the product grid/i, title: "Product grid on the design system", steps: [{ say: "The grid has **22 components**. I'll move them one per commit, behind the `newGrid` flag, with a visual test for each." }] },
+  { match: /Go ahead and move the product grid/i, steps: longRun([
+    ["Moving `ProductCard` first.", "npx codemod design-system ProductCard", "1 file changed"],
+    ["Visual tests for the card.", "npm run test:visual -- ProductCard", "4 of 4 pass"],
+    ["Next: `PriceTag` and `RatingStars`.", "npx codemod design-system PriceTag RatingStars", "2 files changed"],
+    ["Visual tests.", "npm run test:visual -- PriceTag RatingStars", "8 of 8 pass"],
+    ["Now the filters.", "npx codemod design-system Filters", "3 files changed"],
+    ["Checking the grid on mobile widths.", "npm run test:visual -- --viewport 375", "11 of 11 pass"],
+    ["The sort menu.", "npx codemod design-system SortMenu", "1 file changed"],
+    ["Visual tests.", "npm run test:visual -- SortMenu", "3 of 3 pass"],
+    ["Pagination.", "npx codemod design-system Pagination", "1 file changed"],
+    ["Full visual run.", "npm run test:visual", "46 of 46 pass"],
+    ["Quick-view dialog.", "npx codemod design-system QuickView", "2 files changed"],
+    ["Almost there.", "npm run test:visual", "52 of 52 pass"],
+  ]).concat([{ say: "All **22 components** are on the design system behind `newGrid`. 52 of 52 visual tests pass." }]) },
+  { match: /annual-plan invoices go out twice/i, title: "Duplicate annual invoices", steps: [{ say: "Found it: the renewal job retries a timed-out send **without an idempotency key**, so the provider sends the invoice again." }] },
+  { match: /Fix the duplicate invoices/i, steps: longRun([
+    ["Adding an idempotency key to the invoice send.", "git grep -n sendInvoice src/", "src/renewals/send.ts:41"],
+    ["Writing the regression test.", "npm test -- renewals", "1 failing (expected)"],
+    ["Passing the key through the retry.", "npm test -- renewals", "12 of 12 pass"],
+    ["Replaying last month's renewals in a dry run.", "npm run renewals:replay -- --dry-run --month 2026-10", "1,204 renewals, 0 duplicates"],
+    ["Checking the provider logs for the same pattern.", "npm run logs -- --grep 'invoice.sent' --since 30d", "37 duplicate sends found"],
+    ["Listing the 37 customers to refund.", "npm run renewals:duplicates -- --since 30d", "37 customers"],
+    ["Full test run.", "npm test", "418 of 418 pass"],
+    ["Drafting the refund script.", "npm run refunds:draft -- --list duplicates.csv", "37 refunds, $5,213 total"],
+    ["Checking the script in staging.", "npm run refunds:draft -- --env staging", "37 refunds would be issued"],
+    ["Writing the incident note.", "cat docs/incidents/2026-11-invoices.md | wc -l", "48"],
+    ["Opening the pull request.", "gh pr create --fill", "PR #219"],
+    ["Waiting for CI.", "gh pr checks 219", "6 of 6 checks pass"],
+  ]).concat([{ say: "**PR #219** stops the duplicates. 37 customers were charged twice this month; the refund script is ready for you." }]) },
+  { match: /What breaks if we upgrade React Native/i, title: "React Native 0.80 upgrade", steps: [{ say: "Three breaking changes affect us: the new architecture flag, `Animated` imports and two iOS pods. Android should build as is." }] },
+  { match: /Do the React Native upgrade/i, steps: longRun([
+    ["Bumping React Native.", "npx react-native upgrade 0.80.0", "updated 14 files"],
+    ["Android build.", "cd android && ./gradlew assembleDebug", "BUILD SUCCESSFUL"],
+    ["iOS pods.", "cd ios && pod install", "2 pods failed to resolve"],
+    ["Updating `react-native-maps`.", "npm i react-native-maps@2.1", "updated"],
+    ["iOS pods again.", "cd ios && pod install", "1 pod failed to resolve"],
+    ["Patching `react-native-camera`.", "npx patch-package react-native-camera", "patch created"],
+    ["iOS build.", "xcodebuild -scheme App -sdk iphonesimulator build", "BUILD SUCCEEDED"],
+    ["Fixing the `Animated` imports.", "npx codemod rn-animated-imports src/", "9 files changed"],
+    ["Unit tests.", "npm test", "212 of 212 pass"],
+    ["End-to-end on the simulator.", "npm run e2e:ios", "31 of 31 pass"],
+    ["End-to-end on Android.", "npm run e2e:android", "31 of 31 pass"],
+    ["Opening the pull request.", "gh pr create --fill", "PR #77"],
+  ]).concat([{ say: "React Native **0.80** builds on both platforms. **PR #77**, all tests green." }]) },
+  { match: /Summarize this week's escalations/i, title: "This week's escalations", steps: [
+    { say: "Reading the week's escalated calls.", tool: { name: "Bash", input: { command: "npm run calls -- --escalated --since 7d", description: "List the week's escalated calls" }, ms: 900, result: "9 escalations" } },
+    { say: "**9 escalations** this week. Six were the billing hold message that loops, two were refunds and one a login issue. I drafted a reply for each in `replies/2026-11-04.md`." },
+  ] },
+  { match: /Get the staging cluster ready for tonight/i, title: "Staging ready for tonight", steps: [{ say: "Staging is short on disk: **38 old database snapshots** take 41 GB. I'll clear those first, then refresh the data." }] },
+  { match: /Clear the old staging snapshots/i, steps: [
+    { say: "Deleting the 38 snapshots older than 30 days.", guard: true, tool: { name: "Bash", input: { command: "rm -rf /srv/staging/snapshots/2025-*", description: "Delete the old staging snapshots" }, ms: 700, result: "" } },
+    { say: "Removed **38 snapshots**, 41 GB free. Refreshing staging from last night's backup.", tool: { name: "Bash", input: { command: "npm run staging:refresh", description: "Refresh staging data" }, ms: 2_400, result: "staging refreshed" } },
+    { say: "Staging is ready for tonight." },
+  ] },
+  { match: /rate limit to the coupon endpoint/i, title: "Rate limit on coupons", steps: longRun([
+    ["Reading the gateway config for `/coupons`.", "cat gateway/routes/coupons.yaml", "no limit set"],
+    ["Adding 20 requests a minute per customer.", "npx gateway lint gateway/routes/coupons.yaml", "ok"],
+    ["Testing the limit.", "npm test -- coupons", "7 of 7 pass"],
+    ["Load test on staging.", "npm run load -- /coupons --rps 50", "429s after 20/min ✓"],
+  ]).concat([{ say: "The coupon endpoint is limited to **20 requests a minute** per customer. Tests pass; ready for review." }]) },
+  // Bob's own agent answering questions about what is running.
+  { match: /What's left before tonight's release/i, steps: [{ say: "Three things:\n1. Staging is ready: the old snapshots are cleared, after your OK.\n2. Duplicate invoices (billing-worker): the fix is close, then a refund script for 37 customers.\n3. This week's escalations are drafted and wait for your review.\n\nThe React Native upgrade isn't needed for tonight.", wordMs: 18 }] },
+  { match: /Is the payment retry fix ready for tonight/i, steps: [{ say: "Yes. The double-charge fix in checkout-api is done: 48 of 48 tests pass and PR #212 waits for your review. Nothing blocks the 6 PM launch.", wordMs: 20 }] },
+  // Bob's automation step: the message as the JSON Bob checks, with the project id it was given.
+  { match: /^Schedule our release in checkout-api/i, steps: (prompt) => {
+    const id = /- (\S+) \| checkout-api\s*$/m.exec(prompt)?.[1] ?? "unknown";
+    return [{ say: JSON.stringify({ intent: "create", create: { kind: "schedule", projectId: id, name: "Monday launch", prompt: "Run the release checklist for checkout-api, deploy main to production, run the smoke tests and post the release notes.", frequency: "weekly", time: "18:00", weekday: 1 } }), wordMs: 2 }];
+  } },
+  { match: /Fix the payment retry double-charge and open a PR/i, title: "Payment retry double-charge", steps: [
+    { say: "The retry sends the charge again after a provider timeout. Adding an idempotency key.", tool: { name: "Bash", input: { command: "npm test -- payments", description: "Run the payment tests" }, ms: 1_200, result: "48 of 48 pass" } },
+    { say: "Fixed: retries reuse the idempotency key, so a timeout can't charge twice. **48 of 48 tests pass**, and **PR #212** is open." },
+  ] },
+];
+
+/** Running summaries the stand-in writes, by what the conversation is about. The last is the default. */
+export const summaries = [
+  { match: /product grid/i, text: "Moving the product grid to the new design system: 14 of 22 components done, visual tests pass." },
+  { match: /invoices/i, text: "Annual invoices go out twice: a retry without an idempotency key. Writing the fix and a regression test." },
+  { match: /React Native/i, text: "React Native 0.80: Android builds. Fixing the last two iOS pods." },
+  { match: /escalations/i, text: "9 escalations summarized and 9 replies drafted, ready for your review." },
+  { match: /staging/i, text: "Getting staging ready for tonight: clearing 38 old snapshots (41 GB) first." },
+  { match: /coupon/i, text: "Rate-limiting the coupon endpoint to 20 requests a minute per customer." },
+  { match: /double-charge/i, text: "Payment retries no longer charge twice: 48 of 48 tests pass, PR #212 waits for review." },
+  { match: /.*/, text: "Working on the task in this conversation." },
+];
+
 export const scenarios = [
+  ...controlScenarios,
   // The release assistant. Each match is a phrase only that message has, because a topic's
   // prompt also carries the assistant's instructions.
   {

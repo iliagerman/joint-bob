@@ -11,8 +11,9 @@ the feature films at 1920×1080.
 
 | Film | Length | What it shows |
 | --- | --- | --- |
-| `monday` | 1:41 | The main film, drawn on paper and shown at the top of the page: one developer's day, with Alex, his desk, the café, Maya's desk, his home and the train drawn by a pencil as the camera travels over the sheet, and the real recordings playing in the screens drawn there. A test migration starts on his laptop, one Claude account runs out and the next in his pool takes over, Guardian pauses a risky delete, a dashboard is asked for, at lunch his assistant says how the fix is going and he schedules the launch for six from his phone, a teammate writes into his conversation and forks it, two hosts explain the change, the work moves to his server, the laptop closes, he merges from his phone on the train, and at six the launch goes out. |
+| `monday` | 1:41 | The main film, drawn on paper and shown at the top of the page: one developer's day, with Alex, his desk, the café, Maya's desk, his home and the train drawn by a pencil as the camera travels over the sheet, and the real recordings playing in the screens drawn there. A test migration starts on his laptop, one Claude account runs out and the next in his pool takes over, Guardian pauses a risky delete, a dashboard is asked for, at lunch Bob, in the control center on his phone, says how the fix is going and schedules the launch for six once he presses Create it, a teammate writes into his conversation and forks it, two hosts explain the change, the work moves to his server, the laptop closes, he merges from his phone on the train, and at six the launch goes out. |
 | `short` | 0:30 | The 30-second version for social media (LinkedIn), not on the page: its own five lines on the same sheet, at his desk and on the train only. The release due at six, the pool taking over, Guardian asking first and the launch scheduled, the work moved to his server and merged from the train, and the launch going out. |
+| `control` | 53 s | The control center: every agent in five projects on one board with its running summary, a Guardian question answered with Allow once on its card, a task told to Bob and started in checkout-api, Bob answering what is left before the release, and on a phone the same Bob answering and scheduling the Monday launch, which waits for Create it. |
 | `lid` | 49 s | A long task planned on the laptop, moved to the home server with "Runs on" and "Take ownership", then followed and continued from a phone. |
 | `team` | 52 s | A cluster made in Settings, a one-time link, the teammate joining on her machine, one project shared, then her message in the shared conversation and her fork. |
 | `pools` | 51 s | Three Claude accounts added as profiles in Settings → Connections, one pool with them in failover order, the pool as the default, and the pool's own failover test running account 1 and then account 2 out of quota while account 3 takes over. |
@@ -44,7 +45,8 @@ No video framework: plain JavaScript, Three.js, headless Chrome and ffmpeg.
    per story, each in a fresh environment: `handoff`, `webhook` and `costs` (in `record.ts`),
    `move`, `cluster`, `schedule`, `browser` and `secrets` (in `takes.ts`), and `pools`,
    `budgets`, `guardian`, `dashboards`, `assistant`, `phone` and `story` (in
-   `feature-takes.ts`).
+   `feature-takes.ts`), and `control` (in `control-take.ts`), which also records the Monday film's
+   lunch phone (`controlPhone`) and six o'clock phone (`launchBob`).
 2. **Sound.** The narration is the open-source Kokoro voice (`af_bella`, speed 1.05) that Joint
    Bob installs for story narration: `narrate.ts` speaks every line in `narration.json` into
    `public/audio/`, with no paid service, and writes each line's length to `film/voice-lengths.js`. It needs the voice installed on this machine (Settings → Activity
@@ -79,6 +81,13 @@ No video framework: plain JavaScript, Three.js, headless Chrome and ffmpeg.
    minutes for `monday` on an M1 Max). `--remix` mixes the sound again into a film already in
    `out/`, keeping its picture, for a change that only touches sound.
 
+On Linux, headless Chrome has neither Apple's fonts nor a colour emoji font, so the films' system
+font stacks fall back to DejaVu and the stickers' emoji draw as boxes. A render there can point its
+Chrome at Inter (the stack's fallback after Apple's fonts) and Noto Color Emoji with a fontconfig file
+of its own, `FONTCONFIG_FILE=/path/fonts.conf npm run render -- --film control`, without changing the
+machine's fonts. The captions then read in Inter rather than San Francisco; render on a Mac for the
+look of the other films.
+
 Each film is timed by its narration. `beats` in `film/feature.js` lays the lines end to end from
 their lengths, so every sentence is heard whole and the picture follows it; `fit` plays a stretch
 of a recording across a beat, and `frameOf` places a ring or a note at the moment its part of the
@@ -92,7 +101,7 @@ npm install
 npm run capture                     # re-record every clip (about fifteen minutes)
 node --import tsx promo-video/narrate.ts   # missing narration, with Kokoro (from the repository root)
 npm run render -- --film lid        # one film, to out/lid.mp4
-npm run render:all                  # all sixteen (the drawn two at --scale 2)
+npm run render:all                  # all seventeen (the drawn two at --scale 2)
 npm run still -- 340 --film team    # one frame, to check a change: out/team-0340.jpg
 npm run landing                     # the landing page's 720p copies and stills
 ```
@@ -244,6 +253,18 @@ To take it down: empty the bucket, then delete the stack.
   meeting and the launch report, are scripted like every other; no calendar is connected.
 - The launch is a real scheduled task made through the assistant's Scheduled task dialog on the
   phone. Its run is started through the API in place of waiting for Monday at six.
+- The control center's board is filled before recording on a page that is not filmed: six
+  conversations in five projects, three of them long scripted jobs that keep running while it is
+  filmed. Each running summary is written by the stand-in, which answers a summary request with a
+  line about that conversation's work (`summaries` in `capture/scenarios.mjs`) instead of replaying it.
+- Bob's decision model is the stand-in in `capture/decisions.ts`, in its `control` mode: a schedule is
+  an automation, a question is answered, anything else is a task, the project is the one the message
+  names, and every other check (moving jobs, dashboards, memory, people) gets its "not this" answer.
+  Bob's own agent is the scripted Claude, which matches only the current message in Bob's prompts.
+- Bob gives a scheduled task the machine's usual agent, which is Pi when Pi can run. Only the scripted
+  Claude runs there, so the take switches the launch to Claude, off camera, with the task editor's own
+  update, before starting it through the API in place of waiting for Monday at six. Its nodes run in
+  New York time, so Bob names the time the way the take's browser does.
 - Budgets read each project's real recorded spend and set limits just under it, so the warning and
   the limit show without spending anything.
 

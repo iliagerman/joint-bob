@@ -91,5 +91,11 @@ export default {
  "short-02": 4.78,
  "short-03": 5.57,
  "short-04": 5.21,
- "short-05": 2.93
+ "short-05": 2.93,
+ "control-01": 8.74,
+ "control-02": 9.89,
+ "control-03": 8.18,
+ "control-04": 5.5,
+ "control-05": 10.82,
+ "control-06": 3.24
 };

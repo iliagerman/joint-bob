@@ -3,7 +3,7 @@
  "monday-02": "Halfway through, one of his Claude accounts hits its limit. Joint Bob moves the task to the next account in his pool, and the agent doesn't miss a step.",
  "monday-03": "Then an agent cleaning up old exports tries to delete customer files. Guardian stops it and asks him first, so he blocks it, and the agent archives them instead.",
  "monday-04": "Something looks off at checkout, so he asks for a dashboard, and a minute later he's looking at the errors, hour by hour.",
- "monday-05": "At lunch, his assistant tells him how the fix is going, and from his phone, he schedules the launch for six.",
+ "monday-05": "At lunch, he asks Bob how the fix is going, and from his phone, he has Bob schedule the launch for six.",
  "monday-06": "Meanwhile his teammate Maya opens his conversation from her own machine, adds a request, and forks it to try a fix of her own.",
  "monday-07": "Before the review, two hosts walk him through the whole change, so he knows exactly what he's approving.",
  "monday-08": "At five forty, he moves the work to his home server, and closes the laptop. The agent keeps going.",
@@ -90,5 +90,11 @@
  "short-02": "When one Claude account runs out, the next one in his pool takes over.",
  "short-03": "Guardian asks him before anything risky, and his assistant schedules the launch.",
  "short-04": "At five forty, he moves the work to his server, and merges from the train.",
- "short-05": "At six, the launch goes out, on time."
+ "short-05": "At six, the launch goes out, on time.",
+ "control-01": "The control center is one board for every agent you have running, in every project, each with a live line of what it's doing right now.",
+ "control-02": "When an agent needs you, it rises to the top. Here, Guardian asks before a command deletes old snapshots, and you allow it right from the card.",
+ "control-03": "Beside the board is Bob. Give it a task in plain words, and it starts the work in the right project, marked started by Bob.",
+ "control-04": "Ask what's left before the release, and Bob answers from everything that's running.",
+ "control-05": "On your phone, the control center is Bob, full screen. Ask how a fix is going, or have it schedule a release, and it waits for your OK before it creates anything.",
+ "control-06": "Joint Bob. Every agent, one place."
 }

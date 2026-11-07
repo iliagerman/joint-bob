@@ -458,5 +458,47 @@
     "events": {
       "report": 5.246
     }
+  },
+  "control": {
+    "file": "control.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 33.07,
+    "events": {
+      "board": 0.851,
+      "need": 6.312,
+      "allowed": 10.032,
+      "cleared": 10.235,
+      "task": 12.836,
+      "started": 18.204,
+      "card": 18.239,
+      "question": 21.839,
+      "answered": 27.787
+    }
+  },
+  "controlPhone": {
+    "file": "controlPhone.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 20.49,
+    "events": {
+      "opened": 0.317,
+      "ask": 2.118,
+      "answered": 6.417,
+      "schedule": 9.218,
+      "proposal": 13.713,
+      "scheduled": 16.691
+    }
+  },
+  "launchBob": {
+    "file": "launchBob.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 8.94,
+    "events": {
+      "strip": 0.191,
+      "sheet": 1.105,
+      "report": 4.317
+    }
   }
 }

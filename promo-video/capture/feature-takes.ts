@@ -244,7 +244,7 @@ async function budgets({ environment, browser, root, finish, openProject }: Kit)
  * A stand-in for the decision model Guardian asks, answering like Laya's `/v1/systemone`: a high
  * "yes" for a rule only when the content plainly matches it, and a low one otherwise.
  */
-function startDecisionModel(): Promise<Server> {
+export function startDecisionModel(): Promise<Server> {
   const yes: Record<string, RegExp> = {
     "dangerous-commands": /rm -rf|DROP TABLE|truncate /i,
     secrets: /sk_live_[A-Za-z0-9]{8,}|AKIA[A-Z0-9]{12,}|ghp_[A-Za-z0-9]{20,}/,
