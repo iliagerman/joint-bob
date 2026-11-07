@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.229.0 — 2026-11-07
+
+- Conversation titles named by the agent read in title case, and abbreviations such as UX and API stay in capitals. Titles you type are kept as you wrote them.
+
 ## 2.228.0 — 2026-11-07
 
 - Hovering a card on the board opens its brief beside it, in larger type: the whole title, what the turn is doing now, and the summary laid out by section (Goal, Done so far, Current state, Open questions) as in the conversation's Activity panel. It stays open while the pointer is on it, so a long one can be scrolled, and it follows its card when the board refreshes. It replaces the small browser tooltip that showed the summary as one paragraph.
