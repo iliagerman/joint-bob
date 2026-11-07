@@ -80,6 +80,8 @@ export function showSignedOut() {
   state.activeTaskId = null;
   state.projects = [];
   state.sessions = [];
+  state.sessionsProjectId = null;
+  state.keptSessionLists.clear();
   state.quickNotes = [];
   state.pendingQuickNoteConversion = null;
   state.tasks = [];

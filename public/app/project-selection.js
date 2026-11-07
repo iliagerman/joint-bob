@@ -114,6 +114,12 @@ export async function loadProjects() {
 
 export async function selectProject(projectId, shouldRender = true, preserveSession = false) {
   const started = performance.now();
+  // A finished list is kept for the project it belongs to, so coming back to it shows rows at
+  // once while the fresh list, which takes seconds on a busy machine, is fetched.
+  if (state.sessionsProjectId && state.sessionsProjectId === state.activeProjectId && !state.sessionsLoading) state.keptSessionLists.set(state.sessionsProjectId, {
+    sessions: state.sessions, worktrees: state.worktrees, hiddenCronTaskIds: state.hiddenCronTaskIds, knownCronTaskIds: state.knownCronTaskIds,
+  });
+  const kept = state.keptSessionLists.get(projectId);
   if (state.activeProjectId !== projectId) {
     state.classificationFilters.clear();
     state.worktrees = [];
@@ -124,8 +130,8 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   const visibility = state.projectConversationVisibility[projectId] || {};
   state.showDoneConversations = visibility.done === true;
   state.showScheduledConversations = visibility.scheduled === true;
-  state.hiddenCronTaskIds = new Set();
-  state.knownCronTaskIds = new Set();
+  state.hiddenCronTaskIds = kept?.hiddenCronTaskIds ?? new Set();
+  state.knownCronTaskIds = kept?.knownCronTaskIds ?? new Set();
   state.skills = [];
   state.skillsLoading = false;
   state.skillsProjectId = null;
@@ -145,13 +151,21 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   setComposerEnabled(false);
   elements.sessionTitle.textContent = "Select a conversation";
   state.sessionNodes = [];
-  state.sessions = [];
+  state.sessions = kept?.sessions ?? [];
+  state.sessionsProjectId = kept ? projectId : null;
+  if (kept) state.worktrees = kept.worktrees;
   state.quickNotes = [];
-  setListLoading("sessions", true);
+  // Kept rows stay usable while they refresh; the bar alone says a fresh list is coming.
+  setListLoading("sessions", !kept);
+  elements.sessionsLoading.hidden = false;
   renderSessions();
   renderQuickNotes();
   setMobileView("sessions");
   void loadSessionNodes(projectId).catch((error) => toast(error.message, 8000));
+  // The board does not need the conversation list, so it loads beside it instead of after it.
+  // Worktrees wait: their listing starts a scan of every project's finished worktrees, which
+  // competes with the list on a busy machine, and the rows already carry their worktree badges.
+  loadTasks().catch((error) => console.warn(error));
   // Shared notes can wait on an offline peer. They must not block local conversations.
   void refreshQuickNotes(projectId).catch((error) => {
     if (state.activeProjectId === projectId) toast(error.message, 8000);
@@ -173,6 +187,7 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   if (state.activeProjectId !== projectId) return;
   const renderStarted = performance.now();
   state.sessions = withPendingSessionChanges(projectId, body.sessions, requestStarted);
+  state.sessionsProjectId = projectId;
   if (body.sessions.some((session) => session.cronTaskId)) {
     try { await loadHiddenCronTasks(projectId); }
     catch (error) { console.warn("Could not load scheduled task visibility", error); }
@@ -183,10 +198,9 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   const ready = performance.now();
   if (ready - started >= 500) console.info("[performance] project.open", {
     durationMs: Math.round(ready - started), requestMs: Math.round(renderStarted - requestStarted),
-    renderMs: Math.round(ready - renderStarted), conversations: body.sessions.length,
+    renderMs: Math.round(ready - renderStarted), conversations: body.sessions.length, keptListShown: Boolean(kept),
   });
   ensureWatchSocket();
   subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
-  loadTasks().catch((error) => console.warn(error));
   loadWorktrees().catch((error) => console.warn(error));
 }

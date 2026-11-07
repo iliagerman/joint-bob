@@ -3,6 +3,7 @@ import { recordSignedPeerSeen } from './cluster-peer-endpoints.js';
 import { pinnedClusterPublicKey, signClusterMessage } from "./cluster-identity.js";
 import { CLUSTER_REQUEST_DOMAIN, ClusterProtocolError, createRequestEnvelope, encodeAuthorization, NONCE_TTL_MS, requestSignaturePayload, verifyRequest } from "./file-sync/signing.js";
 import { peerContacted } from "./peer-presence.js";
+import { withoutDiskFlush } from "./sqlite-statements.js";
 
 // The envelope, header format and checks live in file-sync/signing.ts so the file sync worker signs alike.
 export { ClusterProtocolError, type ClusterRequestEnvelope } from "./file-sync/signing.js";
@@ -43,8 +44,9 @@ function consumeNonce(db: DatabaseSync, senderNodeId: string, nonce: string, now
     db.prepare("DELETE FROM cluster_v2_request_nonces WHERE expires_at < ?").run(now);
     noncesPrunedAt.set(db, now);
   }
-  const recorded = db.prepare(`INSERT INTO cluster_v2_request_nonces (sender_node_id, nonce, expires_at) VALUES (?, ?, ?)
-    ON CONFLICT(sender_node_id, nonce) DO UPDATE SET expires_at = excluded.expires_at WHERE cluster_v2_request_nonces.expires_at < ?`).run(senderNodeId, nonce, now + NONCE_TTL_MS, now);
+  // A nonce only has to outlive its request's few minutes of validity, so a power cut may lose it.
+  const recorded = withoutDiskFlush(db, () => db.prepare(`INSERT INTO cluster_v2_request_nonces (sender_node_id, nonce, expires_at) VALUES (?, ?, ?)
+    ON CONFLICT(sender_node_id, nonce) DO UPDATE SET expires_at = excluded.expires_at WHERE cluster_v2_request_nonces.expires_at < ?`).run(senderNodeId, nonce, now + NONCE_TTL_MS, now));
   if (!Number(recorded.changes)) throw new ClusterProtocolError("Cluster request replayed");
 }
 

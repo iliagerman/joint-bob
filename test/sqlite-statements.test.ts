@@ -4,7 +4,7 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ensureScriptCounts } from "../src/sqlite-statements.js";
+import { ensureScriptCounts, withoutDiskFlush } from "../src/sqlite-statements.js";
 
 function fixture(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -109,4 +109,29 @@ test("a script that does anything else runs every time", () => {
   for (let call = 0; call < 2; call++) db.exec("CREATE TABLE IF NOT EXISTS aside.items(x)");
   for (let call = 0; call < 2; call++) db.exec("CREATE TABLE IF NOT EXISTS copy AS SELECT * FROM log");
   assert.deepEqual(ensureScriptCounts(), before, "none of these is counted as a make-sure script");
+});
+
+test("a write without disk flush commits under NORMAL and leaves the connection's own level", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "jb-flush-"));
+  try {
+    const db = new DatabaseSync(path.join(directory, "node.db"));
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE seen(id TEXT PRIMARY KEY)");
+    const level = (): number => (db.prepare("PRAGMA synchronous").get() as { synchronous: number }).synchronous;
+    assert.equal(level(), 2, "connections start at FULL");
+    const during = withoutDiskFlush(db, () => { db.prepare("INSERT INTO seen VALUES('a')").run(); return level(); });
+    assert.equal(during, 1, "the commit runs under NORMAL");
+    assert.equal(level(), 2, "FULL comes back after the write");
+    assert.throws(() => withoutDiskFlush(db, () => db.prepare("INSERT INTO seen VALUES('a')").run()), /UNIQUE/);
+    assert.equal(level(), 2, "FULL comes back after a failed write");
+    db.exec("BEGIN");
+    assert.equal(withoutDiskFlush(db, level), 2, "inside a transaction the caller's commit decides");
+    db.exec("COMMIT");
+    db.exec("PRAGMA synchronous = OFF");
+    withoutDiskFlush(db, () => db.prepare("INSERT INTO seen VALUES('b')").run());
+    assert.equal(level(), 0, "a connection already below NORMAL is left alone");
+    assert.equal((db.prepare("SELECT count(*) total FROM seen").get() as { total: number }).total, 2);
+    db.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -380,6 +380,7 @@ async function removeProject(project) {
     state.activeTaskId = null;
     if (state.preferencesLoaded) savePreferencesInBackground({ activeProjectId: null, activeSessionPath: null, activeSessionId: null });
     state.sessions = [];
+    state.sessionsProjectId = null;
     state.tasks = [];
     closeWatchSocket();
     renderBoardView();

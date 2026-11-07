@@ -25,6 +25,7 @@ import { setRelayNodeName } from "../../relay/index.js";
 import { receiveRelay, relayPage, relayPullSchema, relayRequestSchema } from "../cluster-hubs.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { isTrustedTwin } from "../../cluster-sharing-policy.js";
+import { withoutDiskFlush } from "../../sqlite-statements.js";
 
 app.get("/api/cluster/node", async (_request, response, next) => {
   try {
@@ -125,7 +126,8 @@ app.post(["/api/cluster/sessions/runtime-snapshot", "/api/cluster/v2/runtime/ses
     });
     const db = conversationRuntimeDatabase();
     const before = liveRuntimeLeases(db, snapshot.nodeId);
-    const changed = new Set(applyRuntimeLeaseSnapshot(db, snapshot.nodeId, snapshot.generatedAt, leases));
+    // Peers send their running set every two seconds and leases expire, so a power cut may lose one.
+    const changed = new Set(withoutDiskFlush(db, () => applyRuntimeLeaseSnapshot(db, snapshot.nodeId, snapshot.generatedAt, leases)));
     const continuing = new Set(leases.map((lease) => `${lease.engine}\n${lease.sessionId}`));
     const ended = before.filter((lease) => changed.has(`${lease.engine}\n${lease.sessionId}`) && !continuing.has(`${lease.engine}\n${lease.sessionId}`));
     if (ended.length) catchUpEndedRuns(snapshot.nodeId, ended).catch((error) => console.warn("Ended run catch-up failed", error));

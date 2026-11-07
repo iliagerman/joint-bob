@@ -787,6 +787,7 @@ async function refreshSessionSnapshot(projectId) {
     const sessions = withPendingSessionChanges(projectId, body.sessions, askedAt);
     const newlyNeedsReview = sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
     state.sessions = sessions;
+    state.sessionsProjectId = projectId;
     if (sessions.some((session) => session.cronTaskId && !state.knownCronTaskIds.has(session.cronTaskId))) {
       try { await loadHiddenCronTasks(projectId); }
       catch (error) { console.warn("Could not load scheduled task visibility", error); }

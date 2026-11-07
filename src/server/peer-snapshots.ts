@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { clusterV2Database } from "../cluster-v2-store.js";
+import { withoutDiskFlush } from "../sqlite-statements.js";
 import { isPeerUnreachable, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
 
 /**
@@ -41,8 +42,9 @@ async function store(scope: string, peerId: string, value: unknown): Promise<str
   const fetchedAt = new Date().toISOString();
   memory.set(`${scope}\n${peerId}`, { value, fetchedAt });
   const db = await clusterV2Database(); ensureSchema(db);
-  db.prepare("INSERT INTO peer_snapshots VALUES(?,?,?,?) ON CONFLICT(scope, peer_id) DO UPDATE SET payload=excluded.payload, fetched_at=excluded.fetched_at")
-    .run(scope, peerId, JSON.stringify(value), fetchedAt);
+  // A stored answer stands in until the peer is asked again, so a power cut may lose it.
+  withoutDiskFlush(db, () => db.prepare("INSERT INTO peer_snapshots VALUES(?,?,?,?) ON CONFLICT(scope, peer_id) DO UPDATE SET payload=excluded.payload, fetched_at=excluded.fetched_at")
+    .run(scope, peerId, JSON.stringify(value), fetchedAt));
   if (Date.now() - prunedAt > 60 * 60_000) {
     prunedAt = Date.now();
     db.prepare("DELETE FROM peer_snapshots WHERE fetched_at<?").run(new Date(Date.now() - RETAIN_MS).toISOString());

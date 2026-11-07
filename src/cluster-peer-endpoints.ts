@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { SignedMembershipSnapshot } from "./cluster-membership.js";
 import { notifyRelayPeersChanged } from "./relay/events.js";
+import { withoutDiskFlush } from "./sqlite-statements.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const endpointSchema = z.object({
@@ -50,8 +51,9 @@ export function recordPeerEndpoint(db: DatabaseSync, context: PeerEndpointContex
 
 export function recordSignedPeerSeen(db:DatabaseSync,nodeId:string,now=new Date().toISOString()):void {
   ensurePeerEndpointSchema(db);
-  db.prepare(`INSERT INTO cluster_v2_peer_activity VALUES(?,?,?,?) ON CONFLICT(node_id)
-    DO UPDATE SET last_seen_at=excluded.last_seen_at`).run(nodeId,now,now,now);
+  // Rewritten every few seconds while the peer calls in.
+  withoutDiskFlush(db, () => db.prepare(`INSERT INTO cluster_v2_peer_activity VALUES(?,?,?,?) ON CONFLICT(node_id)
+    DO UPDATE SET last_seen_at=excluded.last_seen_at`).run(nodeId,now,now,now));
 }
 
 export function peerEndpoint(db: DatabaseSync, kind: "cluster" | "twin", id: string, nodeId: string): PeerEndpoint {

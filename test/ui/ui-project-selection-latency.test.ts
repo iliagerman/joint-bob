@@ -92,11 +92,68 @@ test("slow project openings log request versus rendering time without project or
     await page.waitForFunction(() => window.jointBobClientLogs.entries().some(line => line.includes("[performance] project.open")));
     const line = await page.evaluate(() => window.jointBobClientLogs.entries().find(line => line.includes("[performance] project.open"))!);
     const timing = JSON.parse(line.slice(line.indexOf("{")));
-    assert.deepEqual(Object.keys(timing).sort(), ["conversations", "durationMs", "renderMs", "requestMs"]);
+    assert.deepEqual(Object.keys(timing).sort(), ["conversations", "durationMs", "keptListShown", "renderMs", "requestMs"]);
+    assert.equal(timing.keptListShown, false, "the project had not been opened in this page before");
     assert.ok(timing.requestMs >= 600 && timing.durationMs >= timing.requestMs);
     assert.ok(timing.renderMs >= 0 && timing.conversations > 0);
     assert.equal(line.includes(target.id), false);
     assert.equal(line.includes(target.path), false);
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("a project opened before shows its last conversations at once while the fresh list loads", { timeout: 90_000 }, async (t) => {
+  const { page, node, environment } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  const target = node.projects.find(project => project.name === "Joint Bob")!;
+  const targetCard = page.locator("#projectList .project-card", { hasText: "Joint Bob" });
+  const otherCard = page.locator("#projectList .project-card", { hasText: "Internal Assistant" });
+  const rows = page.locator('#sessionList [data-testid="session-menu-button"]');
+  const bar = page.getByTestId("session-list-loading-bar");
+  await targetCard.waitFor();
+
+  let release!: () => void;
+  let pending = new Promise<void>(resolve => { release = resolve; });
+  let held = 0;
+  await page.route(`**/api/projects/${target.id}/sessions`, async route => {
+    if (route.request().method() === "GET") { held++; await pending; }
+    await route.continue();
+  });
+  try {
+    // The first opening has nothing to show yet, and says so instead of leaving a blank list.
+    await targetCard.click();
+    await page.getByTestId("session-list-loading").waitFor({ timeout: 3_000 });
+    assert.equal(await rows.count(), 0);
+    release();
+    await rows.first().waitFor();
+    await bar.waitFor({ state: "hidden" });
+    const firstCount = await rows.count();
+
+    await otherCard.click();
+    await bar.waitFor({ state: "hidden" });
+    await rows.first().waitFor();
+
+    pending = new Promise<void>(resolve => { release = resolve; });
+    const heldBefore = held;
+    await targetCard.click();
+    await page.waitForFunction(() => document.querySelectorAll('#sessionList [data-testid="session-menu-button"]').length > 0, undefined, { timeout: 3_000 });
+    assert.ok(held > heldBefore, "a fresh list is still asked for");
+    assert.equal(await rows.count(), firstCount, "the kept list is shown while the fresh one is held back");
+    assert.equal(await bar.isVisible(), true, "the bar says the list is refreshing");
+    assert.equal(await page.getByTestId("session-list-loading").count(), 0);
+    const snapshot = await page.evaluate(async () => {
+      const { state } = await import("/app/state.js");
+      return { projectId: state.activeProjectId, loading: state.sessionsLoading };
+    });
+    assert.deepEqual(snapshot, { projectId: target.id, loading: false });
+    release();
+    await bar.waitFor({ state: "hidden" });
+    assert.equal(await rows.count(), firstCount);
   } finally {
     release();
     await page.unrouteAll({ behavior: "wait" });

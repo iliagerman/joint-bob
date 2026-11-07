@@ -90,3 +90,23 @@ DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string): void {
 const scripts = { ran: 0, skipped: 0 };
 /** How many such scripts were run and how many were skipped, since this process started. */
 export function ensureScriptCounts(): { ran: number; skipped: number } { return { ...scripts }; }
+
+/**
+ * Runs `write` without making its commit wait for the disk.
+ *
+ * Connections run with synchronous=FULL, so every commit waits for the disk to confirm the
+ * write, and node:sqlite waits on the event loop: about 18 ms per commit on the homeserver,
+ * where the replay nonce of every signed peer request alone took a tenth of the server's time.
+ * In WAL mode synchronous=NORMAL never corrupts the database; a power cut or OS crash can only
+ * lose the last commits, and the next FULL commit makes them durable too. So this is only for
+ * rows that are cheap to lose: rewritten within seconds, or a cache that is fetched again.
+ * Inside a transaction the caller's commit decides, so `write` runs unchanged.
+ */
+export function withoutDiskFlush<T>(db: DatabaseSync, write: () => T): T {
+  if (db.isTransaction) return write();
+  const level = Number((db.prepare("PRAGMA synchronous").get() as { synchronous: number }).synchronous);
+  if (level <= 1) return write();
+  db.prepare("PRAGMA synchronous = NORMAL").run();
+  try { return write(); }
+  finally { db.prepare(`PRAGMA synchronous = ${level}`).run(); }
+}

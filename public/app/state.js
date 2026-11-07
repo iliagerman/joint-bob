@@ -31,6 +31,10 @@ export const state = {
   controlCenter: { colors: {}, filter: [], chatSide: "right", chatWidth: 400 },
   projects: [],
   sessions: [],
+  // The project whose list `sessions` holds; null while none has loaded.
+  sessionsProjectId: null,
+  // Each project's list as it was when the user left it, shown at once when it opens again.
+  keptSessionLists: new Map(),
   quickNotes: [],
   skills: [],
   skillsLoading: false,

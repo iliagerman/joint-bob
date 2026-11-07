@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Opening a project you have already used this session shows its conversations at once while the latest list loads. The tasks board loads alongside the list, and the server waits on the disk less often while it is busy.
+
 ## 2.223.0 — 2026-11-06
 
 - Marking a conversation **Done** asks how it went: **Good** or **Bad** with an optional note, or **Nothing — not important**. Good and Bad conversations propose lessons in **Project knowledge**, which you accept or dismiss; not important ones close without a model call. Conversations idle for more than four days are marked Done and classified on their own.
