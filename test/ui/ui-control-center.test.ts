@@ -81,22 +81,43 @@ test("the control center shows the live board, filters by project, colors cards 
   // A card says briefly where the conversation stands: the first sentence of the summary's current state, without Markdown.
   const review = page.locator('[data-key="p1:c3"]');
   assert.equal(await review.locator(".control-live-text").textContent(), "Fixed and tested; it waits for your review.");
-  assert.match(await review.locator(".control-live").getAttribute("title") ?? "", /^Goal — Fix the review counter\. Done so far/, "the whole summary is on hover");
   assert.match(await review.textContent() ?? "", /To review/, "finished work waiting for the person is marked");
   assert.equal(await review.getByTestId("control-card-check").textContent(), "✓ Bob checked: done", "Bob checked that it is really done");
   assert.equal(await page.locator('.control-lane[data-column="review"] .control-lane-count').textContent(), "1");
   // Every card is the same size, whatever its title, status, ribbon or check line; a long title is cut, and whole on hover.
   const heights = await page.getByTestId("control-center-card").evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().height));
   assert.equal(new Set(heights).size, 1, `card heights: ${heights.join(", ")}`);
-  assert.match(await page.locator('[data-key="p2:c2"] .control-title').getAttribute("title") ?? "", /then map it$/);
   // A running card says what the turn is doing now, over the summary's line; a finished one has a Review button instead of Take control.
   assert.equal(await page.locator('[data-key="p1:c1"]').getByTestId("control-card-activity").textContent(), "Bash · npm run test:ui -- test/ui/menu.test.ts");
   assert.equal(await page.locator('[data-key="p1:c1"] .control-live-text').textContent(), "Running the UI tests");
-  assert.match(await page.locator('[data-key="p1:c1"] .control-live').getAttribute("title") ?? "", /Now: Bash · npm run test:ui/);
   assert.equal(await page.locator('[data-key="p2:c2"]').getByTestId("control-card-activity").count(), 0, "no activity known, so the summary line stays");
   assert.equal(await review.getByTestId("control-card-action-review").isVisible(), true);
   assert.equal(await review.getByTestId("control-card-action-take-control").count(), 0);
   assert.equal(await page.locator('[data-key="p1:c1"]').getByTestId("control-card-action-review").count(), 0, "only finished work is reviewed");
+
+  // Hovering a card opens its brief beside it, in readable type: the whole title, what it does now, and the summary laid out.
+  const brief = page.getByTestId("control-card-brief");
+  await review.hover();
+  await brief.waitFor({ state: "visible" });
+  assert.match(await brief.innerText(), /^Review counter\s+Goal — Fix the review counter\.\s+Done so far — The counter counts reviews again\./);
+  assert.equal(await brief.locator("strong").first().textContent(), "Goal", "laid out from the summary's Markdown");
+  assert.ok(parseFloat(await brief.evaluate((element) => getComputedStyle(element).fontSize)) >= 14, "large enough to read");
+  const [cardBox, briefBox] = [await review.boundingBox(), await brief.boundingBox()];
+  assert.ok(briefBox!.x >= cardBox!.x + cardBox!.width, "beside the card, not over it");
+  await page.locator('[data-key="p1:c1"]').hover();
+  await page.waitForFunction(() => document.querySelector('[data-testid="control-card-brief"]')?.textContent?.startsWith("Mobile menu"));
+  assert.match(await brief.innerText(), /^Mobile menu\s+Now: Bash · npm run test:ui -- test\/ui\/menu\.test\.ts\s+Running the UI tests$/);
+  await page.locator('[data-key="p2:c2"]').hover();
+  await page.waitForFunction(() => document.querySelector('[data-testid="control-card-brief"] h3')?.textContent?.endsWith("then map it"));
+  assert.match(await brief.innerText(), /No summary yet/);
+  // It stays while the board is drawn again, and closes when the pointer leaves.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("control-center-changed")));
+  await page.waitForTimeout(600);
+  assert.equal(await brief.isVisible(), true);
+  const redrawn = (await page.locator('[data-key="p2:c2"]').boundingBox())!;
+  assert.ok((await brief.boundingBox())!.x >= redrawn.x + redrawn.width, "and stays beside its card");
+  await page.mouse.move(2, 2);
+  await brief.waitFor({ state: "hidden" });
 
   // Filter to one project.
   await page.getByTestId("control-center-filters").getByText("DAK Live").click();

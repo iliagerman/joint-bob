@@ -226,3 +226,17 @@ button.control-entry-conversation::after { content: " ↗"; color: var(--muted);
 .control-pending .control-msg { display: flex; align-items: baseline; gap: 7px; color: var(--muted); }
 .control-pending .control-pulse { align-self: center; margin-top: 0; }
 .control-pending-time { margin-left: 4px; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* A card's brief, beside it on hover: the conversation's summary in readable type, scrolling when it is long. */
+.control-brief { position: fixed; z-index: 60; width: min(480px, calc(100vw - 20px)); max-height: min(72vh, 680px); overflow: auto; padding: 12px 16px 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 16px 48px rgb(0 0 0 / 45%); font-size: 14px; line-height: 1.55; }
+.control-brief[hidden] { display: none; }
+.control-brief h3 { margin: 0 0 6px; font-size: 15.5px; line-height: 1.3; }
+.control-brief-now { margin: 0 0 10px; font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--accent); overflow-wrap: anywhere; }
+.control-brief-summary { overflow-wrap: anywhere; }
+.control-brief-summary.placeholder { color: var(--muted); }
+.control-brief-summary > :first-child { margin-top: 0; }
+.control-brief-summary > :last-child { margin-bottom: 0; }
+.control-brief-summary p { margin: 10px 0 4px; }
+.control-brief-summary :is(ul, ol) { margin: 4px 0 8px; padding-left: 20px; }
+.control-brief-summary li + li { margin-top: 3px; }
+

@@ -29,6 +29,7 @@ import "./app/project-files.js";
 import "./app/dashboards.js";
 import "./app/control-chat.js";
 import "./app/control-lease.js";
+import "./app/control-brief.js";
 import "./app/control-overview.js";
 import "./app/control-automations.js";
 import "./app/control-dashboards.js";

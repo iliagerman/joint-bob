@@ -6,7 +6,7 @@ import { formatDate, toast } from "./shell.js";
 import { state } from "./state.js";
 import { registerControlView } from "./control-views.js";
 import { chooseConversationFeedback } from "./conversation-feedback.js";
-import { boardTools, briefStatus, cardActionList, decorateCard, plainSummary, projectActionList, registerCardAction } from "./control-cards.js";
+import { boardTools, briefStatus, cardActionList, decorateCard, projectActionList, registerCardAction } from "./control-cards.js";
 
 const DEFAULT_COLOR = "#3a3f46";
 const COLUMNS = [
@@ -109,7 +109,6 @@ function renderCard(card) {
 
   const meta = [card.agentLabel, card.agentModel, card.backgroundRunning && !card.turnRunning ? "background tasks" : null, card.updatedAt ? formatDate(card.updatedAt) : null].filter(Boolean).join(" · ");
   const title = element("h3", "control-title", card.title);
-  title.title = card.title;
   const metaLine = element("div", "control-meta", meta);
   metaLine.title = meta;
   root.append(top, title, body, metaLine);
@@ -153,7 +152,6 @@ function renderLive(card) {
   }
   if (status || !card.activity) lines.append(element("span", "control-live-text", status ?? (card.column === "running" ? "Working…" : "Finished. Open it to review.")));
   live.append(lines);
-  live.title = [card.summary ? plainSummary(card.summary) : null, card.activity ? `Now: ${card.activity}` : null].filter(Boolean).join("\n\n");
   return live;
 }
 
