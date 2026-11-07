@@ -24,13 +24,14 @@ test("the board lists running conversations and ones waiting for review, newest 
       session({ id: "idle", running: false, reviewState: "reviewed" }),
       session({ id: "s-run", conversationId: "c-run", running: true, turnRunning: true, updatedAt: "2026-11-05T10:00:00Z", agentModel: "opus" }),
       session({ id: "s-review", running: false, reviewState: "needs_review", updatedAt: "2026-11-05T09:00:00Z" }),
+      session({ id: "s-done", running: false, reviewState: "needs_review", doneAt: "2026-11-05T09:30:00Z" }),
     ] },
     { projectId: "p2", projectName: "DAK Live", sessions: [
       session({ id: "bg", running: true, backgroundRunning: true, updatedAt: "2026-11-05T11:00:00Z" }),
     ] },
   ];
   const cards = buildBoard(projects, sources);
-  assert.deepEqual(cards.map((card) => card.sessionId), ["bg", "s-run", "s-review"]);
+  assert.deepEqual(cards.map((card) => card.sessionId), ["bg", "s-run", "s-review"], "one marked done has left the board");
   const [background, running, review] = cards;
   assert.equal(background.column, "running");
   assert.equal(background.backgroundRunning, true);

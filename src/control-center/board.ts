@@ -67,6 +67,8 @@ export function buildBoard(projects: BoardProject[], sources: BoardSources): Boa
       const needsReview = session.reviewState === "needs_review";
       const autoRespondStop = needsReview && !running ? sources.autoRespondStop(project.projectId, conversationId) : null;
       if (!running && !needsReview && !pendingReviews.length) continue;
+      // Marked done, from its project or from the board: it has left the board, until it runs again.
+      if (session.doneAt && !running) continue;
       const reviewCheck = sources.reviewCheck(project.projectId, conversationId);
       // Bob checked it and it is not done: it waits for the person, so it is not just ready for review.
       const checkedForYou = needsReview && !running && Boolean(reviewCheck?.needsYou);
