@@ -131,7 +131,7 @@ export function armAutoCompactAfterPrompt(session: HarnessSession): void { autoC
 
 /** Runs only from the queue's idle gap. Suppression prevents stale usage reported by
  * a just-compacted harness from starting an endless compaction loop. */
-export async function autoCompactBetweenTurns(shared: SharedHarnessSession, threshold: number | null, beforeStart?: () => Promise<void>): Promise<boolean> {
+export async function autoCompactBetweenTurns(shared: SharedHarnessSession, threshold: number | null, compact = () => shared.session.compact()): Promise<boolean> {
   const usage = shared.session.status().contextUsage;
   if (threshold === null || !usage || usage.percent < threshold || shared.turnInFlight > 0 || shared.session.isBusy() || autoCompacted.has(shared.session.id)) return false;
   shared.turnInFlight += 1;
@@ -140,11 +140,40 @@ export async function autoCompactBetweenTurns(shared: SharedHarnessSession, thre
   // failing compaction on each one floods the log and never reaches the prompt.
   autoCompacted.add(shared.session.id);
   try {
-    await compactHarnessSession(shared, () => shared.session.compact(undefined, beforeStart));
+    await compactHarnessSession(shared, compact);
     return true;
   } finally {
     shared.turnInFlight -= 1;
+    sendHarnessStatus(shared);
+    broadcastToProject(shared.projectId, { type: "sessionsChanged" });
   }
+}
+
+async function withPromptProfile<T>(connection: HarnessChatConnection, prompt: Pick<QueuedPrompt, "author" | "automationProfile">, work: () => Promise<T>): Promise<T> {
+  if (prompt.automationProfile) {
+    if (prompt.automationProfile.nodeId !== (await getClusterNode()).id) throw new Error("Automation profile belongs to another execution node");
+    return runWithAutomationProfile({ creatorAccountId: prompt.automationProfile.accountId, providerProfileId: prompt.automationProfile.profileId }, work);
+  }
+  return withoutAutomationProfile(() => runAsAccount(turnActor(connection, prompt.author ?? connection.author), work));
+}
+
+/** Compaction keeps the current model, but needs the same subscription scope as a prompt. */
+async function compactConversation(connection: HarnessChatConnection, instructions?: string, identity: Pick<QueuedPrompt, "author" | "automationProfile"> = connection): Promise<void> {
+  return withPromptProfile(connection, identity, async () => {
+    const session = connection.shared.session;
+    const pool = await resolveTurnSubscriptionPool(connection, { author: identity.author, automationProfile: identity.automationProfile });
+    const run = () => session.compact(instructions, () => writable(connection));
+    if (!pool) return run();
+    if (!session.checkpointPoolAttempt || !session.restorePoolAttempt) throw new Error("This harness cannot safely retry a subscription pool attempt");
+    const preferred = profileProviderForRuntime(session.settings().provider);
+    const candidates = pool.candidates.filter(candidate => candidate.provider === preferred || (connection.engine === "pi" && candidate.provider === "pi"));
+    // Only transcript maintenance runs here. Restore a failed summary before trying another account;
+    // a normal continuation prompt would start agent work instead of compacting.
+    await runPoolAttempts(candidates, preferred, candidate => withPoolProfile(candidate, run), async () => {
+      const checkpoint = await session.checkpointPoolAttempt!();
+      return () => session.restorePoolAttempt!(checkpoint);
+    });
+  });
 }
 
 function queueKey(connection: HarnessChatConnection): string { return `${connection.project.id}:${connection.conversationId}`; }
@@ -248,7 +277,7 @@ export async function resolveSubscriptionPool(request: SubscriptionPoolRequest):
   return { id: choice.pool.id, name: choice.pool.name, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",
     candidates: profiles.map((profile) => ({ profileId: profile.id, provider: profile.provider, label: profile.label, poolId: choice.pool.id, profile })) };
 }
-function resolveTurnSubscriptionPool(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<TurnSubscriptionPool | undefined> {
+function resolveTurnSubscriptionPool(connection: HarnessChatConnection, queued: { settings?: QueuedSettings | null; automationProfile?: QueuedPrompt["automationProfile"]; author?: MessageAuthor }): Promise<TurnSubscriptionPool | undefined> {
   return resolveSubscriptionPool({
     engine: queued.settings?.harnessId ?? connection.engine, provider: queued.settings?.provider ?? connection.shared.session.settings().provider,
     projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId,
@@ -552,12 +581,7 @@ function turnActor(connection: HarnessChatConnection, author: MessageAuthor | un
 }
 
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt & { createdAt?: string }): Promise<void> {
-  if (!queued.automationProfile) {
-    const actor = turnActor(connection, queued.author ?? connection.author);
-    return withoutAutomationProfile(() => runAsAccount(actor, () => dispatchWithProfile(connection, queued)));
-  }
-  if (queued.automationProfile.nodeId !== (await getClusterNode()).id) throw new Error("Automation profile belongs to another execution node");
-  return runWithAutomationProfile({ creatorAccountId: queued.automationProfile.accountId, providerProfileId: queued.automationProfile.profileId }, () => dispatchWithProfile(connection, queued));
+  return withPromptProfile(connection, queued, () => dispatchWithProfile(connection, queued));
 }
 
 async function dispatchWithProfile(connection: HarnessChatConnection, queued: QueuedPrompt & { createdAt?: string }): Promise<void> {
@@ -642,7 +666,8 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
       } };
       if (!pool) await connection.shared.session.prompt(promptInput);
       else {
-        const initialSettings = queued.settings ? runtimeSettings(queued.settings) : connection.shared.session.settings();
+        const saved = queued.settings ?? readQueueSettings(queueKey(connection));
+        const initialSettings = saved && selectedHarness(saved) === connection.engine ? runtimeSettings(saved) : connection.shared.session.settings();
         await promptOnSubscriptionPool(connection.shared.session, pool, initialSettings,
           (candidate) => poolCandidateSettings(connection, pool!, candidate, initialSettings, difficulty), promptInput,
           (candidate) => { if (!queued.systemEventId) announceConnection(connection, queued.id, { pool: { name: pool!.name }, profile: { label: candidate.label } }); });
@@ -702,11 +727,16 @@ function latestAssistantText(session: HarnessSession): string | undefined {
 }
 
 async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> {
+  return withPromptProfile(connection, connection, () => runGoalTurnWithProfile(connection));
+}
+
+async function runGoalTurnWithProfile(connection: HarnessChatConnection): Promise<boolean> {
   const goal = await getConversationGoal(connection.project.id, connection.conversationId);
   if (goal?.status !== "active") return false;
   const local = await getClusterNode();
   await ensureCurrentSession(connection);
   connection.shared.turnInFlight += 1;
+  connection.shared.turnAccountId = connection.automationProfile?.accountId ?? actingAccount()?.accountId ?? null;
   markHarnessInput(connection.shared);
   const startedAt = new Date().toISOString();
   const timing: UsageDifficulty = { turnId: randomUUID(), projectId: connection.project.id, conversationId: connection.conversationId, sessionId: connection.shared.session.id, engine: connection.engine, occurredAt: startedAt, status: "goal", level: null, confidence: null, startedAt, endedAt: null, turnKind: "goal" };
@@ -715,8 +745,19 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   try {
     await writable(connection);
     await catchUpProjectGit(connection);
-    await connection.shared.session.preflight();
-    await connection.shared.session.prompt({ text: goalPrompt(goal), beforeStart: () => writable(connection) });
+    const pool = await resolveTurnSubscriptionPool(connection, connection);
+    const session = connection.shared.session;
+    const input = { text: goalPrompt(goal), beforeStart: () => writable(connection), onStarted: () => armAutoCompactAfterPrompt(session) };
+    if (!pool) {
+      await session.preflight();
+      await announceRecoveryConnection(connection.shared);
+      await session.prompt(input);
+    } else {
+      const initial = session.settings();
+      await promptOnSubscriptionPool(session, pool, initial,
+        candidate => resolvePoolModelSettings(connection.engine, candidate.provider, initial, undefined, pool.fallbackModels[candidate.provider]), input,
+        candidate => announceSharedConnection(connection.shared, { pool: { name: pool.name }, profile: { label: candidate.label } }));
+    }
     const assistantText = latestAssistantText(connection.shared.session);
     if (assistantText === undefined) throw new Error("Goal turn ended without an assistant response");
     const updated = await recordConversationGoalResponse(connection.project.id, connection.conversationId, goal.createdAt, assistantText, local.id);
@@ -731,6 +772,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   } finally {
     saveDifficulty({ ...timing, endedAt: new Date().toISOString(), outcome }, local.id);
     connection.shared.turnInFlight -= 1;
+    if (!connection.shared.turnInFlight) { connection.shared.turnConnection = null; connection.shared.turnAccountId = null; }
     sendHarnessStatus(connection.shared);
   }
 }
@@ -840,6 +882,7 @@ function wakeWhenHarnessIdle(connection: HarnessChatConnection): void {
 }
 
 async function drainLoop(connection: HarnessChatConnection): Promise<void> {
+  let lastPrompt: QueuedPrompt | undefined;
   for (;;) {
     const responder = await getAutoRespond(connection.project.id, connection.conversationId);
     if (responder?.status === "active" && responder.retry && Date.parse(responder.retry.nextAt) > Date.now()) { armAutoRetry(connection, responder); return; }
@@ -850,7 +893,16 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
       connection.shared.skillsStale = false;
       await connection.shared.session.reload().catch((error) => console.warn("Skill reload before the next message failed", error instanceof Error ? error.message : error));
     }
-    if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
+    try {
+      const compactAs = listQueuedPrompts(queueKey(connection)).find(prompt => !responder || !deferredAutoPrompt(prompt, responder)) ?? lastPrompt ?? connection;
+      await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => compactConversation(connection, undefined, compactAs));
+    } catch (error) {
+      if (error instanceof ConversationOwnershipError) throw error;
+      // A force start cancels the compaction and owns the queue now; its cancellation is not a failure.
+      if (pausedDrains.has(queueKey(connection))) return;
+      logChatFailure("Automatic compaction", connection, error);
+      publish(connection, { type: "error", nonFatal: true, error: `Automatic compaction failed: ${chatErrorMessage(error)}` });
+    }
     const next = listQueuedPrompts(queueKey(connection)).find(prompt => !responder || !deferredAutoPrompt(prompt, responder));
     if (next?.systemEventId && next.dispatchState === "starting") {
       if (startingIds.has(next.id)) return;
@@ -868,7 +920,7 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
       continue;
     }
     if (next) {
-      try { await dispatch(connection, next); }
+      try { await dispatch(connection, next); lastPrompt = next; }
       catch (error) {
         if (!next.systemEventId) {
           throw error;
@@ -1020,7 +1072,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     try {
       await writable(connection);
       const shared = connection.shared;
-      await compactHarnessSession(shared, () => shared.session.compact(message.message, () => writable(connection)));
+      await compactHarnessSession(shared, () => compactConversation(connection, message.message));
       autoCompacted.add(shared.session.id);
     } finally {
       connection.shared.turnInFlight -= 1;
@@ -1237,7 +1289,11 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const local = await getClusterNode();
   if (!record && !options.readOnly) record = await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
   const saved = readQueueSettings(queueKey(connection));
-  if (saved && selectedHarness(saved) === options.engine && !harnessSessionBusy(shared)) await measureOperation("chat.open.configure", () => shared.session.configure(runtimeSettings(saved)));
+  if (saved && selectedHarness(saved) === options.engine && !harnessSessionBusy(shared)) {
+    // Pool settings authenticate only inside a member attempt, never while opening history.
+    const pool = await resolveTurnSubscriptionPool(connection, { ...connection, settings: saved });
+    if (!pool) await measureOperation("chat.open.configure", () => shared.session.configure(runtimeSettings(saved)));
+  }
   attachHarnessClient(shared, options.socket); harnessChatConnections.add(connection);
   options.socket.on("close", () => { harnessChatConnections.delete(connection); detachHarnessClient(connection.shared, options.socket); });
   // History and queue must describe the same side of onStarted. Metadata reads

@@ -13,7 +13,7 @@ function sharedSession(percent: number, compact: () => Promise<void>, id = `sess
     isBusy: () => false,
     compact,
   };
-  return { session, turnInFlight: 0 } as unknown as SharedHarnessSession;
+  return { session, turnInFlight: 0, clients: new Set() } as unknown as SharedHarnessSession;
 }
 
 test("auto compact runs once at the configured threshold and rearms after a prompt", async () => {

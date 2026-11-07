@@ -135,6 +135,27 @@ for (const peerReadOnly of [true, false]) test(`read-only attach ${peerReadOnly 
   f.closeSocket();
 });
 
+for (const pooled of [true, false]) test(`opening saved model settings ${pooled ? "defers pool authentication until a turn" : "configures an individual profile"}`, async () => {
+  const saved = { harnessId: "pi", provider: "anthropic", modelId: "saved-model", reasoning: "high" };
+  let configured = 0;
+  const f = fixture({
+    readQueueSettings: () => saved,
+    actingAccount: () => ({ accountId: "viewer" }),
+    projectClusterIds: () => [],
+    resolveSubscriptionChoice: () => pooled ? { kind: "pool", pool: { id: "pool", name: "Pool", fallbackModels: {} } } : undefined,
+    poolCandidates: () => [],
+  });
+  f.shared.session.settings = () => ({ provider: "anthropic", modelId: "old-model", reasoning: "high" });
+  f.shared.session.configure = async () => {
+    configured++;
+    if (pooled) throw new Error("Selected subscription pool requires pool-aware execution");
+  };
+  await f.exports.attachHarnessChat(f.options);
+  assert.equal(configured, pooled ? 0 : 1);
+  assert.ok(f.frames.some(frame => frame.type === "ready"));
+  f.closeSocket();
+});
+
 function visiblePromptCount(frames: any[]): number {
   // Same identity rules as socket.js: ready replaces history, queue snapshots retain IDs,
   // promptStarted clears the queued mark without removing the user bubble.

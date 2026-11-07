@@ -4,7 +4,7 @@ import { getClusterNode } from "../cluster.js";
 import { ensureConversationRecord, getConversationRecord } from "../conversation-records.js";
 import { getHarness, getHarnessRuntime } from "../harnesses.js";
 import type { HarnessModelSettings, HarnessPrompt } from "../harnesses/runtime.js";
-import { runAsAccount } from "../account-context.js";
+import { actingAccount, runAsAccount } from "../account-context.js";
 import { ownerAsActor, resourceOwner } from "../ownership.js";
 import { resolvePoolModelSettings } from "../provider-profiles/pool-execution.js";
 import { buildHandoffContext } from "../handoff-context.js";
@@ -21,11 +21,13 @@ import { harnessSessionBusy, openHarnessSession, sendHarnessStatus, type SharedH
 import { broadcastToProject } from "./realtime.js";
 import { claimConversationLocally, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags, updateContinuationPrompt } from "./state.js";
+import { prepareBackgroundTurn } from "./background-turn.js";
 
 export interface HarnessTaskRun {
   shared: SharedHarnessSession; projectId: string; taskId: string; leaseToken: string;
   phase: TaskPhase; cwd: string; sessionId: string; sessionPath: string | null;
   model: string | null; effort: string | null; kind: "phase" | "merge";
+  prompt: (input: HarnessPrompt) => Promise<void>;
 }
 export const harnessTaskRuns = new Map<string, HarnessTaskRun>();
 const taskRunSubscriptions = new Map<HarnessTaskRun, () => void>();
@@ -51,28 +53,26 @@ async function openTaskSession(project: ProjectRecord, claimed: TaskRecord, engi
   const conversationId = record?.conversationId ?? sessionId;
   const shared = await openHarnessSession(engine, { projectId: project.id, cwd, sessionId, sessionPath: existingPath, conversationId });
   if (harnessSessionBusy(shared)) throw new Error("Harness session is already processing a turn");
-  const run: HarnessTaskRun = { shared, projectId: project.id, taskId: claimed.id, leaseToken, phase, cwd, sessionId, sessionPath: existingPath ?? null, model: config?.modelId ?? null, effort: config?.reasoning ?? null, kind };
+  let run: HarnessTaskRun | undefined;
   shared.turnInFlight += 1;
+  shared.turnAccountId = actingAccount()?.accountId ?? null;
   try {
     await ensureConversationRecord(project.id, engine, sessionId, local.id, claimed.id);
     await ensureSessionTitle(sessionId, claimed.title);
-    if (config) {
-      const base = shared.session.settings();
-      const settings: HarnessModelSettings = { ...base, ...config };
-      const runtime = await getHarnessRuntime(engine);
-      await runtime.validateSettings(settings);
-      await shared.session.configure(settings);
-    }
-    await shared.session.preflight();
+    const turn = await prepareBackgroundTurn({ projectId: project.id, conversationId, harnessId: engine,
+      runtime: await getHarnessRuntime(engine), session: shared.session, settings: { ...shared.session.settings(), ...config }, configure: Boolean(config) });
+    run = { shared, projectId: project.id, taskId: claimed.id, leaseToken, phase, cwd, sessionId, sessionPath: existingPath ?? null,
+      model: config?.modelId ?? null, effort: config?.reasoning ?? null, kind, prompt: turn.prompt };
     const initialFile = shared.session.file;
     if (initialFile) {
       run.sessionPath = initialFile;
       await persistTaskSessionPath(project.id, claimed.id, leaseToken, initialFile, engine, sessionId, claimed.title);
     }
+    const openedRun = run;
     const persistFile = async (): Promise<void> => {
       const current = harnessTaskRuns.get(claimed.id);
       const file = shared.session.file;
-      if (current !== run || !file || current.sessionPath === file) return;
+      if (current !== openedRun || !file || current.sessionPath === file) return;
       current.sessionPath = file;
       await persistTaskSessionPath(project.id, claimed.id, leaseToken, file, engine, sessionId, claimed.title);
     };
@@ -81,7 +81,12 @@ async function openTaskSession(project: ProjectRecord, claimed: TaskRecord, engi
     broadcastToProject(project.id, { type: "sessionsChanged" });
     return run;
   } catch (error) {
-    unregisterRun(run);
+    if (run) unregisterRun(run);
+    else {
+      shared.turnInFlight -= 1;
+      shared.turnAccountId = null;
+      sendHarnessStatus(shared);
+    }
     throw error;
   }
 }
@@ -91,6 +96,7 @@ function unregisterRun(run: HarnessTaskRun): void {
   taskRunSubscriptions.get(run)?.();
   taskRunSubscriptions.delete(run);
   run.shared.turnInFlight -= 1;
+  if (!run.shared.turnInFlight) run.shared.turnAccountId = null;
   sendHarnessStatus(run.shared);
   broadcastToProject(run.projectId, { type: "sessionsChanged" });
 }
@@ -149,6 +155,10 @@ async function finishMergeRun(project: ProjectRecord, task: TaskRecord, localId:
 }
 
 export async function startMergeRun(project: ProjectRecord, task: TaskRecord): Promise<void> {
+  return runAsAccount(actingAccount() ?? ownerAsActor(resourceOwner("project", project.id)), () => startMergeRunWithProfile(project, task));
+}
+
+async function startMergeRunWithProfile(project: ProjectRecord, task: TaskRecord): Promise<void> {
   if (process.env.JOINT_BOB_MERGE_AGENT === "off") throw new TicketMergeError(409, "Merge agent runs are disabled on this node");
   const local = await getClusterNode();
   if (task.currentNodeId !== local.id) return;
@@ -162,7 +172,7 @@ export async function startMergeRun(project: ProjectRecord, task: TaskRecord): P
     void (async () => {
       let unregistered = false;
       try {
-        await launched.shared.session.prompt({ text: prompt, beforeStart: async () => {
+        await launched.prompt({ text: prompt, beforeStart: async () => {
           if (flags.updatePreparing) throw new Error("An update is being prepared");
           if (harnessTaskRuns.get(task.id) !== launched) throw new Error("Task run is no longer active");
           await requireLocalConversationOwner(launched.shared.engine, launched.sessionId);
@@ -254,6 +264,10 @@ async function failTaskRunRecovery(projectId: string, taskId: string, nodeId: st
 }
 
 export async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedPhase?: TaskPhase, recovery?: TaskRunRecovery): Promise<void> {
+  return runAsAccount(actingAccount() ?? ownerAsActor(resourceOwner("project", project.id)), () => startTaskRunWithProfile(project, task, requestedPhase, recovery));
+}
+
+async function startTaskRunWithProfile(project: ProjectRecord, task: TaskRecord, requestedPhase?: TaskPhase, recovery?: TaskRunRecovery): Promise<void> {
   const local = await getClusterNode();
   if (task.currentNodeId !== local.id) return;
   const { task: claimed, leaseToken } = await claimTaskLease(project.id, task.id, local.id);
@@ -274,7 +288,7 @@ export async function startTaskRun(project: ProjectRecord, task: TaskRecord, req
     void (async () => {
       let unregistered = false;
       try {
-        await launched.shared.session.prompt({ text: prompt, beforeStart: async () => {
+        await launched.prompt({ text: prompt, beforeStart: async () => {
           if (flags.updatePreparing) throw new Error("An update is being prepared");
           if (harnessTaskRuns.get(claimed.id) !== launched) throw new Error("Task run is no longer active");
           await requireLocalConversationOwner(launched.shared.engine, launched.sessionId);
@@ -368,7 +382,8 @@ async function recoverTask(record: UpdateRecoveryRecord): Promise<void> {
   const recovered = task.sessionPath === record.sessionPath ? task : await updateTask(record.projectId, task.id, { sessionPath: record.sessionPath });
   if (!record.phase) throw new Error("Recovery task phase is missing");
   const settings = record.settings ?? (record.model ? { provider: record.engine, modelId: record.model, reasoning: record.effort ?? "default" } : undefined);
-  await startTaskRun(project, recovered, record.phase, { recoveryId: record.id, prompt: updateContinuationPrompt, engine: record.engine, settings });
+  await runAsAccount(ownerAsActor(record.accountId ?? resourceOwner("project", project.id)), () =>
+    startTaskRun(project, recovered, record.phase!, { recoveryId: record.id, prompt: updateContinuationPrompt, engine: record.engine, settings }));
 }
 
 export async function recoverPendingUpdateRuns(): Promise<void> {

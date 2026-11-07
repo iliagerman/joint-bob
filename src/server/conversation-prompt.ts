@@ -87,7 +87,7 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
       if (event.type === "promptCompleted" && event.queueId === queueId && !options.scheduledAutoRespond) { options.onCompleted?.(); finish(); }
       if (options.scheduledAutoRespond && queueId && event.type === "autoRespond" && event.state?.sourcePromptId === queueId && event.state.status !== "active") { options.onCompleted?.(); finish(); }
       if (event.type === "queuedPromptCancelled" && event.queueId === queueId) finish(new Error(`${label} prompt was cancelled`));
-      if ((event.type === "promptFailed" && event.queueId === queueId || event.type === "error") && !(options.scheduledAutoRespond && queueId)) finish(new Error(event.error));
+      if ((event.type === "promptFailed" && event.queueId === queueId || event.type === "error" && event.nonFatal !== true) && !(options.scheduledAutoRespond && queueId)) finish(new Error(event.error));
     });
   });
 }

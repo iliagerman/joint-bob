@@ -9,6 +9,8 @@ import type { HarnessId } from "../types.js";
 export async function prepareBackgroundTurn(input: {
   projectId: string; conversationId?: string; harnessId: HarnessId;
   runtime: HarnessRuntime; session: HarnessSession; settings: HarnessModelSettings;
+  /** False keeps the session's own model: a task with no model of its own was never reconfigured. */
+  configure?: boolean;
 }): Promise<{ pooled: boolean; prompt: (prompt: HarnessPrompt) => Promise<void> }> {
   // Kiro uses standalone profiles, never subscription pools.
   const poolRunner = input.harnessId === "kiro" ? undefined : await import("./harness-chat.js");
@@ -21,8 +23,10 @@ export async function prepareBackgroundTurn(input: {
     accountId: automation?.accountId ?? actingAccount()?.accountId,
     usage: automation ? "automation" : "interactive", fixedProfile: Boolean(automation?.profileId) });
   if (!pool) {
-    await runtime.validateSettings(settings);
-    await session.configure(settings);
+    if (input.configure !== false) {
+      await runtime.validateSettings(settings);
+      await session.configure(settings);
+    }
     await session.preflight();
   }
   return {
