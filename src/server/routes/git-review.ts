@@ -729,14 +729,19 @@ const overviewRequest = z.object({
   settings: storySettingsSchema.optional(),
 }).strict();
 
-// The Activity overview: the conversation's own commits and claimed pending files, written straight into a movie.
+// The Activity overview: the commits the conversation made and pushed (its pending files only when it has none), written straight into a movie.
 // It keeps its own record, so no written story is made and none is shown.
 async function performOverview(projectId: string, cwd: string, input: z.infer<typeof overviewRequest>, onProgress?: (event: JobProgress) => void, repository?: string): Promise<unknown> {
   pruneStoryFiles();
   const project = await getProject(projectId);
   if (!project) throw new GitReviewError(404, "Project not found");
   const settings = input.settings ?? getStorySettings();
-  const existing = listGitReviewThreads(projectId, input.conversationId).find((thread) => thread.question === ACTIVITY_OVERVIEW_MARKER && sameRepository(thread.selection, repository));
+  let existing = listGitReviewThreads(projectId, input.conversationId).find((thread) => thread.question === ACTIVITY_OVERVIEW_MARKER && sameRepository(thread.selection, repository));
+  // Writing the movie again reads the conversation again: what it pushed since, and code an older reading missed.
+  if (existing && input.regenerate) {
+    deleteGitReviewThread(existing.id);
+    existing = undefined;
+  }
   let thread = existing ? getGitReviewThread(existing.id)! : undefined;
   if (!thread) {
     // A movie written before Activity overview kept its own record hangs off the conversation's change story. While
@@ -746,8 +751,14 @@ async function performOverview(projectId: string, cwd: string, input: z.infer<ty
     if (ready && !input.regenerate) return { thread: storyThreadInfo(ready.thread), script: ready.script };
     onProgress?.({ type: "progress", stage: "Reading the conversation and finding the files it changed" });
     const { paths, lastHarness } = await discoverConversationFiles(project, cwd, input.conversationId);
-    const sources: StorySources = { scope: "conversation", pendingPaths: paths, includeCommits: true };
-    const collected = await collectStorySources(project, cwd, input.conversationId, sources);
+    // The movie shows the code the conversation committed and pushed, as it was then. The files as they are on
+    // disk now (often changed since by others) stand in only when the conversation committed nothing.
+    let sources: StorySources = { scope: "conversation", pendingPaths: [], includeCommits: true };
+    let collected = await collectStorySources(project, cwd, input.conversationId, sources);
+    if (!collected.facts.commits.length && paths.length) {
+      sources = { ...sources, pendingPaths: paths };
+      collected = await collectStorySources(project, cwd, input.conversationId, sources);
+    }
     const reviewer = getHarness(lastHarness as HarnessId).defaults;
     const source = { facts: collected.facts, patches: collected.patches, fingerprint: collected.fingerprint, sources, generatedAt: new Date().toISOString() };
     thread = createGitReviewThread({ projectId, conversationId: input.conversationId, harnessId: lastHarness as HarnessId, provider: reviewer.provider, modelId: reviewer.modelId, thinkingLevel: reviewer.thinkingLevel, selection: { scope: "worktree", repository: repositoryKey(repository) }, snapshot: "", question: ACTIVITY_OVERVIEW_MARKER, answer: JSON.stringify(source), ttlMs: GIT_STORY_TTL_MS });

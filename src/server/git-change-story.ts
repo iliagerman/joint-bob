@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { gitCommitDetail, gitCommitFileDiff, gitLocalCommits, GitReviewError, type GitChangeKind, type GitCommitDetail } from "../git-review.js";
+import { gitCommitDetail, gitCommitFileDiff, gitLocalCommits, gitRangeCommits, GitReviewError, type GitChangeKind, type GitCommitDetail } from "../git-review.js";
 import type { HarnessId, ProjectRecord } from "../types.js";
 import { buildTurns, loadConversationMessages, type ConversationTurn } from "./conversation-turns.js";
 import { pendingReviewDiff } from "./git-review-guide.js";
@@ -205,12 +205,18 @@ async function quietCommits(cwd: string, turns: ConversationTurn[]): Promise<Map
  * A hash the turn printed some other way counts when this clone's reflog says it was committed while
  * one of the turn's tool calls was running: that finds a quiet `git commit -q` whose hash only shows
  * in a later `git log` or `git push`, and leaves out commits by others that a turn merely listed.
+ * Every commit in a range the turn's `git push` published counts too, however it was made (for
+ * example with `git commit-tree` and `git update-ref`, which print no commit line and leave no
+ * commit in the reflog).
  */
 export async function turnCommits(cwd: string, turns: ConversationTurn[], limit = COMMIT_LIMIT): Promise<Array<{ turn: number; detail: GitCommitDetail }>> {
   const quiet = await quietCommits(cwd, turns);
   const made: Array<{ turn: number; detail: GitCommitDetail }> = [];
   for (const turn of turns) {
-    for (const hash of [...turn.commits, ...quiet.get(turn.n) ?? []]) {
+    const pushed: string[] = [];
+    // A missing object means the pushed range is not in this clone, so there is nothing of it to read.
+    for (const range of turn.pushed) pushed.push(...await gitRangeCommits(cwd, range.from, range.to).catch(() => []));
+    for (const hash of [...turn.commits, ...pushed, ...quiet.get(turn.n) ?? []]) {
       if (made.length >= limit) return made;
       const detail = await gitCommitDetail(cwd, hash).catch(() => null);
       if (!detail || made.some((commit) => commit.detail.hash === detail.hash)) continue;

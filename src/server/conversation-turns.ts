@@ -13,6 +13,8 @@ export interface ConversationTurn {
   commits: string[];
   /** The subject each of those lines gave, by hash. Quoted text can look like a commit line; Git's own subject settles it. */
   subjects: Map<string, string>;
+  /** The ranges `git push` reported publishing in this turn ("old..new"), in order: the code the turn pushed. */
+  pushed: Array<{ from: string; to: string }>;
   /** Every hash-like string the turn's tool output printed. One is a commit of this turn only when Git says it was made meanwhile. */
   printed: Set<string>;
   /** When each tool call of the turn ran, in milliseconds since the epoch. */
@@ -23,6 +25,8 @@ export interface ConversationTurn {
 
 // `git commit` prints "[branch abc1234] subject" (or "[branch (root-commit) abc1234]").
 const COMMIT_OUTPUT = /\[[^\]\n]*? ([0-9a-f]{7,40})\] ([^\n]*)/g;
+// `git push` prints "   abc1234..def5678  main -> main" for each ref it moved forward; a forced update ("+ a...b") is left out.
+const PUSH_OUTPUT = /^[ \t]+([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})[ \t]+\S+[ \t]+->[ \t]+\S+/gm;
 const HASH_LIKE = /\b[0-9a-f]{7,40}\b/g;
 const PRINTED_LIMIT = 20_000;
 const TURN_TEXT_LIMIT = 400_000;
@@ -37,7 +41,7 @@ export function buildTurns(messages: ChatMessage[]): ConversationTurn[] {
   let started = NaN;
   for (const message of messages) {
     if (message.role === "user") {
-      current = { n: turns.length + 1, ...(message.timestamp ? { at: message.timestamp } : {}), user: message.text.trim(), assistant: "", commits: [], subjects: new Map(), printed: new Set(), ran: [], text: "" };
+      current = { n: turns.length + 1, ...(message.timestamp ? { at: message.timestamp } : {}), user: message.text.trim(), assistant: "", commits: [], subjects: new Map(), pushed: [], printed: new Set(), ran: [], text: "" };
       started = message.timestamp ? Date.parse(message.timestamp) : NaN;
       turns.push(current);
       continue;
@@ -49,6 +53,9 @@ export function buildTurns(messages: ChatMessage[]): ConversationTurn[] {
         if (current.commits.includes(hash)) continue;
         current.commits.push(hash);
         current.subjects.set(hash, subject.trim());
+      }
+      for (const [, from, to] of message.text.matchAll(PUSH_OUTPUT)) {
+        if (!current.pushed.some((range) => range.from === from && range.to === to)) current.pushed.push({ from, to });
       }
       for (const hash of message.text.match(HASH_LIKE) ?? []) if (current.printed.size < PRINTED_LIMIT) current.printed.add(hash);
       const to = message.timestamp ? Date.parse(message.timestamp) : NaN;

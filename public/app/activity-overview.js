@@ -100,7 +100,8 @@ async function openActivityOverview(conversationId, audio) {
     onEnd: () => { if (live?.movie === movie) live = null; },
     narrate: narrates ? (text, who) => apiBlob(url("story-voice"), { method: "POST", body: JSON.stringify({ text, who, settings }) }) : null,
     ask: settings.ask ? (question, onProgress) => write({ question }, onProgress) : null,
-    rewrite: (onProgress) => write({ regenerate: true }, onProgress),
+    // Writing it again reads the conversation again, so the movie gets a new record; questions follow it there.
+    rewrite: (onProgress) => requestMovie(url("overview"), { conversationId, settings, regenerate: true }, onProgress).then((line) => { thread = line.thread; return line.script; }),
   });
   live = { conversationId, movie };
 }

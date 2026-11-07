@@ -3,8 +3,9 @@ import { backdrop, clock, floor, framedPrint, menuBoard, mug, pendantLamp, plant
 
 // The places an Activity overview chapter can happen in, drawn on paper with the films' pen. Each
 // chapter gets a room of its own on one long sheet, side by side, and the camera travels from one
-// to the next. Every room has the same bones: Maya on the left and Jonah on the right, sitting or
-// standing behind something that hides their laps (a table, a desk, a ledge), and the board
+// to the next. Every room has the same bones: Maya on the left and Jonah on the right, sitting
+// behind something that hides their laps (a table, a desk, the seats in front) or, outdoors and in
+// the matrix, standing on their own feet behind a low curb, and the board
 // between them where the chapter's slide is drawn. A room draws its back (`back`, from layer 0)
 // and its front (`front`, from layer 20); `t` is { frame, sunP } for what moves.
 
@@ -12,6 +13,10 @@ export const ROOM = { w: 1400, h: 880, top: 40, pitch: 1560 };
 /** The top of the table, desk or ledge the hosts sit behind. */
 export const FRONT = 722;
 export const SEAT_Y = 780;
+/** Where a standing host's hips are, and the top of the low curb in front of their shins. */
+export const STAND_Y = 640;
+export const CURB = 834;
+const GROUND = 904;
 export const SEATS = { host: 250, cohost: 1150 };
 export const roomX = (seg) => seg * ROOM.pitch;
 export const boardRect = (ox) => ({ x: ox + 390, y: 90, w: 620, h: 420 });
@@ -27,12 +32,12 @@ function table(pen, ox, color, front = 0.5) {
   pen.stroke([[ox + 880, 846], [ox + 1100, 842]], { width: 1.3, alpha: 0.5 });
 }
 
-/** A low wall in front of people standing: a coping on top and courses of brick. */
-function ledge(pen, ox, top, face) {
+/** A low curb in front of people standing, up to their shins: a coping on top and a course of brick. */
+function curb(pen, ox, top, face) {
   shadow(pen, ox + 700, 906, 640, 16);
-  pen.shape([[ox + 60, FRONT], [ox + 1340, FRONT], [ox + 1340, FRONT + 22], [ox + 60, FRONT + 22]], { fill: top, alpha: 0.85, smooth: false, width: 3 });
-  pen.shape([[ox + 80, FRONT + 22], [ox + 1320, FRONT + 22], [ox + 1320, 900], [ox + 80, 900]], { fill: face, alpha: 0.6, smooth: false, width: 3 });
-  for (let row = 0; row < 3; row++) for (let k = 0; k < 9; k++) pen.line([ox + 100 + k * 136 + (row % 2) * 68, 780 + row * 40], [ox + 160 + k * 136 + (row % 2) * 68, 780 + row * 40], { width: 1.3, alpha: 0.45, over: 0 });
+  pen.shape([[ox + 60, CURB], [ox + 1340, CURB], [ox + 1340, CURB + 16], [ox + 60, CURB + 16]], { fill: top, alpha: 0.85, smooth: false, width: 3 });
+  pen.shape([[ox + 80, CURB + 16], [ox + 1320, CURB + 16], [ox + 1320, 900], [ox + 80, 900]], { fill: face, alpha: 0.6, smooth: false, width: 3 });
+  for (let k = 0; k < 9; k++) pen.line([ox + 100 + k * 136, 876], [ox + 160 + k * 136, 876], { width: 1.3, alpha: 0.45, over: 0 });
 }
 
 function microphones(pen, ox) {
@@ -166,37 +171,39 @@ const coffeehouse = {
 };
 
 const street = {
-  icon: "🌃", label: "Street walk", board: "poster", sit: false,
+  icon: "🌃", label: "Street walk", board: "poster", sit: false, ground: GROUND,
   back(pen, ox) {
     backdrop(pen, ox, ROOM.top, ROOM.w, ROOM.h, "#e2e8ef", 17);
     pen.on(1);
     // Shop fronts on either side, the middle one behind the poster.
     const fronts = [[40, 140, 340, "#e9c9a8"], [370, 70, 660, "#e6d6c8"], [1020, 170, 340, "#cfd8e6"]];
     for (const [x, top, w, color] of fronts) {
-      pen.shape([[ox + x, FRONT], [ox + x, top], [ox + x + w, top], [ox + x + w, FRONT]], { fill: color, alpha: 0.55, smooth: false, width: 2.6 });
+      pen.shape([[ox + x, GROUND], [ox + x, top], [ox + x + w, top], [ox + x + w, GROUND]], { fill: color, alpha: 0.55, smooth: false, width: 2.6 });
       for (let row = 0; row < 2; row++) for (let col = 0; col < 3; col++) pen.shape(roundRect(ox + x + 30 + col * (w - 60) / 3, top + 40 + row * 110, (w - 60) / 3 - 20, 70, 6), { fill: "#cfe5f6", alpha: 0.5, width: 1.8 });
     }
     // A striped awning over the left shop, and a lamp post on each side.
     pen.shape([[ox + 30, 400], [ox + 390, 400], [ox + 370, 460], [ox + 50, 460]], { fill: "#f6a39a", alpha: 0.6, smooth: false, width: 2.6 });
     for (let k = 1; k < 6; k++) pen.line([ox + 30 + k * 60, 400], [ox + 40 + k * 56, 460], { width: 1.6, over: 0 });
-    for (const lx of [ox + 340, ox + 1060]) {
-      pen.stroke([[lx, FRONT], [lx, 300], [lx + (lx < ox + 700 ? -20 : 20), 270]], { width: 4 });
-      pen.shape(roundRect(lx + (lx < ox + 700 ? -44 : 4), 254, 40, 30, 8), { fill: tones.sun, alpha: 0.8, width: 2.4 });
-      pen.wash(oval(lx + (lx < ox + 700 ? -24 : 24), 290, 60, 40, 14), tones.sun, { alpha: 0.2 });
+    // The lamps stand at the ends of the street, clear of the hosts, and lean in towards them.
+    for (const lx of [ox + 70, ox + 1330]) {
+      const inward = lx < ox + 700 ? 1 : -1;
+      pen.stroke([[lx, GROUND], [lx, 300], [lx + inward * 20, 270]], { width: 4 });
+      pen.shape(roundRect(lx + (inward > 0 ? 4 : -44), 254, 40, 30, 8), { fill: tones.sun, alpha: 0.8, width: 2.4 });
+      pen.wash(oval(lx + inward * 24, 290, 60, 40, 14), tones.sun, { alpha: 0.2 });
     }
     floor(pen, ox + 20, ox + 1380, 904);
   },
   front(pen, ox) {
-    ledge(pen, ox, "#cbbfae", "#d9b39a");
+    curb(pen, ox, "#cbbfae", "#d9b39a");
     pen.on(22);
-    // Flowers along the top of the planter.
+    // Flowers along the top of the planter, kept clear of the hosts' legs.
     const blossoms = ["#e8613c", "#ffd77a", "#f6a39a", "#b39bff"];
     for (let k = 0; k < 22; k++) {
       const x = ox + 100 + k * 56;
-      if (x > ox + 180 && x < ox + 330) continue;
-      if (x > ox + 1070 && x < ox + 1230) continue;
-      pen.stroke([[x, FRONT], [x + 3, FRONT - 26]], { width: 2, color: tones.leafDark });
-      pen.shape(oval(x + 3, FRONT - 30, 8, 7, 10), { fill: blossoms[k % 4], alpha: 0.85, width: 1.6 });
+      if (x > ox + 150 && x < ox + 360) continue;
+      if (x > ox + 1040 && x < ox + 1250) continue;
+      pen.stroke([[x, CURB], [x + 3, CURB - 26]], { width: 2, color: tones.leafDark });
+      pen.shape(oval(x + 3, CURB - 30, 8, 7, 10), { fill: blossoms[k % 4], alpha: 0.85, width: 1.6 });
     }
   },
 };
@@ -267,7 +274,7 @@ const server = {
 // Green code falling down the walls, written straight onto the canvas: it changes every frame.
 const GLYPHS = "01{}<>/=;アイウエオカキクケコサシスセソ";
 const matrix = {
-  icon: "💻", label: "The matrix", board: "screen", bezel: "#1f7a3a", sit: false,
+  icon: "💻", label: "The matrix", board: "screen", bezel: "#1f7a3a", sit: false, ground: GROUND,
   back(pen, ox, t) {
     backdrop(pen, ox, ROOM.top, ROOM.w, ROOM.h, "#d9ecdc", 29);
     pen.on(1);
@@ -282,7 +289,7 @@ const matrix = {
         const head = (t.frame * speed + column * 131) % 900;
         for (let k = 0; k < 12; k++) {
           const y = 60 + ((head - k * 32 + 900) % 900);
-          if (y > FRONT) continue;
+          if (y > GROUND) continue;
           ctx.globalAlpha = lit * Math.max(0, 0.42 - k * 0.035);
           ctx.fillStyle = k === 0 ? "#0f8a6c" : "#1f7a3a";
           ctx.fillText(GLYPHS[(column * 13 + k * 7 + Math.floor(t.frame / 6)) % GLYPHS.length], x, y);
@@ -292,14 +299,14 @@ const matrix = {
     floor(pen, ox + 20, ox + 1380, 904);
   },
   front(pen, ox) {
-    ledge(pen, ox, "#5f9a76", "#2f5d44");
+    curb(pen, ox, "#5f9a76", "#2f5d44");
     pen.on(22);
-    pen.line([ox + 70, FRONT + 2], [ox + 1330, FRONT + 2], { width: 3, color: "#37cfab", over: 0 });
+    pen.line([ox + 70, CURB + 2], [ox + 1330, CURB + 2], { width: 3, color: "#37cfab", over: 0 });
   },
 };
 
 const rooftop = {
-  icon: "🌅", label: "Rooftop at dawn", board: "stand", sit: false,
+  icon: "🌅", label: "Rooftop at dawn", board: "stand", sit: false, ground: GROUND,
   back(pen, ox, t) {
     backdrop(pen, ox, ROOM.top, ROOM.w, ROOM.h, "#f3d6dc", 7);
     // Dawn: the sun comes up behind the towers as the chapter goes on.
@@ -313,12 +320,15 @@ const rooftop = {
     pen.shape([[ox + 70, 160], [ox + 160, 160], [ox + 156, 250], [ox + 74, 250]], { fill: tones.woodDark, alpha: 0.55, smooth: false, width: 2.6 });
     pen.stroke([[ox + 62, 164], [ox + 115, 124], [ox + 168, 164]], { width: 2.8, smooth: false });
     stringLights(pen, [ox + 40, 70], [ox + 1360, 70], 14);
+    // The far edge of the roof, with the city behind it; the hosts stand on the roof in front.
+    pen.shape([[ox + 30, FRONT - 14], [ox + 1370, FRONT - 14], [ox + 1370, FRONT + 8], [ox + 30, FRONT + 8]], { fill: "#cbbfae", alpha: 0.8, smooth: false, width: 2.6 });
+    floor(pen, ox + 20, ox + 1380, GROUND);
   },
   front(pen, ox, t) {
-    ledge(pen, ox, "#cbbfae", "#d9b39a");
+    curb(pen, ox, "#cbbfae", "#d9b39a");
     pen.on(22);
-    mug(pen, ox + 380, 676, t.frame, { color: tones.blue });
-    mug(pen, ox + 980, 676, t.frame, { color: tones.red });
+    mug(pen, ox + 560, CURB - 46, t.frame, { color: tones.blue });
+    mug(pen, ox + 840, CURB - 46, t.frame, { color: tones.red });
   },
 };
 
@@ -337,7 +347,7 @@ export function drawBoard(pen, rect, room) {
   pen.shape(roundRect(x, y, w, h, 14), { fill: "#fffaf0", alpha: 0.92, width: 3.4 });
   pen.wash(roundRect(x + 6, y + 6, w - 12, 64, 10), tones.cream, { alpha: 0.6 });
   if (room.board === "pin") pen.shape(oval(x + w / 2, y - 4, 9, 9, 10), { fill: tones.red, alpha: 0.9, width: 2 });
-  if (room.board === "stand") for (const lx of [x + 70, x + w - 70]) pen.line([lx, y + h], [lx + (lx < x + w / 2 ? -34 : 34), FRONT], { width: 3.4 });
+  if (room.board === "stand") for (const lx of [x + 70, x + w - 70]) pen.line([lx, y + h], [lx + (lx < x + w / 2 ? -34 : 34), room.ground ?? FRONT], { width: 3.4 });
   if (room.board === "chalk") {
     pen.shape([[x - 10, y + h + 4], [x + w + 10, y + h + 4], [x + w + 4, y + h + 18], [x - 4, y + h + 18]], { fill: tones.woodDark, alpha: 0.8, smooth: false, width: 2.4 });
     pen.shape(roundRect(x + 60, y + h - 2, 46, 8, 4), { fill: "#ffffff", alpha: 0.9, width: 1.4 });

@@ -308,6 +308,14 @@ export async function gitLocalCommits(cwd: string, since: Date): Promise<GitLoca
   return commits;
 }
 
+/** The commits in `from..to`, oldest first: what a push from `from` to `to` published. */
+export async function gitRangeCommits(cwd: string, from: string, to: string): Promise<string[]> {
+  assertRevision(from);
+  assertRevision(to);
+  const output = await git(await gitRepositoryRoot(cwd), ["rev-list", "--reverse", `${from}..${to}`, "--"]);
+  return output.split("\n").filter(Boolean);
+}
+
 export interface GitCommitDetail extends GitCommit {
   files: GitFileChange[];
   diff: GitDiff;

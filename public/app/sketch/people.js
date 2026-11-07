@@ -89,15 +89,12 @@ function tube(points, width) {
 /**
  * Draws one person. `at` is the point they sit on, `layer` the bottom of the four layers they use
  * (the far arm, the body, the head, the near arm). `pose` comes from `poseAt`. The head is drawn
- * first, as an artist would, then the body, then the arms.
- */
-/**
- * Draws one person. `at` is the point they sit on, `layer` the bottom of the four layers they use
- * (the far arm, the body, the head, the near arm). `pose` comes from `poseAt`. The head is drawn
  * first, as an artist would, then the body, then the arms. The head and body are drawn in a
  * portrait's own units (the head's centre at 0,0, about 236 tall), scaled into the sheet by `K`.
+ * A standing person (`standing`) has `at` at the hips and their legs go down from there. A pose may
+ * place the elbows itself (`nearElbow`, `farElbow`), so an arm can move smoothly between gestures.
  */
-export function person(pen, { at, look, dir = 1, pose, frame, layer = 10, nearLayer = layer + 3, farLayer = layer, holding = null, gripLayer = layer + 2.7, legs = false, scale = 1 }) {
+export function person(pen, { at, look, dir = 1, pose, frame, layer = 10, nearLayer = layer + 3, farLayer = layer, holding = null, gripLayer = layer + 2.7, legs = false, standing = false, scale = 1 }) {
   const [hx, hy] = at;
   const lean = pose.lean ?? 0;
   const breath = 1 + 0.012 * Math.sin(frame / 22 + hx);
@@ -142,6 +139,7 @@ export function person(pen, { at, look, dir = 1, pose, frame, layer = 10, nearLa
   }
 
   if (legs) drawLegs(pen, look, body, map, layer);
+  if (standing) drawStandingLegs(pen, look, [hx, hy], dir, scale, layer);
 
   // The arms reach for the hands' points; the far one sits behind the body.
   const shoulders = { near: body(6 + 128 * K, -236 + 212 * K), far: body(6 - 120 * K, -236 + 214 * K) };
@@ -155,7 +153,7 @@ export function person(pen, { at, look, dir = 1, pose, frame, layer = 10, nearLa
   for (const side of ["far", "near"]) {
     const dip = press(side === "near" ? 0 : 1);
     const hand = [hands[side][0] + dip * 0.6 * scale, hands[side][1] + dip * 2.4 * scale];
-    const elbow = elbowFor(shoulders[side], hand, pose[`${side}Bend`], side === "near" ? dir : -dir);
+    const elbow = pose[`${side}Elbow`] ?? elbowFor(shoulders[side], hand, pose[`${side}Bend`], side === "near" ? dir : -dir);
     // What the hand is doing: holding the phone (`holding`), gripping an edge, a fist, or resting.
     const kind = pose[`${side}Hand`] ?? (holding && side === "near" ? "phone" : "rest");
     // A hand holding a phone is behind it, its fingertips over the phone's edges.
@@ -334,6 +332,22 @@ function drawFace(pen, look, pose, frame, H, offset) {
     pen.stroke(H([[eyes[0][0] + 27 * eyes[0][2], 2], [ahead, -2], [eyes[1][0] - 27 * eyes[1][2], 2]]), { width: 2.2, color: "#2b2f33" });
     pen.stroke(H([[eyes[0][0] - 27 * eyes[0][2], 2], [-96 + ahead * 0.3, 0]]), { width: 2.2, color: "#2b2f33" });
     pen.stroke(H([[eyes[1][0] + 27 * eyes[1][2], 2], [96 + ahead * 0.3, 0]]), { width: 2.2, color: "#2b2f33" });
+  }
+}
+
+/**
+ * Legs standing under the hips at `hips`: trousers from under the jumper down to the shoes, which
+ * point a little the way the person faces. They do not breathe, so the feet stay on the ground.
+ */
+function drawStandingLegs(pen, look, [hx, hy], dir, scale, layer) {
+  pen.on(layer);
+  const at = (x, y) => [hx + dir * x * scale, hy + y * scale];
+  const long = 236;
+  for (const [inner, outer, shade] of [[-6, -60, 0.85], [12, 64, 0.7]]) {
+    const foot = (inner + outer) / 2;
+    pen.shape([at(outer, -14), at(inner, -14), at(inner + (foot - inner) * 0.3, long), at(outer + (foot - outer) * 0.3, long)], { fill: look.legs, alpha: shade, width: 2.8, smooth: false });
+    pen.wash([at(outer, -10), at(outer + (inner - outer) * 0.3, -10), at(outer + (foot - outer) * 0.4, long - 4), at(outer + (foot - outer) * 0.3, long - 4)], look.legsShade, { alpha: 0.5 });
+    pen.shape(oval(...at(foot + 10, long + 8), 30 * scale, 11 * scale, 12), { fill: look.shoes, alpha: 0.85, width: 2.6 });
   }
 }
 

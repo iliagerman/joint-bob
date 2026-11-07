@@ -1,7 +1,7 @@
 import { createPen, easeInOut, FPS, oval, paperTile, pencilSvg, progress, roundRect } from "./sketch/ink.js";
 import { between, drift, frameRect, HEIGHT, project, view, WIDTH } from "./sketch/camera.js";
 import { jonahLook, mayaLook, person } from "./sketch/people.js";
-import { boardRect, drawBoard, FRONT, ROOM, ROOMS, roomX, SEAT_Y, SEATS } from "./git-story-rooms.js";
+import { boardRect, drawBoard, FRONT, ROOM, ROOMS, roomX, SEAT_Y, SEATS, STAND_Y } from "./git-story-rooms.js";
 import { drawHeading, shownAt, slideItems } from "./git-story-board.js";
 
 // The Activity overview's stage, drawn on paper like the landing page's films: each chapter is a
@@ -42,9 +42,12 @@ function loadHandwriting() {
 }
 
 const wide = (ox) => frameRect(ox, ROOM.top, ROOM.w, ROOM.h, 0.04);
-const withHosts = (ox) => view(ox + 700, 436, 1.45);
+// Standing hosts are taller, so the shots on them sit a little lower and wider, down to their knees.
+const withHosts = (ox, room) => (room.sit ? view(ox + 700, 436, 1.45) : view(ox + 700, 450, 1.32));
 const onBoard = (ox) => { const board = boardRect(ox); return frameRect(board.x - 24, board.y - 30, board.w + 48, board.h + 60, 0.03); };
-const toward = (ox, who) => view(ox + (who === "host" ? 560 : 840), 405, 1.55);
+const toward = (ox, who, room) => view(ox + (who === "host" ? 560 : 840), room.sit ? 405 : 440, room.sit ? 1.55 : 1.45);
+/** Where a host's hips are: on the seat, or above their legs when the room has them standing. */
+const hipsY = (room) => (room.sit ? SEAT_Y : STAND_Y);
 
 // The mouth while a host speaks: open on the syllables, never still for long.
 const syllable = (frame) => Math.max(0, 0.18 + 0.42 * Math.abs(Math.sin(frame * 0.62)) * (0.65 + 0.35 * Math.sin(frame * 0.17 + 1)));
@@ -61,40 +64,53 @@ function ease(pose, target, k) {
   return next;
 }
 
+// The shoulders, from the hips, as `person` places them (the near one towards the board).
+const shoulderOf = (seat, face, hips) => ({ near: [seat + face * 67, hips - 135], far: [seat - face * 51, hips - 134] });
+
 /**
  * How a host holds themselves for what they are doing, in the room's own frame (x from the room's
- * left edge): hands on the table, a hand up to ask or towards the board, a fist for a cheer.
+ * left edge). Every arm is an elbow and a hand placed around its shoulder, so moving from one
+ * gesture to the next eases both smoothly: hands resting on the table or hanging at the sides, a
+ * hand raised to ask, an arm out towards the board, an open hand while explaining, a fist to cheer.
  */
-function targetPose(host, frame, speaking, mood) {
+function targetPose(host, frame, speaking, mood, room) {
   const face = FACE[host.who];
   const seat = SEATS[host.who];
+  const hips = hipsY(room);
+  const { near: s, far: f } = shoulderOf(seat, face, hips);
+  const at = (from, forward, down) => [from[0] + face * forward, from[1] + down];
   const partner = [1, 0.05];
   const board = [0.8, -0.55];
   const us = [0.15, 0.05];
-  const pose = {
-    lean: 0.02, nod: 0.03, gaze: partner, smile: 0.5, worry: 0, raise: 0, frown: 0,
-    near: [seat + face * 42, FRONT + 6], far: [seat - face * 38, FRONT + 9], nearBend: "tucked", farBend: "tucked", nearHand: "rest", farHand: "rest",
-  };
+  const pose = { lean: 0.02, nod: 0.03, gaze: partner, smile: 0.5, worry: 0, raise: 0, frown: 0, nearHand: "rest", farHand: "rest" };
+  // At rest: forearms on the table, or arms hanging at the sides.
+  if (room.sit) Object.assign(pose, { near: [seat + face * 42, FRONT + 6], nearElbow: at(s, 5, 64), far: [seat - face * 38, FRONT + 9], farElbow: at(f, -5, 64) });
+  else Object.assign(pose, { near: at(s, 16, 146), nearElbow: at(s, 10, 76), far: at(f, -14, 146), farElbow: at(f, -8, 76) });
   const since = frame - host.at;
   const action = host.action === "pointThenExplain" && since >= 40 ? "explain" : host.action;
-  // A raised hand stays above the microphone on the table in front of them.
-  if (action === "ask") Object.assign(pose, { raise: 0.7, smile: 0.3, near: [seat + face * 150, 596], nearBend: "out" });
-  else if (action === "pointThenExplain") Object.assign(pose, { gaze: board, raise: 0.3, smile: 0.6, near: [seat + face * 160, 562], nearBend: "out" });
+  // A raised hand, its elbow kept inside the microphone on the table.
+  if (action === "ask") Object.assign(pose, { raise: 0.7, smile: 0.3, near: at(s, 48, -56), nearElbow: at(s, 36, 18) });
+  else if (action === "pointThenExplain") Object.assign(pose, { gaze: board, raise: 0.3, smile: 0.6, near: at(s, 140, -6), nearElbow: at(s, 72, 26) });
   else if (action === "explain") {
     Object.assign(pose, { gaze: Math.floor((frame + (host.who === "host" ? 0 : 40)) / 75) % 2 ? us : partner, smile: 0.6 });
-    if (speaking) Object.assign(pose, { near: [seat + face * (96 + 14 * Math.sin(frame / 9)), 646 - 10 * Math.sin(frame / 13)], nearBend: "out" });
+    // An open hand in front of them, moving slowly with the words.
+    if (speaking) Object.assign(pose, { near: at(s, 78 + 6 * Math.sin(frame / 23), 44 + 5 * Math.sin(frame / 17)), nearElbow: at(s, 20, 76) });
   } else if (action === "think") Object.assign(pose, { gaze: [0.4, -0.8], smile: 0.1, raise: 0.2 });
   else if (action === "worry") Object.assign(pose, { gaze: board, worry: 0.8, smile: -0.3 });
   else if (action === "cheer") {
     Object.assign(pose, { gaze: us, smile: 1, raise: 0.5 });
-    if (since < 60) Object.assign(pose, { far: [seat - face * 14, 590], farBend: "out", farHand: "fist" });
+    if (since < 60) Object.assign(pose, { far: at(f, -40, -50), farElbow: at(f, -46, 24), farHand: "fist" });
   } else Object.assign(pose, { nod: 0.03 + 0.03 * Math.max(0, Math.sin(frame / 20)) });
   if (mood === "tension" && action !== "cheer") pose.worry = Math.max(pose.worry, 0.3);
   if (mood === "resolved") pose.smile = Math.max(pose.smile, 0.7);
   return pose;
 }
 
-const shifted = (pose, ox) => ({ ...pose, near: [pose.near[0] + ox, pose.near[1]], far: [pose.far[0] + ox, pose.far[1]] });
+/** How a host waits in a room the story has left, which stays on screen while the camera moves on. */
+const restingPose = (who, room) => targetPose({ who, action: "listen", at: 0 }, 0, false, "calm", room);
+
+const moved = (point, ox) => [point[0] + ox, point[1]];
+const shifted = (pose, ox) => ({ ...pose, near: moved(pose.near, ox), far: moved(pose.far, ox), nearElbow: moved(pose.nearElbow, ox), farElbow: moved(pose.farElbow, ox) });
 
 /** "?" and "!" in a speech bubble over a head, or a light bulb for an insight. */
 function drawMark(pen, mark, x, y) {
@@ -141,7 +157,7 @@ export function createSketchStage(canvas, pencil) {
   let pending = null;
   let lastDraw = 0;
   let handwriting = false;
-  for (const host of Object.values(hosts)) host.pose = targetPose(host, 0, false, "calm");
+  for (const host of Object.values(hosts)) host.pose = targetPose(host, 0, false, "calm", ROOMS.podcast);
   // Parsed into real SVG nodes; the app never assigns markup strings to elements.
   pencil.replaceChildren(document.importNode(new DOMParser().parseFromString(pencilSvg(), "image/svg+xml").documentElement, true));
   loadHandwriting().then(() => {
@@ -203,18 +219,20 @@ export function createSketchStage(canvas, pencil) {
     const seat = ox + SEATS[who];
     const [from, to] = PARTS[who];
     pen.begin(`${id}-${who}`, at + from, at + to, 10);
-    person(pen, { at: [seat, SEAT_Y], look: LOOKS[who], dir: FACE[who], pose: shifted(hosts[who].pose, ox), frame, layer: 10, nearLayer: 21, farLayer: 21 });
+    const standing = !room.room.sit;
+    person(pen, { at: [seat, hipsY(room.room)], look: LOOKS[who], dir: FACE[who], pose: shifted(room === current ? hosts[who].pose : restingPose(who, room.room), ox), frame, layer: 10, nearLayer: 21, farLayer: 21, standing });
     if (room.room.sit) {
       pen.on(9);
       pen.shape(roundRect(seat - 78, 600, 156, 150, 30), { fill: room.room.chair ?? "#55606b", alpha: 0.5, width: 2.6 });
     }
     pen.on(23);
-    pen.text(NAMES[who], seat, 846, { size: 42, align: "center", color: NAME_COLORS[who] });
+    // The name is written on the front of the table, or on the curb's face below a standing host.
+    pen.text(NAMES[who], seat, standing ? 892 : 846, { size: standing ? 36 : 42, align: "center", color: NAME_COLORS[who] });
     pen.end();
     const host = hosts[who];
     if (room !== current || !host.mark || frame > host.mark.at + 60) return;
     pen.begin(`emote-${who}-${host.mark.text}`, host.mark.at, host.mark.at + 10, 34);
-    drawMark(pen, host.mark.text, seat + FACE[who] * 80, 400);
+    drawMark(pen, host.mark.text, seat + FACE[who] * 80, hipsY(room.room) - 380);
     pen.end();
   }
 
@@ -292,7 +310,7 @@ export function createSketchStage(canvas, pencil) {
         const mark = marks.find((candidate) => candidate.who === who);
         hosts[who].mark = mark ? { text: mark.text, at: Math.max(frame, room.at + PARTS[who][1]) } : null;
       }
-      const target = room.chapter.visual.kind === "code" ? onBoard(room.ox) : question ? toward(room.ox, speaker) : withHosts(room.ox);
+      const target = room.chapter.visual.kind === "code" ? onBoard(room.ox) : question ? toward(room.ox, speaker, room.room) : withHosts(room.ox, room.room);
       aim(target, frame, 26, room.at + 44);
     },
     /** The frame at `now`: `speaking` is the host whose voice is playing, `sunP` how far the chapter's sun has risen. */
@@ -306,7 +324,8 @@ export function createSketchStage(canvas, pencil) {
       if (current) current.sunP = sunP;
       for (const who of ["host", "cohost"]) {
         const host = hosts[who];
-        host.pose = { ...ease(host.pose, targetPose(host, frame, speaking === who, mood), 1 - Math.exp(-steps / 4)), open: speaking === who ? syllable(frame) : 0 };
+        const target = targetPose(host, frame, speaking === who, mood, current?.room ?? ROOMS.podcast);
+        host.pose = { ...ease(host.pose, target, 1 - Math.exp(-steps / 6)), open: speaking === who ? syllable(frame) : 0 };
       }
       const goal = LIGHTS[mood];
       const k = 1 - Math.exp(-steps / 20);

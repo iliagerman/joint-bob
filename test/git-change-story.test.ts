@@ -189,6 +189,39 @@ test("a quiet commit counts for the turn that made it and printed its hash, and 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("commits a turn pushed count even when they were made without `git commit`", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-pushed-"));
+  const author = { ...process.env, GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com" };
+  // As the shared checkout does: a tree from a private index, `commit-tree`, then `update-ref`. Nothing lands in the reflog as a commit.
+  const plumbing = async (name: string, parent: string | null) => {
+    await writeFile(path.join(root, name), `export const made = "${name}";\n`);
+    await git("git", ["-C", root, "add", name]);
+    const tree = (await git("git", ["-C", root, "write-tree"])).stdout.trim();
+    const hash = (await git("git", ["-C", root, "commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", `add ${name}`], { env: author })).stdout.trim();
+    await git("git", ["-C", root, "update-ref", "refs/heads/main", hash]);
+    return hash;
+  };
+  try {
+    await git("git", ["init", "-q", "-b", "main", root]);
+    const base = await plumbing("base.ts", null);
+    const first = await plumbing("first.ts", base);
+    const second = await plumbing("second.ts", first);
+    const turns = buildTurns([
+      { id: "1", role: "user", text: "Build it and push" },
+      { id: "2", role: "toolResult", toolName: "Bash", text: `To https://github.com/example/repo.git\n   ${base.slice(0, 8)}..${second.slice(0, 8)}  ${second} -> main` },
+      { id: "3", role: "user", text: "Show the forced push" },
+      { id: "4", role: "toolResult", toolName: "Bash", text: ` + ${base.slice(0, 8)}...${first.slice(0, 8)} main -> main (forced update)` },
+    ]);
+    assert.deepEqual(turns.map((turn) => turn.pushed), [[{ from: base.slice(0, 8), to: second.slice(0, 8) }], []]);
+    assert.deepEqual((await turnCommits(root, turns)).map(({ turn, detail }) => [turn, detail.hash]), [[1, first], [1, second]], "both pushed commits, oldest first, and not the base");
+    const sourced = await sourcesFromTurns(root, turns, true, { scope: "conversation", pendingPaths: [], includeCommits: true });
+    assert.deepEqual(sourced.facts.files.map((file) => file.path), ["first.ts", "second.ts"]);
+    // A range whose objects this clone does not have is skipped, not an error.
+    const unknown = buildTurns([{ id: "1", role: "user", text: "Push" }, { id: "2", role: "toolResult", toolName: "Bash", text: "   1234567..89abcde  main -> main" }]);
+    assert.deepEqual(await turnCommits(root, unknown), []);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("pending changes past the review limit still make a story, with the largest diffs left out", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-"));
   try {
