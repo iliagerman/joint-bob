@@ -41,6 +41,8 @@
   .control-chat-filters { flex-wrap: nowrap; padding: 6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px)); }
   .control-chat-filters select { flex: 1 1 0; min-width: 0; min-height: 30px; }
   .control-chat-filters .control-chip { flex: none; min-height: 30px; padding: 0 10px; font-size: 12px; }
+  /* No room for one more word: the cleared items' chip is its check. */
+  .control-chat-filters .control-chip-word { display: none; }
   /* A phone on its side has no height to spare for filters. */
   @media (max-height: 520px) { .control-chat-filters { display: none; } }
 

@@ -13,6 +13,7 @@ import { cleanupDoneWorktrees } from "../worktree-cleanup.js";
 import { beginConversationCloseout, finishConversationCloseout } from "../conversation-closeout.js";
 import { z } from 'zod';
 import type { AuthSession } from "../../auth.js";
+import { askBobRecheck } from "../../control-center/bob-store.js";
 import { getClusterNode } from "../../cluster.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { listHarnessCommands } from "../../commands.js";
@@ -338,7 +339,10 @@ export async function markConversationDoneAsActor(projectId: string, raw: unknow
 
 app.put("/api/projects/:projectId/sessions/done", async (request, response, next) => {
   try {
-    response.json({ ok: true, ...await markConversationDoneAsActor(request.params.projectId, request.body) });
+    const result = await markConversationDoneAsActor(request.params.projectId, request.body);
+    // Bob's items about a conversation the person closed are cleared.
+    askBobRecheck((response.locals.authSession as AuthSession).accountId);
+    response.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

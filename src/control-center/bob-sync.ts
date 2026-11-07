@@ -79,7 +79,13 @@ function messageOf(value: unknown): BobMessage | null {
   for (const action of message.actions) {
     if (!action || !text(action.id, 100) || typeof action.label !== "string" || action.label.length > 200) return null;
   }
-  return { id: message.id, role: message.role!, text: message.text, via: message.via ?? null, projectId: message.projectId ?? null, projectName: message.projectName ?? null, importance: message.importance!, actions: message.actions, createdAt: message.createdAt! };
+  // A machine on an older version does not send whether the item was cleared.
+  const cleared = message.resolvedAt === undefined || message.resolvedAt === null ? null : message.resolvedAt;
+  if (cleared !== null && (!time(cleared) || typeof message.resolution !== "string" || message.resolution.length > 500)) return null;
+  return {
+    id: message.id, role: message.role!, text: message.text, via: message.via ?? null, projectId: message.projectId ?? null, projectName: message.projectName ?? null,
+    importance: message.importance!, actions: message.actions, createdAt: message.createdAt!, resolvedAt: cleared, resolution: cleared ? message.resolution! : null,
+  };
 }
 
 /** A message from the person's chat with Bob, written on their other machine. The project it names is this machine's own id for it. */

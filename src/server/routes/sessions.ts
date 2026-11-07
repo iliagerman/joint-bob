@@ -15,6 +15,7 @@ import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "../runtime-peers
 import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
 import { dropBrowserConversationGrants } from "../../browser-store.js";
+import { askBobRecheck } from "../../control-center/bob-store.js";
 import { markConversationReviewed, markConversationsReviewed } from "../../conversation-reviews.js";
 import { notificationConversationId, setConversationNotification } from "../../conversation-notifications.js";
 import { clearHarnessSessionCache, getHarness, listHarnessSessions } from "../../harnesses.js";
@@ -709,8 +710,9 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
     if (!session.updatedAt || submitted.updatedAt > session.updatedAt) { sendError(response, 409, "Conversation review watermark is newer than current activity"); return; }
     const local = await getClusterNode();
     markConversationReviewed(authSession.userId, authSession.accountId, project.id, { path: session.path, engine: session.harnessId, sessionId: session.id, updatedAt: submitted.updatedAt }, local.id);
-    // Review marks are the person's own: only their pages refresh.
+    // Review marks are the person's own: only their pages refresh, and Bob's items about what they looked at are cleared.
     broadcastToAllClients({ type: "sessionsChanged" }, authSession.accountId);
+    askBobRecheck(authSession.accountId);
     flushReplicationOutbox().catch((error) => console.warn("Review watermark flush failed", error));
     response.status(204).send();
   } catch (error) {
@@ -739,8 +741,9 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
       const current = currentByPath.get(watermark.sessionPath)!;
       return [{ path: watermark.sessionPath, engine: current.harnessId, sessionId: current.id, updatedAt: watermark.updatedAt }];
     }), local.id);
-    // Review marks are the person's own: only their pages refresh.
+    // Review marks are the person's own: only their pages refresh, and Bob's items about what they looked at are cleared.
     broadcastToAllClients({ type: "sessionsChanged" }, authSession.accountId);
+    askBobRecheck(authSession.accountId);
     flushReplicationOutbox().catch((error) => console.warn("Review watermark flush failed", error));
     response.status(204).send();
   } catch (error) {

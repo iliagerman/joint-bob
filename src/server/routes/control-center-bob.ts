@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { BobActionError, runBobAction } from "../../control-center/bob-actions.js";
-import { bobDatabase, countBobMessages, listBobMessages, readBobSettings, writeBobSettings, type BobImportanceFilter } from "../../control-center/bob-store.js";
+import { bobDatabase, countBobMessages, getBobMessage, listBobMessages, readBobSettings, writeBobSettings, type BobImportanceFilter } from "../../control-center/bob-store.js";
 import { GitReviewRunError, handleBobMessage } from "../bob.js";
 import { sendError } from "../http-auth.js";
 import { QuickNoteLaunchError } from "../quick-note-dispatch.js";
@@ -40,6 +40,8 @@ const settingsSchema = z.object({
 const querySchema = z.object({
   project: z.string().min(1).max(200).optional(),
   importance: z.enum(["important", "reports", "fyi"]).optional(),
+  /** Only the items that were cleared, with why. */
+  cleared: z.literal("1").optional(),
 }).strict();
 
 app.get("/api/control-center/bob/settings", async (_request, response, next) => {
@@ -64,7 +66,7 @@ app.get("/api/control-center/bob/messages", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const db = await bobDatabase();
     response.json({
-      messages: listBobMessages(db, session.accountId, query),
+      messages: listBobMessages(db, session.accountId, { project: query.project, importance: query.importance, cleared: query.cleared === "1" }),
       waiting: countBobMessages(db, session.accountId, "important" as BobImportanceFilter),
     });
   } catch (error) {
@@ -76,7 +78,11 @@ app.get("/api/control-center/bob/messages", async (request, response, next) => {
 app.post("/api/control-center/bob/action", async (request, response, next) => {
   try {
     const { messageId, actionId } = z.object({ messageId: z.string().min(1).max(100), actionId: z.string().min(1).max(100) }).strict().parse(request.body);
-    response.json({ messages: await runBobAction(await bobDatabase(), response.locals.authSession as AuthSession, messageId, actionId) });
+    const session = response.locals.authSession as AuthSession;
+    const db = await bobDatabase();
+    const messages = await runBobAction(db, session, messageId, actionId);
+    // The pressed item as it is now: cleared, or (a button that only opens something) still waiting with its buttons.
+    response.json({ messages, pressed: getBobMessage(db, session.accountId, messageId) });
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, "Invalid action"); return; }
     if (error instanceof BobActionError) { sendError(response, error.status, error.message); return; }

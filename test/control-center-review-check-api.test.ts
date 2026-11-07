@@ -94,9 +94,11 @@ test("a conversation that stops before its task is done is told to go on, one th
     assert.notEqual(card.column, "needs-you");
 
     // Abandon stops it if it still runs and closes it as marking it done does: it leaves the board, and Bob's check ends.
-    const abandoned = await api<{ messages: BobMessage[] }>(node, auth, "POST", "/control-center/bob/action", { messageId: said.id, actionId: "conversation.abandon" });
+    // The pressed message leaves the chat, which says it: nothing new is written.
+    const abandoned = await api<{ messages: BobMessage[]; pressed: BobMessage }>(node, auth, "POST", "/control-center/bob/action", { messageId: said.id, actionId: "conversation.abandon" });
     assert.equal(abandoned.status, 200, JSON.stringify(abandoned.body));
-    assert.match(abandoned.body.messages[0].text, /^Abandoned "fix the mobile menu in Joint Bob": stopped and closed without finishing\./);
+    assert.deepEqual(abandoned.body.messages, []);
+    assert.equal(abandoned.body.pressed.resolution, "You chose “Abandon”.");
     const sessions = (await api<{ sessions: Array<{ title: string; doneAt?: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`)).body.sessions;
     assert.ok(sessions.find((session) => session.title === "fix the mobile menu in Joint Bob")?.doneAt, "the conversation is marked done");
     const board = (await api<{ cards: Array<{ title: string }> }>(node, auth, "GET", "/control-center/board")).body.cards;

@@ -24,6 +24,7 @@ test("the control center shows the live board, filters by project, colors cards 
   await page.waitForTimeout(500);
   await page.evaluate(`(() => {
     const originalFetch = window.fetch;
+    window.__board = ${JSON.stringify(BOARD)};
     window.__timeline = [{ id: 'old', role: 'system', text: 'Prod 5xx at 14%', via: null, projectId: 'p1', projectName: 'Joint Bob', importance: 'urgent', actions: [], createdAt: new Date().toISOString() },
       { id: 'rep', role: 'bob', text: 'Morning report', via: null, projectId: null, projectName: null, importance: 'report', actions: [], createdAt: new Date().toISOString() }];
     window.fetch = async (...args) => {
@@ -60,12 +61,21 @@ test("the control center shows the live board, filters by project, colors cards 
       if (path === '/api/control-center/bob/messages') {
         const query = new URL(String(args[0]), location.href).searchParams;
         const levels = { important: ['needs-ok', 'urgent', 'needs-you'], reports: ['report', 'done'], fyi: ['fyi'] }[query.get('importance')];
-        const wanted = window.__timeline.filter((message) => (!levels || levels.includes(message.importance))
+        const wanted = window.__timeline.filter((message) => (!levels || levels.includes(message.importance)) && (!query.get('cleared') || message.resolvedAt)
           && (!query.get('project') || (query.get('project') === 'general' ? !message.projectId : message.projectId === query.get('project'))));
         return new Response(JSON.stringify({ messages: wanted, waiting: 0 }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
+      if (path === '/api/control-center/bob/action') {
+        // As the server does for Done: the conversation is closed, so it leaves the board, and the pressed item is cleared.
+        const body = JSON.parse(args[1].body);
+        const pressed = window.__timeline.find((message) => message.id === body.messageId);
+        const action = pressed.actions.find((candidate) => candidate.id === body.actionId);
+        Object.assign(pressed, { actions: [], resolvedAt: new Date().toISOString(), resolution: 'You chose “' + action.label + '”.' });
+        window.__board.cards = window.__board.cards.filter((card) => card.conversationId !== action.data.conversationId);
+        return new Response(JSON.stringify({ messages: [], pressed }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
       if (path !== '/api/control-center/board') return originalFetch(...args);
-      return new Response(JSON.stringify(${JSON.stringify(BOARD)}), { status: 200, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify(window.__board), { status: 200, headers: { 'content-type': 'application/json' } });
     };
   })()`);
 
@@ -257,6 +267,24 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.deepEqual(await check.locator(".control-action").allTextContents(), ["Push it on", "Done", "Abandon", "Open"]);
   // A finished card can be closed from the board too.
   assert.equal(await page.locator('[data-key="p1:c3"]').getByTestId("control-card-action-done").isVisible(), true);
+
+  // Done in the chat: the item shows a check with what was pressed and leaves, and the card leaves the board with the same check.
+  await check.getByRole("button", { name: "Done", exact: true }).click();
+  const stamp = check.getByTestId("control-vanish-stamp");
+  await stamp.waitFor();
+  assert.equal(await stamp.innerText(), "Done");
+  const cardStamp = page.locator('[data-key="p1:c3"]').getByTestId("control-vanish-stamp");
+  await cardStamp.waitFor();
+  assert.equal(await cardStamp.innerText(), "Done");
+  await check.waitFor({ state: "detached" });
+  await page.locator('[data-key="p1:c3"]').waitFor({ state: "detached" });
+  assert.equal(await page.getByTestId("control-center-card").count(), 2, "the other cards stay");
+  // The cleared view lists it, with when and why.
+  await page.getByTestId("control-chat-importance-cleared").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-chat-entry"]').length === 1);
+  assert.match(await page.getByTestId("control-chat-cleared").innerText(), /^✓ Cleared .+ · You chose “Done”\.$/);
+  await page.getByTestId("control-chat-importance-all").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-chat-entry"]').length > 1);
 
   // Bob's settings are saved with the account; pausing shows a banner with a way back.
   await page.getByTestId("control-chat-settings-button").click();

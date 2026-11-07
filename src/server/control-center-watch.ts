@@ -49,12 +49,14 @@ async function announceReview(review: GuardianReview): Promise<void> {
 }
 
 function answerReview(decision: "allow" | "block"): Parameters<typeof registerBobAction>[1] {
-  return async ({ db, session, action }) => {
+  return async ({ db, session, message, action }) => {
     const data = action.data as { projectId: string; conversationId: string; reviewId: string };
     // The person pressed the button, so the answer is theirs; Bob only carries it.
     const done = await runAsAccount(actingAccountFromSession(session), async () =>
       (await projectVisible(data.projectId)) && decideGuardianReview(data.projectId, data.conversationId, data.reviewId, decision));
-    return [bobSays(db, session, done ? (decision === "allow" ? "Allowed once." : "Blocked.") : "That review was already answered, or it timed out and was blocked.", { importance: "fyi", projectId: data.projectId })];
+    // The question leaves the chat once answered, so the answer names the step.
+    const step = message.text.split("\n")[0];
+    return [bobSays(db, session, done ? `${decision === "allow" ? "Allowed once" : "Blocked"}: ${step}` : `That review was already answered, or it timed out and was blocked: ${step}`, { importance: "fyi", projectId: data.projectId })];
   };
 }
 

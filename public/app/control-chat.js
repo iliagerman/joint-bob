@@ -5,6 +5,7 @@ import { appearanceContext, applyAppearance } from "./appearance.js";
 import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
 import { focusProject, openConversation, refreshControlCenter, saveControlCenter } from "./control-center.js";
+import { vanish } from "./control-vanish.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { state } from "./state.js";
 import { formatDate, toast } from "./shell.js";
@@ -108,10 +109,21 @@ function renderActions(message) {
 function entry(message, className) {
   const wrap = element("div", `control-entry ${message.role}${className ? ` ${className}` : ""}`);
   wrap.dataset.testid = "control-chat-entry";
+  wrap.dataset.id = message.id;
   wrap.dataset.importance = message.importance;
   wrap.dataset.project = message.projectId ?? "";
   return wrap;
 }
+
+/** In the cleared view, when an item was cleared and why, in place of its buttons. */
+function renderCleared(message) {
+  const line = element("div", "control-cleared", `✓ Cleared ${formatDate(message.resolvedAt)} · ${message.resolution}`);
+  line.dataset.testid = "control-chat-cleared";
+  return line;
+}
+
+/** The few words shown as an item leaves: the button pressed, or why Bob found it settled. */
+const settledWord = (message) => message.resolution.match(/^You chose “(.+)”\.$/)?.[1] ?? message.resolution;
 
 /**
  * A message about one conversation is a card in its project's color. On top, the project and the conversation's name (click it
@@ -134,6 +146,7 @@ function renderConversationNotice(message, about) {
   raised.append(importanceLabel(message), element("span", "control-entry-raised", SOURCE_WORDS[label] ?? label), timeOf(message));
   wrap.append(source, raised, renderBody(message, withoutTitle(message.text, about.title)));
   if (message.actions?.length) wrap.append(renderActions(message));
+  if (message.resolvedAt) wrap.append(renderCleared(message));
   if (detail) wrap.append(element("div", "control-via", detail));
   return wrap;
 }
@@ -148,6 +161,7 @@ function renderChatMessage(message) {
   // How it was decided goes under the message, small: the head already says where it came from.
   if (detail) wrap.append(element("div", "control-via", detail));
   if (message.actions?.length) wrap.append(renderActions(message));
+  if (message.resolvedAt) wrap.append(renderCleared(message));
   return wrap;
 }
 
@@ -188,25 +202,44 @@ function tickPending() {
 
 function renderMessages() {
   const extra = [...[...pending.values()].map(renderPending), ...(sendError ? [element("div", "control-msg error", sendError)] : [])];
-  elements.controlChatMessages.replaceChildren(...messages.map(renderMessage), ...extra);
+  const shown = messages.filter(matchesFilter).map(renderMessage);
+  const empty = !shown.length && filter.importance === "cleared" ? [element("p", "control-empty", "Nothing was cleared yet.")] : [];
+  elements.controlChatMessages.replaceChildren(...shown, ...empty, ...extra);
   elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
   clearInterval(pendingTicker);
   pendingTicker = pending.size ? setInterval(tickPending, 1000) : null;
 }
 
+/** Whether the chat shows a message: a cleared item only in the cleared view, which shows nothing else. */
 function matchesFilter(message) {
+  if (filter.importance === "cleared") return Boolean(message.resolvedAt);
+  if (message.resolvedAt) return false;
   if (filter.project === "general" && message.projectId) return false;
   if (filter.project && filter.project !== "general" && message.projectId !== filter.project) return false;
   const levels = { important: ["needs-ok", "urgent", "needs-you"], reports: ["report", "done"], fyi: ["fyi"] }[filter.importance];
   return !levels || levels.includes(message.importance);
 }
 
-async function loadMessages() {
+const entryOf = (id) => elements.controlChatMessages.querySelector(`.control-entry[data-id="${CSS.escape(id)}"]`);
+
+/** Items on screen that were cleared since leave with their animation (all together), then the chat is drawn again. */
+async function readMessages() {
   const query = new URLSearchParams();
   if (filter.project) query.set("project", filter.project);
-  if (filter.importance) query.set("importance", filter.importance);
-  messages = (await api(`/api/control-center/bob/messages?${query}`)).messages;
+  if (filter.importance === "cleared") query.set("cleared", "1");
+  else if (filter.importance) query.set("importance", filter.importance);
+  const next = (await api(`/api/control-center/bob/messages?${query}`)).messages;
+  const leaving = filter.importance === "cleared" ? [] : next.filter((message) => message.resolvedAt && entryOf(message.id));
+  await Promise.all(leaving.map((message) => vanish(entryOf(message.id), settledWord(message), { collapse: true })));
+  messages = next;
   renderMessages();
+}
+
+// One reading at a time, so an animation is not cut short by the next drawing.
+let reading = Promise.resolve();
+function loadMessages() {
+  reading = reading.catch(() => undefined).then(readMessages);
+  return reading;
 }
 
 async function runAction(message, action, button) {
@@ -217,12 +250,14 @@ async function runAction(message, action, button) {
   try {
     const result = await api("/api/control-center/bob/action", { method: "POST", body: JSON.stringify({ messageId: message.id, actionId: action.id }) });
     // A button runs once: the server took the pressed message's buttons away, and so does the page.
-    message.actions = [];
-    if (result.messages?.length) messages.push(...result.messages.filter(matchesFilter));
-    renderMessages();
-    // Features whose button also changes the page (open a tab) listen for the one that ran.
-    window.dispatchEvent(new CustomEvent("control-bob-action", { detail: { actionId: action.id, data: action.data } }));
+    Object.assign(message, result.pressed);
+    if (result.messages?.length) messages.push(...result.messages.filter((added) => matchesFilter(added) && !messages.some((shown) => shown.id === added.id)));
+    // Features whose button also changes the page (open a tab, see a card off the board) listen for the one that ran.
+    window.dispatchEvent(new CustomEvent("control-bob-action", { detail: { actionId: action.id, label: action.label, data: action.data } }));
     void refreshControlCenter().catch(() => undefined);
+    // A settled item leaves, while the board changes beside it.
+    if (message.resolvedAt && entryOf(message.id)) await vanish(entryOf(message.id), settledWord(message), { collapse: true });
+    renderMessages();
   } catch (error) {
     toast(error.message);
     button.disabled = false;

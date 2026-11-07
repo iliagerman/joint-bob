@@ -5,7 +5,7 @@ import type { AuthSession } from "../auth.js";
 import { actingAccountFromSession, runAsAccount, type ActingAccount } from "../account-context.js";
 import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import { bobSays, registerBobAction } from "../control-center/bob-actions.js";
-import { appendBobMessage, bobDatabase, listBobAccounts, readBobSettings, type BobAction, type BobSettings } from "../control-center/bob-store.js";
+import { appendBobMessage, askBobRecheck, bobDatabase, listBobAccounts, readBobSettings, type BobAction, type BobSettings } from "../control-center/bob-store.js";
 import { isLeased } from "../control-center/leases.js";
 import { bobStarter } from "../control-center/started.js";
 import {
@@ -184,7 +184,8 @@ registerBobAction("review.push", async ({ db, session, action }) => {
 
 /**
  * Closes the conversation as the person, as marking it done in its project does; abandoning stops it first (its turn, auto
- * respond, a step waiting for an answer). Bob's check of it ends either way.
+ * respond, a step waiting for an answer). Bob's check of it ends either way, and his other items about it are cleared. The
+ * pressed item leaves the chat, which says it all: nothing new is written.
  */
 async function closeConversation(session: AuthSession, db: DatabaseSync, conversation: Conversation, abandoned: boolean): Promise<void> {
   await runAsAccount(actingAccountFromSession(session), async () => {
@@ -194,23 +195,19 @@ async function closeConversation(session: AuthSession, db: DatabaseSync, convers
   const previous = readReviewCheck(db, conversation.projectId, conversation.conversationId);
   if (previous) writeReviewCheck(db, { ...previous, verdict: "done", reason: abandoned ? "You abandoned it." : "You marked it done.", by: "you", needsYou: false, pushPending: false });
   broadcastToAllClients({ type: "controlCenterChanged" }, session.accountId);
+  askBobRecheck(session.accountId);
 }
 
 registerBobAction("conversation.done", async ({ db, session, action }) => {
-  const conversation = conversationData.parse(action.data);
-  await closeConversation(session, db, conversation, false);
-  return [bobSays(db, session, `Marked "${conversation.title}" as done. It has left the board.`, { importance: "done", projectId: conversation.projectId, projectName: conversation.projectName, via: "Review check · you pressed Done" })];
+  await closeConversation(session, db, conversationData.parse(action.data), false);
 });
 
 registerBobAction("conversation.abandon", async ({ db, session, action }) => {
-  const conversation = conversationData.parse(action.data);
-  await closeConversation(session, db, conversation, true);
-  return [bobSays(db, session, `Abandoned "${conversation.title}": stopped and closed without finishing. It has left the board.`, { importance: "done", projectId: conversation.projectId, projectName: conversation.projectName, via: "Review check · you pressed Abandon" })];
+  await closeConversation(session, db, conversationData.parse(action.data), true);
 });
 
-registerBobAction("review.leave", async ({ db, session, action }) => {
+registerBobAction("review.leave", async ({ db, action }) => {
   const { projectId, conversationId } = z.object({ projectId: z.string().min(1), conversationId: z.string().min(1) }).parse(action.data);
   const previous = readReviewCheck(db, projectId, conversationId);
   if (previous) writeReviewCheck(db, { ...previous, verdict: "done", reason: "You chose to leave it for review.", by: "you", needsYou: false, pushPending: false });
-  return [bobSays(db, session, "Okay, it stays in review.", { projectId })];
 });

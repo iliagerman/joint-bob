@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { applyBobEvent, applyBobMessageEvent, applyReviewCheckEvent, backfillChat, publishBobAccount, publishBobMessage, publishReviewCheck } from "../src/control-center/bob-sync.js";
 import { registerBobAction, runBobAction, setRemoteBobAction } from "../src/control-center/bob-actions.js";
-import { appendBobMessage, bobMessageOrigin, clearBobActions, ensureBobSchema, getBobMessage, listBobAccounts, listBobMessages, onBobMessageWritten, readBobSettings, storeBobSettings } from "../src/control-center/bob-store.js";
+import { appendBobMessage, bobMessageOrigin, clearBobActions, ensureBobSchema, getBobMessage, listBobAccounts, listBobMessages, onBobMessageWritten, readBobSettings, resolveBobMessage, storeBobSettings, type BobMessage } from "../src/control-center/bob-store.js";
 import type { AuthSession } from "../src/auth.js";
 import { readReviewCheck, type ReviewCheck } from "../src/control-center/review-check.js";
 import { ensureReplicationSchema, type ReplicationEvent } from "../src/replication.js";
@@ -87,6 +87,15 @@ test("the person's chat with Bob reaches their other machine, buttons included, 
     applyBobMessageEvent(server, stale);
     assert.deepEqual(getBobMessage(server, ACCOUNT, ask.id)?.actions, []);
     assert.equal(written.length, 3, "each write on the Mac is sent once; nothing the server received is sent on");
+
+    // Cleared on the Mac: the server's copy is cleared too, with why. A machine on an older version sends no cleared state.
+    resolveBobMessage(mac, ACCOUNT, ask.id, "You looked at it.");
+    for (const event of sent(mac)) applyBobMessageEvent(server, event);
+    assert.deepEqual([getBobMessage(server, ACCOUNT, ask.id)?.resolution, Boolean(getBobMessage(server, ACCOUNT, ask.id)?.resolvedAt)], ["You looked at it.", true]);
+    const { resolvedAt: _at, resolution: _why, ...older } = (stale.payload as { message: BobMessage }).message;
+    applyBobMessageEvent(server, { ...stale, entityKey: `${ACCOUNT}:older`, payload: { ...(stale.payload as object), message: { ...older, id: "older" } } });
+    assert.equal(getBobMessage(server, ACCOUNT, "older")?.resolvedAt, null);
+    assert.throws(() => applyBobMessageEvent(server, { ...stale, payload: { ...(stale.payload as object), message: { ...older, resolvedAt: "soon", resolution: "x" } } }), /Malformed/);
     assert.throws(() => applyBobMessageEvent(server, { ...stale, payload: { ...(stale.payload as object), message: { ...(stale.payload as { message: object }).message, role: "root" } } }), /Malformed/);
   } finally { stop(); }
 });

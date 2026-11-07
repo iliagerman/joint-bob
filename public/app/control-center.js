@@ -7,6 +7,7 @@ import { state } from "./state.js";
 import { registerControlView } from "./control-views.js";
 import { chooseConversationFeedback } from "./conversation-feedback.js";
 import { boardTools, briefStatus, cardActionList, decorateCard, projectActionList, registerCardAction } from "./control-cards.js";
+import { glide, positions, vanish } from "./control-vanish.js";
 
 const DEFAULT_COLOR = "#3a3f46";
 const COLUMNS = [
@@ -278,13 +279,33 @@ function render() {
   renderLanes(container, cards);
 }
 
+/** Cards marked done here, with the word their way out shows. */
+const settledHere = new Map();
+
+/**
+ * Cards no longer on the board leave with an animation, all together: a check and what settled them for one marked done here,
+ * a fade for the rest. The cards that stay then glide to their new places.
+ */
+async function drawBoard(next) {
+  const container = elements.controlCenterBoard;
+  if (isControlCenterOpen()) {
+    const keys = new Set(next.cards.map(cardKey));
+    const gone = [...container.querySelectorAll(".control-card")].filter((node) => !keys.has(node.dataset.key));
+    await Promise.all(gone.map((node) => vanish(node, settledHere.get(node.dataset.key))));
+    for (const node of gone) settledHere.delete(node.dataset.key);
+  }
+  const before = positions(container, ".control-card");
+  board = next;
+  render();
+  glide(container, ".control-card", before);
+}
+
 export function refreshControlCenter() {
   if (refreshing) { refreshAgain = true; return refreshing; }
   refreshing = (async () => {
     do {
       refreshAgain = false;
-      board = await api("/api/control-center/board");
-      render();
+      await drawBoard(await api("/api/control-center/board"));
     } while (refreshAgain);
   })().finally(() => { refreshing = null; });
   return refreshing;
@@ -337,7 +358,7 @@ async function markDone(card) {
   await api(`/api/projects/${encodeURIComponent(card.projectId)}/sessions/done`, {
     method: "PUT", body: JSON.stringify({ sessionId: card.conversationId, engine: card.harnessId, done: true, feedback }),
   });
-  toast(`"${card.title}" is done`);
+  settledHere.set(cardKey(card), "Done");
   await refreshControlCenter();
 }
 
@@ -345,6 +366,10 @@ async function markDone(card) {
 registerCardAction({
   id: "review", label: "Review", style: "primary", order: 1, title: "Open it to read what it did; once you have looked, it leaves Done · ready for review",
   visible: (card) => card.column === "review", run: (card) => openConversation(card),
+});
+// Done or Abandon pressed in Bob's chat: the conversation's card goes with the same check as the message.
+window.addEventListener("control-bob-action", ({ detail }) => {
+  if (detail.actionId === "conversation.done" || detail.actionId === "conversation.abandon") settledHere.set(`${detail.data.projectId}:${detail.data.conversationId}`, detail.label);
 });
 registerCardAction({ id: "done", label: "Done", order: 2, title: "Close it: it leaves the board, and you can open it again from its project", visible: (card) => card.column === "review", run: markDone });
 

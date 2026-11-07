@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { AuthSession } from "../auth.js";
-import { appendBobMessage, bobMessageOrigin, clearBobActions, getBobMessage, setBobActions, type BobAction, type BobMessage } from "./bob-store.js";
+import { appendBobMessage, bobMessageOrigin, clearBobActions, getBobMessage, resolveBobMessage, setBobActions, type BobAction, type BobMessage } from "./bob-store.js";
 
 export interface BobActionContext {
   session: AuthSession;
@@ -33,7 +33,8 @@ export function setRemoteBobAction(run: RemoteBobAction): void { remote = run; }
 
 /**
  * Runs a button on one of the person's own messages. Only buttons the message really carries run, and each runs once. A message
- * another of the person's machines wrote is pressed there, where what it acts on lives.
+ * another of the person's machines wrote is pressed there, where what it acts on lives. A pressed item is cleared: it no longer
+ * waits for the person, unless its feature put its buttons back (a button that only opens something). A report keeps its place.
  */
 export async function runBobAction(db: DatabaseSync, session: AuthSession, messageId: string, actionId: string): Promise<BobMessage[]> {
   const message = getBobMessage(db, session.accountId, messageId);
@@ -47,13 +48,18 @@ export async function runBobAction(db: DatabaseSync, session: AuthSession, messa
   const handler = handlers.get(actionId);
   if (!handler) throw new BobActionError(404, "Bob cannot do that yet");
   clearBobActions(db, session.accountId, messageId);
+  let answer: BobMessage[];
   try {
-    return (await handler({ session, db, message, action })) ?? [];
+    answer = (await handler({ session, db, message, action })) ?? [];
   } catch (error) {
     // The button comes back when the action did not happen.
     setBobActions(db, session.accountId, messageId, message.actions);
     throw error;
   }
+  if (message.importance !== "report" && !getBobMessage(db, session.accountId, messageId)?.actions.length) {
+    resolveBobMessage(db, session.accountId, messageId, `You chose “${action.label}”.`);
+  }
+  return answer;
 }
 
 /** Convenience for handlers that just answer in words. */

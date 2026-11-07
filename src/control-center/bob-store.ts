@@ -59,6 +59,9 @@ export interface BobMessage {
   importance: BobImportance;
   actions: BobAction[];
   createdAt: string;
+  /** When it stopped waiting for the person, and why: they pressed one of its buttons, or Bob found it settled. Null while it waits. */
+  resolvedAt: string | null;
+  resolution: string | null;
 }
 
 export type BobMessageInput = Partial<Pick<BobMessage, "via" | "projectId" | "projectName" | "importance" | "actions">> & Pick<BobMessage, "role" | "text">;
@@ -76,6 +79,9 @@ export function ensureBobSchema(db: DatabaseSync): void {
   const columns = new Set((db.prepare("PRAGMA table_info(control_center_bob_messages)").all() as Array<{ name: string }>).map((column) => column.name));
   if (!columns.has("updated_at")) db.exec("ALTER TABLE control_center_bob_messages ADD COLUMN updated_at TEXT; UPDATE control_center_bob_messages SET updated_at = created_at");
   if (!columns.has("origin_node_id")) db.exec("ALTER TABLE control_center_bob_messages ADD COLUMN origin_node_id TEXT");
+  // An item settled is cleared from the chat; what Bob last asked the decision model about it is kept here only.
+  if (!columns.has("resolved_at")) db.exec("ALTER TABLE control_center_bob_messages ADD COLUMN resolved_at TEXT; ALTER TABLE control_center_bob_messages ADD COLUMN resolution TEXT");
+  if (!columns.has("recheck_hash")) db.exec("ALTER TABLE control_center_bob_messages ADD COLUMN recheck_hash TEXT");
 }
 
 export async function bobDatabase(): Promise<DatabaseSync> {
@@ -173,7 +179,7 @@ export function appendBobMessage(db: DatabaseSync, accountId: string, input: Bob
   const message: BobMessage = {
     id: randomUUID(), role: input.role, text: input.text, via: input.via ?? null,
     projectId: input.projectId ?? null, projectName: input.projectName ?? null,
-    importance: input.importance ?? "fyi", actions: input.actions ?? [], createdAt: new Date().toISOString(),
+    importance: input.importance ?? "fyi", actions: input.actions ?? [], createdAt: new Date().toISOString(), resolvedAt: null, resolution: null,
   };
   insertMessage(db, accountId, message, message.createdAt, null);
   for (const listener of appendListeners) listener(accountId, message);
@@ -182,13 +188,13 @@ export function appendBobMessage(db: DatabaseSync, accountId: string, input: Bob
 }
 
 function insertMessage(db: DatabaseSync, accountId: string, message: BobMessage, updatedAt: string, originNodeId: string | null): void {
-  db.prepare("INSERT INTO control_center_bob_messages (id, account_id, role, text, via, project_id, project_name, importance, actions, created_at, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(message.id, accountId, message.role, message.text, message.via, message.projectId, message.projectName, message.importance, JSON.stringify(message.actions), message.createdAt, updatedAt, originNodeId);
+  db.prepare("INSERT INTO control_center_bob_messages (id, account_id, role, text, via, project_id, project_name, importance, actions, created_at, updated_at, origin_node_id, resolved_at, resolution) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(message.id, accountId, message.role, message.text, message.via, message.projectId, message.projectName, message.importance, JSON.stringify(message.actions), message.createdAt, updatedAt, originNodeId, message.resolvedAt, message.resolution);
 }
 
 /**
  * A message written on the person's other machine. New ones join the timeline and are announced like any message; a newer copy
- * of one already here (its buttons were used there) replaces this one's buttons. Nothing is sent on again from here.
+ * of one already here (its buttons were used there, or it was cleared) replaces this one's buttons and state. Nothing is sent on again from here.
  */
 export function storeReplicatedBobMessage(db: DatabaseSync, accountId: string, message: BobMessage, updatedAt: string, originNodeId: string): "added" | "changed" | "stale" {
   const held = db.prepare("SELECT updated_at FROM control_center_bob_messages WHERE account_id = ? AND id = ?").get(accountId, message.id) as { updated_at: string | null } | undefined;
@@ -198,7 +204,8 @@ export function storeReplicatedBobMessage(db: DatabaseSync, accountId: string, m
     return "added";
   }
   if (held.updated_at !== null && updatedAt <= held.updated_at) return "stale";
-  db.prepare("UPDATE control_center_bob_messages SET actions = ?, updated_at = ? WHERE account_id = ? AND id = ?").run(JSON.stringify(message.actions), updatedAt, accountId, message.id);
+  db.prepare("UPDATE control_center_bob_messages SET actions = ?, resolved_at = ?, resolution = ?, updated_at = ? WHERE account_id = ? AND id = ?")
+    .run(JSON.stringify(message.actions), message.resolvedAt, message.resolution, updatedAt, accountId, message.id);
   for (const listener of changeTimelineListeners) listener(accountId);
   return "changed";
 }
@@ -208,12 +215,24 @@ export function bobMessageOrigin(db: DatabaseSync, accountId: string, id: string
   return (db.prepare("SELECT origin_node_id FROM control_center_bob_messages WHERE account_id = ? AND id = ?").get(accountId, id) as { origin_node_id: string | null } | undefined)?.origin_node_id ?? null;
 }
 
-interface MessageRow { id: string; role: BobMessage["role"]; text: string; via: string | null; project_id: string | null; project_name: string | null; importance: BobImportance; actions: string; created_at: string }
+interface MessageRow {
+  id: string; role: BobMessage["role"]; text: string; via: string | null; project_id: string | null; project_name: string | null; importance: BobImportance; actions: string; created_at: string;
+  resolved_at: string | null; resolution: string | null;
+}
+
+const COLUMNS = "id, role, text, via, project_id, project_name, importance, actions, created_at, resolved_at, resolution";
+
+const fromRow = (row: MessageRow): BobMessage => ({
+  id: row.id, role: row.role, text: row.text, via: row.via, projectId: row.project_id, projectName: row.project_name,
+  importance: row.importance, actions: JSON.parse(row.actions) as BobAction[], createdAt: row.created_at, resolvedAt: row.resolved_at, resolution: row.resolution,
+});
 
 export interface BobMessageQuery {
   /** A project id, or `general` for items about no project. */
   project?: string;
   importance?: BobImportanceFilter;
+  /** Only the items that were cleared: settled by the person or found settled by Bob. */
+  cleared?: boolean;
   limit?: number;
 }
 
@@ -228,30 +247,67 @@ export function listBobMessages(db: DatabaseSync, accountId: string, query: BobM
     where.push(`importance IN (${levels.map(() => "?").join(", ")})`);
     values.push(...levels);
   }
-  const rows = db.prepare(`SELECT id, role, text, via, project_id, project_name, importance, actions, created_at FROM control_center_bob_messages WHERE ${where.join(" AND ")} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+  if (query.cleared) where.push("resolved_at IS NOT NULL");
+  const rows = db.prepare(`SELECT ${COLUMNS} FROM control_center_bob_messages WHERE ${where.join(" AND ")} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
     .all(...values, Math.min(query.limit ?? 100, 500)) as unknown as MessageRow[];
-  return rows.reverse().map((row) => ({
-    id: row.id, role: row.role, text: row.text, via: row.via, projectId: row.project_id, projectName: row.project_name,
-    importance: row.importance, actions: JSON.parse(row.actions) as BobAction[], createdAt: row.created_at,
-  }));
+  return rows.reverse().map(fromRow);
 }
 
 export function getBobMessage(db: DatabaseSync, accountId: string, id: string): BobMessage | undefined {
-  const row = db.prepare("SELECT id, role, text, via, project_id, project_name, importance, actions, created_at FROM control_center_bob_messages WHERE account_id = ? AND id = ?").get(accountId, id) as unknown as MessageRow | undefined;
-  return row ? { id: row.id, role: row.role, text: row.text, via: row.via, projectId: row.project_id, projectName: row.project_name, importance: row.importance, actions: JSON.parse(row.actions) as BobAction[], createdAt: row.created_at } : undefined;
+  const row = db.prepare(`SELECT ${COLUMNS} FROM control_center_bob_messages WHERE account_id = ? AND id = ?`).get(accountId, id) as unknown as MessageRow | undefined;
+  return row ? fromRow(row) : undefined;
 }
 
-/** Sets the buttons on a message this machine wrote (none, once one was pressed), and tells the person's other machines. */
-export function setBobActions(db: DatabaseSync, accountId: string, id: string, actions: BobAction[]): void {
-  // Every change must be newer than the last, even within the same millisecond, or the other machines keep the older copy.
+/** A message still waiting with its buttons, with which machine wrote it (null: this one) and the evidence Bob last judged it on. */
+export interface OpenBobMessage extends BobMessage { originNodeId: string | null; recheckHash: string | null }
+
+/** Messages that still carry buttons and were not cleared, oldest first. Reports are not among them: their buttons are shortcuts. */
+export function listOpenBobMessages(db: DatabaseSync, accountId: string): OpenBobMessage[] {
+  const rows = db.prepare(`SELECT ${COLUMNS}, origin_node_id, recheck_hash FROM control_center_bob_messages WHERE account_id = ? AND resolved_at IS NULL AND actions <> '[]' AND importance <> 'report' ORDER BY created_at, rowid`)
+    .all(accountId) as unknown as Array<MessageRow & { origin_node_id: string | null; recheck_hash: string | null }>;
+  return rows.map((row) => ({ ...fromRow(row), originNodeId: row.origin_node_id, recheckHash: row.recheck_hash }));
+}
+
+/** Remembers the evidence Bob judged an item on, so it is asked about again only when something changed. Stays on this machine. */
+export function noteBobRecheck(db: DatabaseSync, accountId: string, id: string, hash: string): void {
+  db.prepare("UPDATE control_center_bob_messages SET recheck_hash = ? WHERE account_id = ? AND id = ?").run(hash, accountId, id);
+}
+
+/**
+ * Changes a message and tells open pages and the person's other machines. Every change must be newer than the last, even
+ * within the same millisecond, or the other machines keep the older copy.
+ */
+function changeMessage(db: DatabaseSync, accountId: string, id: string, assignments: string, values: Array<string | null>): void {
   const held = (db.prepare("SELECT updated_at FROM control_center_bob_messages WHERE account_id = ? AND id = ?").get(accountId, id) as { updated_at: string | null } | undefined)?.updated_at;
   const now = new Date().toISOString();
   const updatedAt = held && held >= now ? new Date(Date.parse(held) + 1).toISOString() : now;
-  db.prepare("UPDATE control_center_bob_messages SET actions = ?, updated_at = ? WHERE account_id = ? AND id = ?").run(JSON.stringify(actions), updatedAt, accountId, id);
+  db.prepare(`UPDATE control_center_bob_messages SET ${assignments}, updated_at = ? WHERE account_id = ? AND id = ?`).run(...values, updatedAt, accountId, id);
   const message = getBobMessage(db, accountId, id);
   if (!message) return;
   for (const listener of changeTimelineListeners) listener(accountId);
   for (const listener of writeListeners) listener(accountId, message, updatedAt);
+}
+
+/** Sets the buttons on a message this machine wrote (none, once one was pressed), and tells the person's other machines. */
+export function setBobActions(db: DatabaseSync, accountId: string, id: string, actions: BobAction[]): void {
+  changeMessage(db, accountId, id, "actions = ?", [JSON.stringify(actions)]);
+}
+
+/** Clears an item that no longer waits for the person: its buttons go, and the chat shows it only among the cleared ones, with why. */
+export function resolveBobMessage(db: DatabaseSync, accountId: string, id: string, resolution: string): void {
+  changeMessage(db, accountId, id, "actions = '[]', resolved_at = ?, resolution = ?", [new Date().toISOString(), resolution]);
+}
+
+const recheckListeners = new Set<(accountId: string) => void>();
+
+/** Something that can settle the person's open items happened (they reviewed or closed a conversation): Bob checks them again now. */
+export function askBobRecheck(accountId: string): void {
+  for (const listener of recheckListeners) listener(accountId);
+}
+
+export function onBobRecheckAsked(listener: (accountId: string) => void): () => void {
+  recheckListeners.add(listener);
+  return () => recheckListeners.delete(listener);
 }
 
 /** Takes the buttons off a message once one was pressed, so an action is never run twice. */

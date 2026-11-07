@@ -6,6 +6,7 @@
 //   the node gives conversations their keys, "conversation-titled:<title>" in it stands for the key of the conversation with that title.
 // - display.json is what Joint Bob's display agent "answers" for a message about how the app looks.
 // - JOINT_BOB_TEST_REVIEW_CHECK_MS shortens the wait before Bob checks a conversation that stopped.
+// - JOINT_BOB_TEST_RECHECK_MODEL_AFTER_MS shortens how old an open item must be before the decision model judges it.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -21,4 +22,5 @@ server.once("listening", () => {
     .replace(/"conversation-titled:([^"]+)"/g, (_match, title: string) => JSON.stringify(world.conversations.find((entry) => entry.title === title)?.key ?? "missing"))));
   void import("../src/server/control-center-display.js").then(({ setDisplayInterpreter }) => setDisplayInterpreter(() => readFile(path.join(directory, "display.json"), "utf8")));
   if (process.env.JOINT_BOB_TEST_REVIEW_CHECK_MS) void import("../src/server/control-center-review-check.js").then(({ setReviewCheckDelay }) => setReviewCheckDelay(Number(process.env.JOINT_BOB_TEST_REVIEW_CHECK_MS)));
+  if (process.env.JOINT_BOB_TEST_RECHECK_MODEL_AFTER_MS) void import("../src/server/control-center-recheck.js").then(({ setRecheckModelDelay }) => setRecheckModelDelay(Number(process.env.JOINT_BOB_TEST_RECHECK_MODEL_AFTER_MS)));
 });

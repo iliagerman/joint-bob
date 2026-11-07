@@ -63,7 +63,43 @@ test("a button runs once, only when the message carries it, and returns when the
   const result = await runBobAction(db, session, message.id, "test.ok");
   assert.equal(result[0].text, "did it for item");
   assert.deepEqual(getBobMessage(db, "ilia", message.id)!.actions, [], "the buttons are gone once one ran");
+  assert.equal(getBobMessage(db, "ilia", message.id)!.resolution, "You chose “Do it”.", "the pressed item is cleared, with what was pressed");
   await assert.rejects(runBobAction(db, session, message.id, "test.ok"), (error) => error instanceof BobActionError && error.status === 404);
   assert.equal(ran, 1);
   await assert.rejects(runBobAction(db, { accountId: "other" } as never, message.id, "test.ok"), (error) => error instanceof BobActionError, "another person cannot press it");
+});
+
+test("a pressed item is cleared unless its feature put its buttons back; a report keeps its place", async () => {
+  const { registerBobAction, runBobAction } = await import("../src/control-center/bob-actions.js");
+  const { getBobMessage, setBobActions } = await import("../src/control-center/bob-store.js");
+  const db = database();
+  const session = { accountId: "ilia" } as never;
+  registerBobAction("test.opens", async ({ db: database, message }) => { setBobActions(database, "ilia", message.id, message.actions); });
+  registerBobAction("test.quiet", async () => undefined);
+  const opens = appendBobMessage(db, "ilia", { role: "system", text: "webhook", importance: "urgent", actions: [{ id: "test.opens", label: "Open" }, { id: "test.quiet", label: "Snooze" }] });
+  await runBobAction(db, session, opens.id, "test.opens");
+  assert.equal(getBobMessage(db, "ilia", opens.id)!.resolvedAt, null, "a button that only opens something leaves the item waiting");
+  assert.equal(getBobMessage(db, "ilia", opens.id)!.actions.length, 2);
+  const report = appendBobMessage(db, "ilia", { role: "bob", text: "Morning report", importance: "report", actions: [{ id: "test.quiet", label: "Summary: menu" }] });
+  await runBobAction(db, session, report.id, "test.quiet");
+  assert.equal(getBobMessage(db, "ilia", report.id)!.resolvedAt, null, "a report stays in the chat");
+});
+
+test("a cleared item loses its buttons, says why, leaves the open items and the count, and is listed among the cleared", async () => {
+  const { listOpenBobMessages, noteBobRecheck, resolveBobMessage } = await import("../src/control-center/bob-store.js");
+  const db = database();
+  const ask = appendBobMessage(db, "ilia", { role: "bob", text: "\"Fix the menu\" waits for you.", importance: "needs-you", projectId: "p1", projectName: "Joint Bob", actions: [{ id: "conversation.done", label: "Done" }] });
+  appendBobMessage(db, "ilia", { role: "bob", text: "Morning report", importance: "report", actions: [{ id: "report.summary", label: "Summary" }] });
+  appendBobMessage(db, "ilia", { role: "bob", text: "Two things." });
+  assert.deepEqual(listOpenBobMessages(db, "ilia").map((message) => [message.id, message.originNodeId, message.recheckHash]), [[ask.id, null, null]], "reports and plain answers are not items");
+  noteBobRecheck(db, "ilia", ask.id, "hash-1");
+  assert.equal(listOpenBobMessages(db, "ilia")[0].recheckHash, "hash-1");
+  assert.equal(countBobMessages(db, "ilia", "important"), 1);
+
+  resolveBobMessage(db, "ilia", ask.id, "You looked at it.");
+  const cleared = listBobMessages(db, "ilia").find((message) => message.id === ask.id)!;
+  assert.deepEqual([cleared.actions, cleared.resolution, Boolean(cleared.resolvedAt)], [[], "You looked at it.", true]);
+  assert.deepEqual(listOpenBobMessages(db, "ilia"), []);
+  assert.equal(countBobMessages(db, "ilia", "important"), 0, "the badge no longer counts it");
+  assert.deepEqual(listBobMessages(db, "ilia", { cleared: true }).map((message) => message.id), [ask.id], "only cleared items in the cleared view");
 });

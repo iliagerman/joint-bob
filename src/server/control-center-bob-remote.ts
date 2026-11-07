@@ -19,6 +19,8 @@ const messagesSchema = z.object({
     projectId: z.string().max(240).nullable(), projectName: z.string().max(500).nullable(), importance: z.enum(BOB_IMPORTANCE),
     actions: z.array(z.object({ id: z.string().min(1).max(100), label: z.string().max(200), style: z.enum(["primary", "warn"]).optional(), data: z.record(z.string(), z.unknown()).optional() })).max(12),
     createdAt: z.string().min(1).max(40),
+    // A machine on an older version does not say whether the item was cleared.
+    resolvedAt: z.string().max(40).nullable().default(null), resolution: z.string().max(500).nullable().default(null),
   })),
 });
 

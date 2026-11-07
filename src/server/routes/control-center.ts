@@ -22,6 +22,7 @@ import { startMemorySync } from "../../control-center/memory-sync.js";
 import { loadBoard } from "../control-center-board.js";
 import { startControlCenterWatch } from "../control-center-watch.js";
 import { startReviewChecks } from "../control-center-review-check.js";
+import { startBobRecheck } from "../control-center-recheck.js";
 import { startBobSync } from "../../control-center/bob-sync.js";
 import { app } from "../state.js";
 
@@ -29,6 +30,7 @@ import { app } from "../state.js";
 startControlCenterWatch();
 startReviewChecks();
 startBobSync();
+startBobRecheck();
 startMemorySync();
 
 /** What waits for the person, for the badge on the control center's icon: open Guardian reviews and Bob's items with buttons still on them. */
