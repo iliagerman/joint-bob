@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.233.0 — 2026-11-07
+
+- On a phone, tapping the control center's chips works the first time while agents run. The chips, the agents sheet and the chat's project lists were drawn again every few seconds, so a tap often missed and an open list closed; they now change only when what they show changes.
+- **Needs me** in Bob's chat stays chosen on each device, so a phone can stay on what needs you.
+- Bob can write or update conversation summaries: "write the summary of the slice 10 conversation", or of several at once. He posts each summary in his chat when it is written. A conversation on another of your machines gets its summary written there, so every board shows it.
+
 ## 2.232.0 — 2026-11-07
 
 - Joint Bob installs and keeps its own Kiro CLI, so Kiro no longer needs Kiro installed on the system. Each download is checked before it replaces the working copy, and a missing copy is restored automatically.
