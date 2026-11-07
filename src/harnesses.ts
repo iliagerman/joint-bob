@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { isInternalSession } from "./internal-sessions.js";
+import { titleCase } from "./session-title.js";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionFeedbackOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords, listConversationSegments, parseConversationDraftPath, type ConversationRecord } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
@@ -355,7 +356,7 @@ function groupConversation(conversationId: string, segments: Array<{ session: Se
     ...(segmentViews ? { segments: segmentViews } : {}),
     // A switched conversation keeps the title of its first real segment; a fresh
     // segment's own title may be derived from the handoff envelope.
-    title: overrides[conversationId] ?? (segments.length > 1 ? firstLive?.title ?? face.title : face.title),
+    title: overrides[conversationId] ?? titleCase(segments.length > 1 ? firstLive?.title ?? face.title : face.title),
     ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
     ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
     ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),
