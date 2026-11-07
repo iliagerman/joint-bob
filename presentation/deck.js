@@ -10,23 +10,22 @@ const filmPlay = document.getElementById("filmPlay");
 
 const NOTES = [
   "Joint Bob runs coding agents (Claude Code, Pi with OpenAI, and Kiro) on machines the team owns. Today: how it keeps their cost under control. One click, and the film starts.",
-  "Click once to play. When it ends, click for the next slide.",
+  "The film starts by itself. When it ends, click for the next slide.",
   "Agents are fast, but cost piles up in four places, and each has a lever built in. Let it build by itself.",
   "A decision model scores each message 1 to 10 and Joint Bob picks the model and thinking effort for that level, per agent: Claude Haiku, Sonnet or Opus; OpenAI models through Pi; Kiro with your own mapping. When the score is unsure it does not switch.",
-  "A pool puts several subscriptions in failover order, across providers on Pi. When one hits its limit the turn moves on before any output, so nothing is paid twice. A relay holds the sign-ins, and members never receive a token. Note: Claude Code stays on Claude, and Kiro profiles are private and cannot join a pool.",
+  "A pool puts several subscriptions in failover order, across providers on Pi. When one hits its limit the turn moves on before any output, so nothing is paid twice. A relay holds the sign-ins, and members never receive a token. On the slide the chain is Claude, ChatGPT, Bedrock, then a local model. Be ready to say what ships today: pools hold Claude, ChatGPT and Pi provider profiles; Bedrock is reached through Kiro, whose sign-ins stay private to their machine; Claude Code stays on Claude.",
   "Budgets nest: cluster, workspace, project, conversation. A turn starts only if every level has room. 80% gives a warning; at the limit the turn is refused with the reset time, and a runaway turn is stopped within about a minute. Be ready: Kiro spend is not priced yet, and costs are list-price estimates, not invoices.",
   "Agents repeat mistakes, and every retry costs tokens. Joint Bob spots a repeated problem and suggests a rule with its evidence. A person accepts it, and every later agent knows it. Agents open only the subject they need.",
-  "Four levers: the right model, every seat used, hard limits, agents that learn. Ship faster. Stay in charge. Scan the code to open joint-bob.bobthebot.io.",
+  "The four cost levers come first, then the rest of what Joint Bob does: machines, phone, teams, schedules, Guardian, Story, the agent browser, secrets. Ship faster. Stay in charge. Scan the code to open joint-bob.bobthebot.io.",
 ];
 
 // When each build step appears, in ms after the slide starts.
-const BUILD = { 2: [900, 5200], 3: [11000], 4: [7500, 11500], 5: [9000], 6: [4500, 9500] };
+const BUILD = { 2: [900, 5200], 3: [11000], 4: [7500, 11500], 5: [9000], 6: [4800, 9000] };
 
 let current = 0;
 let clockStart = 0;
 let timers = [];
 let frame = 0;
-let filmStarted = false;
 
 // ---- Fit the 1920×1080 stage to the window ----
 function fit() {
@@ -86,37 +85,40 @@ function go(index, direction = 1) {
 }
 
 function restart() {
-  leave(current);
-  const slide = slides[current];
-  slide.classList.remove("active");
-  void slide.offsetWidth;
-  setTimeout(() => start(current), 60);
+  clockStart = 0;
+  if (current !== 0) { go(0, -1); clockStart = 0; return; }
+  leave(0);
+  slides[0].classList.remove("active");
+  void slides[0].offsetWidth;
+  setTimeout(() => start(0), 60);
 }
 
 function next() {
-  if (slides[current].hasAttribute("data-film") && !filmStarted) { playFilm(); return; }
   go(current + 1, 1);
 }
 function back() { go(current - 1, -1); }
 
 // ---- The film: one click to start, never automatic ----
 function prepareFilm() {
-  filmStarted = false;
-  film.pause();
   film.currentTime = 0;
-  filmPlay.classList.remove("hidden");
-  slides[current].classList.add("idle");
   document.getElementById("filmProgress").style.width = "0";
-}
-function playFilm() {
-  filmStarted = true;
   filmPlay.classList.add("hidden");
-  slides[current].classList.remove("idle");
   document.body.classList.add("film-on");
   film.muted = false;
-  film.play();
+  // The click that brought us here allows sound; if the browser still refuses (the page was
+  // opened straight on this slide), play without sound and offer one click to turn it on.
+  film.play().catch(() => {
+    film.muted = true;
+    film.play();
+    filmPlay.querySelector("span").textContent = "Click for sound";
+    filmPlay.classList.remove("hidden");
+  });
 }
-filmPlay.addEventListener("click", (event) => { event.stopPropagation(); playFilm(); });
+filmPlay.addEventListener("click", (event) => {
+  event.stopPropagation();
+  film.muted = false;
+  filmPlay.classList.add("hidden");
+});
 film.addEventListener("timeupdate", () => {
   document.getElementById("filmProgress").style.width = `${(film.currentTime / film.duration) * 100}%`;
 });
@@ -191,7 +193,7 @@ function poolsScene() {
   const run = () => {
     accounts.forEach((acc) => { acc.className = "account"; fill(acc, "0"); state(acc, "ready"); });
     hops.forEach((hop) => hop.classList.remove("lit"));
-    fill(accounts[0], "62%"); fill(accounts[1], "18%"); fill(accounts[2], "5%");
+    fill(accounts[0], "62%"); fill(accounts[1], "18%"); fill(accounts[2], "5%"); fill(accounts[3], "100%"); state(accounts[3], "ready · no limit");
     log.textContent = "A new turn starts on the Claude account";
     place(0);
     token.style.opacity = 1;
@@ -237,35 +239,33 @@ function budgetScene() {
   run();
 }
 
-// ---- 6 · Learn ----
+// ---- 6 · Learn: the flow lights up, then the retries fall ----
 function learnScene() {
   const slide = slides[current];
-  const dot = document.getElementById("loopDot");
-  const stops = [...slide.querySelectorAll(".stop")];
-  const angles = [-90, -18, 54, 126, 198];
-  const waste = document.getElementById("waste");
-  const note = document.getElementById("wasteNote");
-  const weeks = [[12, "turns this week"], [7, "next week"], [3, "the week after"], [1, "a month in"]];
-  let lap = -1;
-  const started = performance.now();
-  const tick = (now) => {
-    const turn = (now - started) / 4200;
-    const deg = -90 + (turn % 1) * 360;
-    const rad = (deg * Math.PI) / 180;
-    dot.setAttribute("cx", 260 + 200 * Math.cos(rad));
-    dot.setAttribute("cy", 260 + 200 * Math.sin(rad));
-    stops.forEach((stop, i) => stop.classList.toggle("lit", Math.abs(((deg - angles[i] + 540) % 360) - 180) > 150));
-    const nowLap = Math.min(Math.floor(turn), weeks.length - 1);
-    if (nowLap !== lap) {
-      lap = nowLap;
-      const [value, label] = weeks[lap];
-      waste.textContent = value;
-      note.textContent = label;
-      waste.style.color = value <= 3 ? "#37cfab" : "";
-    }
-    frame = requestAnimationFrame(tick);
+  const steps = [...slide.querySelectorAll(".fstep")];
+  const lines = [...slide.querySelectorAll(".fline")];
+  const bars = [...slide.querySelectorAll(".bar")];
+  const reset = () => {
+    steps.forEach((el) => el.classList.remove("lit"));
+    lines.forEach((el) => el.classList.remove("lit"));
+    bars.forEach((el) => { el.classList.remove("grown", "low"); el.querySelector("i").style.height = "0"; });
   };
-  frame = requestAnimationFrame(tick);
+  const run = () => {
+    reset();
+    steps.forEach((step, i) => {
+      later(700 + i * 650, () => { step.classList.add("lit"); if (lines[i - 1]) lines[i - 1].classList.add("lit"); });
+    });
+    bars.forEach((bar, i) => {
+      later(4300 + i * 900, () => {
+        const value = Number(bar.dataset.v);
+        bar.querySelector("i").style.height = `${(value / 12) * 100}%`;
+        bar.classList.add("grown");
+        if (value <= 3) bar.classList.add("low");
+      });
+    });
+    later(14000, run);
+  };
+  run();
 }
 
 const SCENES = { router: routerScene, pools: poolsScene, budget: budgetScene, learn: learnScene };

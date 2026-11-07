@@ -17,7 +17,7 @@
       <!-- 0 · Title -->
       <section class="slide title-slide" data-time="10" data-enter="zoom">
         <img class="logo" src="../promo-video/landing/media/icon.svg" alt="">
-        <p class="eyebrow rise" style="--d:0.2s">Sela Cloud · Joint Bob</p>
+        <p class="eyebrow rise" style="--d:0.2s"><span class="sela-tile"><img src="sela-logo.svg" alt="Sela"></span>Joint Bob · by Sela Cloud</p>
         <h1 class="rise" style="--d:0.35s">Cost control<br><em>for coding agents</em></h1>
         <p class="lede rise" style="--d:0.6s">Claude Code, Pi and Kiro, on machines you own, with every token accounted for.</p>
         <svg class="title-art" viewBox="0 0 760 600" aria-hidden="true">
@@ -81,9 +81,9 @@
             <p class="judge-note">Scored on every message by a decision model: TypeSafe Jev, or Laya on your own machine.</p>
           </div>
           <div class="lanes">
-            <div class="lane" data-lane="light"><span class="model">Light</span><span class="price">$</span><span class="tag">questions · git · small edits</span><span class="count">0</span><span class="prov"><i class="c">Claude Haiku</i><i class="o">OpenAI gpt-6-luna</i><i class="k">Kiro: your pick</i></span></div>
-            <div class="lane" data-lane="standard"><span class="model">Standard</span><span class="price">$$</span><span class="tag">features across files</span><span class="count">0</span><span class="prov"><i class="c">Claude Sonnet</i><i class="o">OpenAI gpt-6.1-sol</i><i class="k">Kiro: your pick</i></span></div>
-            <div class="lane" data-lane="deep"><span class="model">Deep</span><span class="price">$$$</span><span class="tag">debugging · planning</span><span class="count">0</span><span class="prov"><i class="c">Claude Opus</i><i class="o">OpenAI gpt-6-astra</i><i class="k">Kiro: your pick</i></span></div>
+            <div class="lane" data-lane="light"><span class="model">Light</span><span class="price">$</span><span class="tag">questions · git · small edits</span><span class="count">0</span><span class="prov"><i class="c">Claude Haiku</i><i class="o">OpenAI gpt-6-luna</i><i class="k">Kiro auto</i></span></div>
+            <div class="lane" data-lane="standard"><span class="model">Standard</span><span class="price">$$</span><span class="tag">features across files</span><span class="count">0</span><span class="prov"><i class="c">Claude Sonnet</i><i class="o">OpenAI gpt-6.1-sol</i><i class="k">Kiro gpt-5.6-sol</i></span></div>
+            <div class="lane" data-lane="deep"><span class="model">Deep</span><span class="price">$$$</span><span class="tag">debugging · planning</span><span class="count">0</span><span class="prov"><i class="c">Claude Opus</i><i class="o">OpenAI gpt-6-astra</i><i class="k">Kiro claude-opus-5</i></span></div>
             <p class="label lanes-foot">One mapping per agent: Claude Code, Pi (OpenAI) and Kiro</p>
           </div>
         </div>
@@ -103,11 +103,13 @@
         <div class="pool">
           <div class="turn-token" id="turnToken">turn</div>
           <div class="accounts">
-            <div class="account" data-acc="0"><span class="acc-name"><i class="dot c"></i>Claude account</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+            <div class="account" data-acc="0"><span class="acc-name"><i class="dot c"></i>Claude</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
             <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <div class="account" data-acc="1"><span class="acc-name"><i class="dot o"></i>ChatGPT account A</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+            <div class="account" data-acc="1"><span class="acc-name"><i class="dot o"></i>ChatGPT · A</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
             <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <div class="account" data-acc="2"><span class="acc-name"><i class="dot o"></i>ChatGPT account B</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+            <div class="account" data-acc="2"><span class="acc-name"><i class="dot k"></i>Bedrock</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+            <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div class="account" data-acc="3"><span class="acc-name"><i class="dot l"></i>Local model</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
           </div>
           <p class="pool-log" id="poolLog">&nbsp;</p>
         </div>
@@ -170,15 +172,26 @@
           <p class="eyebrow"><span class="chip">4</span> Self-learning</p>
           <h2>Every mistake is paid for <em>once.</em></h2>
         </header>
-        <div class="learn">
-          <div class="loop">
-            <svg viewBox="0 0 520 520" class="loop-ring"><circle cx="260" cy="260" r="200" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="2" stroke-dasharray="4 10"/><circle id="loopDot" r="9" fill="#37cfab"/></svg>
-            <div class="stop" style="--a:-90deg"><b>Conversation</b><small>an agent hits a problem</small></div>
-            <div class="stop" style="--a:-18deg"><b>Summary spots it</b><small>the same problem, twice</small></div>
-            <div class="stop" style="--a:54deg"><b>Rule suggested</b><small>with its evidence</small></div>
-            <div class="stop" style="--a:126deg"><b>You accept</b><small>nothing is installed alone</small></div>
-            <div class="stop" style="--a:198deg"><b>Every agent knows</b><small>.agents/knowledge/, synced</small></div>
-            <div class="loop-core"><span class="label">Retries on known problems</span><b id="waste">12</b><small id="wasteNote">turns this week</small></div>
+        <div class="flow" id="flow">
+          <div class="fstep"><i>1</i><b>Conversation</b><small>an agent hits a problem</small></div>
+          <span class="fline"><i></i></span>
+          <div class="fstep"><i>2</i><b>Summary spots it</b><small>the same problem, twice</small></div>
+          <span class="fline"><i></i></span>
+          <div class="fstep"><i>3</i><b>Rule suggested</b><small>with its evidence</small></div>
+          <span class="fline"><i></i></span>
+          <div class="fstep"><i>4</i><b>You accept</b><small>nothing is installed alone</small></div>
+          <span class="fline"><i></i></span>
+          <div class="fstep"><i>5</i><b>Every agent knows</b><small>.agents/knowledge/, synced</small></div>
+        </div>
+        <div class="learn-low">
+          <div class="chart">
+            <p class="label">Retries on known problems</p>
+            <div class="bars" id="bars">
+              <div class="bar" data-v="12"><b>12</b><i></i><small>this week</small></div>
+              <div class="bar" data-v="7"><b>7</b><i></i><small>next week</small></div>
+              <div class="bar" data-v="3"><b>3</b><i></i><small>week 3</small></div>
+              <div class="bar" data-v="1"><b>1</b><i></i><small>a month in</small></div>
+            </div>
           </div>
           <div class="rule-card" data-step="1">
             <p class="label">.agents/knowledge/database-access.md</p>
@@ -196,16 +209,30 @@
       </section>
 
       <!-- 7 · Close -->
-      <section class="slide close-slide" data-time="20" data-enter="zoom">
-        <div class="levers">
-          <div class="lv rise" style="--d:.1s"><span class="chip">1</span>Smart model selection</div>
-          <div class="lv rise" style="--d:.25s"><span class="chip">2</span>Subscription pools</div>
-          <div class="lv rise" style="--d:.4s"><span class="chip">3</span>Budgets and limits</div>
-          <div class="lv rise" style="--d:.55s"><span class="chip">4</span>Self-learning</div>
+      <section class="slide close-slide" data-time="35" data-enter="zoom">
+        <div class="close-main">
+          <p class="eyebrow rise" style="--d:.1s">Joint Bob · everything in one place</p>
+          <h2 class="rise" style="--d:.25s">Ship faster. <em>Stay in charge.</em></h2>
+          <div class="tiles">
+            <div class="tile lever" style="--i:0;--dx:-140px;--dy:0px"><span class="chip">1</span><div><b>Smart model selection</b><small>the right model per message</small></div></div>
+            <div class="tile lever" style="--i:1;--dx:0px;--dy:-110px"><span class="chip">2</span><div><b>Subscription pools</b><small>failover across every seat</small></div></div>
+            <div class="tile lever" style="--i:2;--dx:140px;--dy:0px"><span class="chip">3</span><div><b>Budgets and limits</b><small>per team, project and task</small></div></div>
+            <div class="tile lever" style="--i:3;--dx:0px;--dy:110px"><span class="chip">4</span><div><b>Self-learning</b><small>every mistake paid once</small></div></div>
+            <div class="tile" style="--i:4;--dx:-140px;--dy:0px"><span class="pip"></span><div><b>Move work between machines</b><small>laptop, server, phone</small></div></div>
+            <div class="tile" style="--i:5;--dx:0px;--dy:-110px"><span class="pip"></span><div><b>Work from your phone</b><small>pick up where you left off</small></div></div>
+            <div class="tile" style="--i:6;--dx:140px;--dy:0px"><span class="pip"></span><div><b>Teams</b><small>share, fork and review together</small></div></div>
+            <div class="tile" style="--i:7;--dx:0px;--dy:110px"><span class="pip"></span><div><b>Schedules and alerts</b><small>tasks, webhooks, watchers</small></div></div>
+            <div class="tile" style="--i:8;--dx:-140px;--dy:0px"><span class="pip"></span><div><b>Guardian</b><small>asks before a risky command</small></div></div>
+            <div class="tile" style="--i:9;--dx:0px;--dy:-110px"><span class="pip"></span><div><b>Story and Overview</b><small>two hosts explain a change</small></div></div>
+            <div class="tile" style="--i:10;--dx:140px;--dy:0px"><span class="pip"></span><div><b>Agent browser</b><small>agents drive a real browser</small></div></div>
+            <div class="tile" style="--i:11;--dx:0px;--dy:110px"><span class="pip"></span><div><b>Secrets</b><small>shared across your machines</small></div></div>
+          </div>
         </div>
-        <h2 class="rise" style="--d:.8s">Every token <em>earns its place.</em></h2>
-        <p class="slogan rise" style="--d:1.2s">Ship faster. Stay in charge.</p>
-        <div class="go-row rise" style="--d:1.5s"><a class="url-big" href="https://joint-bob.bobthebot.io">joint-bob.bobthebot.io</a><div class="qr"><img src="qr.svg" alt="QR code for joint-bob.bobthebot.io"><small>Scan to open</small></div></div>
+        <div class="go-col">
+          <span class="sela-tile sela-foot"><img src="sela-logo.svg" alt="Sela Cloud"></span>
+          <div class="qr"><img src="qr.svg" alt="QR code for joint-bob.bobthebot.io"><small>Scan to open</small></div>
+          <a class="url-big" href="https://joint-bob.bobthebot.io">joint-bob.bobthebot.io</a>
+        </div>
       </section>
     </div>
   </div>
@@ -216,7 +243,7 @@
   <!-- Presenter aids: N for notes, the clock always runs once the film starts. -->
   <div class="hud">
     <button type="button" id="btnBack" title="Previous slide (left arrow)" aria-label="Previous slide"><svg viewBox="0 0 24 24"><path d="M15 5l-8 7 8 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    <button type="button" id="btnRestart" title="Restart this slide (R)" aria-label="Restart this slide"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2.3-5.2M5 4v4h4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Restart</span></button>
+    <button type="button" id="btnRestart" title="Back to the first slide (R)" aria-label="Restart the presentation"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2.3-5.2M5 4v4h4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Restart</span></button>
     <button type="button" id="btnNext" title="Next slide (right arrow)" aria-label="Next slide"><svg viewBox="0 0 24 24"><path d="M9 5l8 7-8 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div class="dots" id="dots"></div>
     <span class="clock" id="clock">0:00 / 7:00</span>
