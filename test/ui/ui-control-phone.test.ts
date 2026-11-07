@@ -301,10 +301,9 @@ test("on a phone the control center is Bob's chat, with chips, an agents sheet a
   await page.getByTestId("control-phone-sheet").waitFor({ state: "visible" });
   await page.getByTestId("control-phone-sheet-close").click();
 
-  // Needs me shows only what needs the person, and the phone keeps that view.
+  // Needs me shows only what needs the person.
   await page.getByTestId("control-chat-importance-important").click();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="control-chat-entry"]')].every((entry) => ["needs-ok", "needs-you", "urgent"].includes(entry.getAttribute("data-importance") ?? "")));
-  assert.equal(await page.evaluate(() => localStorage.getItem("jointBobChatImportance")), "important");
 
   // The back button leaves the control center, and the app icon's shortcut comes straight to it.
   await page.getByTestId("control-phone-back").click();
@@ -313,7 +312,6 @@ test("on a phone the control center is Bob's chat, with chips, an agents sheet a
   await page.goto(`${node.url}/?action=control-center`);
   await page.locator("body.view-control").waitFor();
   await page.getByTestId("control-phone-strip").waitFor({ state: "visible" });
-  assert.equal(await page.getByTestId("control-chat-importance-important").evaluate((chip) => chip.classList.contains("active")), true, "the chat opens on Needs me again");
   assert.deepEqual(errors, []);
 });
 

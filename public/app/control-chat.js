@@ -17,14 +17,7 @@ const IMPORTANCE_LABELS = { "needs-ok": "Needs OK", urgent: "Urgent", "needs-you
 
 let settings = null;
 let messages = [];
-/**
- * How much a message must matter to be shown is kept on this device, so a phone can stay on what needs the person. The cleared
- * view is a look back, not a way of working, so it is not kept.
- */
-const IMPORTANCE_KEY = "jointBobChatImportance";
-const KEPT_IMPORTANCE = ["", "important", "reports", "fyi"];
-const keptImportance = localStorage.getItem(IMPORTANCE_KEY);
-const filter = { project: "", importance: KEPT_IMPORTANCE.includes(keptImportance) ? keptImportance : "" };
+const filter = { project: "", importance: "" };
 let settingsLoaded = false;
 let catalog = { harnesses: [], models: [] };
 /** Files and images picked, pasted or dropped for the next message, read as the conversation composer reads them. */
@@ -436,10 +429,8 @@ elements.controlChatFilterProject.addEventListener("change", () => {
   void loadMessages().catch((error) => toast(error.message));
 });
 for (const chip of elements.controlChatFilters.querySelectorAll("[data-importance]")) {
-  chip.classList.toggle("active", chip.dataset.importance === filter.importance);
   chip.addEventListener("click", () => {
     filter.importance = chip.dataset.importance;
-    if (KEPT_IMPORTANCE.includes(filter.importance)) localStorage.setItem(IMPORTANCE_KEY, filter.importance);
     for (const other of elements.controlChatFilters.querySelectorAll("[data-importance]")) other.classList.toggle("active", other === chip);
     void loadMessages().catch((error) => toast(error.message));
   });
