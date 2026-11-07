@@ -99,12 +99,14 @@ export class ClaudeControl {
     });
   }
 
-  close(): void {
-    if (this.exited) return;
+  close(): Promise<void> {
+    if (this.exited) return Promise.resolve();
+    const stopped = new Promise<void>(resolve => this.child.once("close", () => resolve()));
     this.child.stdin.end();
     // The CLI exits when its input ends; a sign-in listener can keep it up, so make sure.
     const timer = setTimeout(() => { if (!this.exited) void stopProcessGroup(this.child, "Claude MCP sign-in").catch(() => undefined); }, 2_000);
     timer.unref();
+    return stopped;
   }
 }
 
@@ -155,10 +157,14 @@ export function createClaudeMcpAuth(spawnControl: ControlSpawner, options: { set
     } finally { control.close(); }
   }
 
-  function endFlow(flow: Flow): void {
+  function endFlow(flow: Flow): Promise<void> {
     clearTimeout(flow.timer);
     flows.delete(flow.id);
-    flow.control.close();
+    return flow.control.close();
+  }
+
+  async function cancelServer(ownerKey: string, serverName: string): Promise<void> {
+    await Promise.all([...flows.values()].filter(flow => flow.ownerKey === ownerKey && flow.serverName === serverName).map(endFlow));
   }
 
   function ownFlow(flowId: string, ownerKey: string): Flow {
@@ -211,7 +217,9 @@ export function createClaudeMcpAuth(spawnControl: ControlSpawner, options: { set
       endFlow(ownFlow(flowId, ownerKey));
     },
 
+    cancelServer,
     async signOut(context: McpAuthContext, serverName: string): Promise<void> {
+      await cancelServer(context.ownerKey, serverName);
       await withControl(context, async (control) => {
         await settledStatus(control, settleMs);
         await control.request("mcp_clear_auth", { serverName });

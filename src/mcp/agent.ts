@@ -7,7 +7,7 @@ import { actingAccount, type ActingAccount } from "../account-context.js";
 import { JOINT_BOB_TOOL_SERVER, reservedMcpServerName } from "../assistant-collaboration/bridge-tools.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import type { HarnessId } from "../types.js";
-import { ManagedMcpStore } from "./store.js";
+import { ManagedMcpStore, type ManagedMcpServer } from "./store.js";
 
 export interface McpAgentIdentity { account: ActingAccount; projectId: string; conversationId: string; engine: HarnessId }
 let database: DatabaseSync | undefined;
@@ -38,11 +38,19 @@ export function revokeMcpAgentTokens(projectId: string, conversationId?: string)
   if (conversationId) db().prepare(`${query} AND json_extract(identity,'$.conversationId')=?`).run(projectId, conversationId);
   else db().prepare(query).run(projectId);
 }
+export function nativeMcpServerConfigs(): Record<string, ManagedMcpServer> {
+  const account = actingAccount();
+  if (!account) return {};
+  return Object.fromEntries(Object.entries(managedMcpStore(account.accountId).servers())
+    .filter(([name, server]) => server.authMode === "native" && !reservedMcpServerName(name))
+    .map(([name, { authMode: _mode, ...server }]) => [name, server]));
+}
+
 export function managedMcpBridgeConfigs(): Record<string, { command: string; args: string[] }> {
   const account = actingAccount();
   if (!account) return {};
   const bridge = fileURLToPath(new URL("../../bin/joint-bob-mcp.mjs", import.meta.url));
   // Joint Bob's own tools ride the same bridge, so every account's agents get it. A stored server by a reserved name never does.
-  const names = [...Object.keys(managedMcpStore(account.accountId).servers()).filter(name => !reservedMcpServerName(name)), JOINT_BOB_TOOL_SERVER];
+  const names = [...Object.entries(managedMcpStore(account.accountId).servers()).filter(([name, server]) => server.authMode !== "native" && !reservedMcpServerName(name)).map(([name]) => name), JOINT_BOB_TOOL_SERVER];
   return Object.fromEntries(names.map(name => [name, { command: process.execPath, args: [bridge, name] }]));
 }

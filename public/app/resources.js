@@ -782,7 +782,7 @@ function serverRow(server, local, inventory) {
   const activation = ["shared", "project", "plugin", "account"].includes(server.source) ? activationControl("mcp", server, local, server.harnesses) : null;
   head.append(...(activation ? [activation] : harnessIcons(server.harnesses)));
   if (!activation && local) head.append(badge(server.source === "enterprise" ? "organization managed" : "agent configured", "off"));
-  if (server.source === "account" && local) head.append(...managedMcpControls(server, async () => { await loadInventory(); render(); }));
+  if (server.source === "account" && local) head.append(...managedMcpControls(server, async () => { await loadInventory(); render(); }, mcpAuthProject() ? { projectId: mcpAuthProject() } : {}));
   else if (signInApplies(server, local)) head.append(...mcpAuthControls(server));
   const target = document.createElement("span");
   target.className = "skill-option-description";
@@ -930,7 +930,7 @@ function renderShareBar() {
   const local = entry?.inventory;
   bar.hidden = !view.ready || !(entry?.node.local || entry?.node.manageable) || !["skills", "mcp", "tools", "plugins"].includes(view.tab) || !local;
   if (bar.hidden) return;
-  if (view.tab === "mcp" && !view.nodeId) bar.append(managedMcpSetup(async () => { await loadInventory(); render(); }));
+  if (view.tab === "mcp" && !view.nodeId) bar.append(managedMcpSetup(async () => { await loadInventory(); render(); }, mcpAuthProject() ? { projectId: mcpAuthProject() } : {}));
   const line = document.createElement("div");
   line.className = "resources-share-line";
   if (view.tab === "tools") {

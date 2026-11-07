@@ -10,6 +10,7 @@ const secureUrl = z.string().url().max(4096).refine(value => {
   return !url.username && !url.password && !url.hash && (url.protocol === "https:" || url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
 }, "Use HTTPS, or HTTP on localhost, without credentials or a fragment");
 const serverSchema = z.object({
+  authMode: z.enum(["shared", "native"]).optional(),
   type: z.enum(["stdio", "http", "streamable-http"]).optional(),
   command: z.string().min(1).max(4096).optional(), args: z.array(z.string().max(8192)).max(100).optional(),
   env: z.record(z.string().max(8192)).optional(), cwd: z.string().max(4096).optional(),

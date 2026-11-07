@@ -5,6 +5,8 @@ import type { AgentSession, Skill } from "@earendil-works/pi-coding-agent";
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, createBashTool, loadSkills } from "./pi-sdk.js";
 
 import { createPiResourceLoader } from "./harnesses/pi/resource-loader.js";
+import type { ManagedMcpServer } from "./mcp/store.js";
+import { piNativeMcpExtension, piMcpCredentialDirectory } from "./mcp/pi-native.js";
 import { managedMcpPiExtension } from "./mcp/pi-extension.js";
 import type { GuardianVerdict } from "./guardian/check.js";
 import { guardianPiExtension } from "./guardian/pi-extension.js";
@@ -35,6 +37,7 @@ export interface PiCredentials {
 
 export interface PiResources {
   managedMcpServers?: string[];
+  nativeMcp?: { accountId: string; servers: Record<string, ManagedMcpServer> };
   strictResourceIsolation: boolean;
   packagesFile: string;
   extensions: string[];
@@ -176,6 +179,9 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, ...resources.agentsFiles] }),
     extensionFactories: [
       managedMcpPiExtension(() => resources.managedMcpServers ?? [], () => credentials.capabilityEnvironment),
+      ...(resources.nativeMcp && Object.keys(resources.nativeMcp.servers).length ? [await piNativeMcpExtension(
+        () => resources.nativeMcp!.servers, piMcpCredentialDirectory(inputs.agentDir, resources.nativeMcp.accountId),
+      )] : []),
       ...(hooks.guardian ? [guardianPiExtension((request) => hooks.guardian!(conversationId, request))] : []),
     ],
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),

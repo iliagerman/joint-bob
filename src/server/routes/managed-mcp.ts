@@ -1,11 +1,18 @@
 import { z } from "zod";
 import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { actingAccount, runAsAccount } from "../../account-context.js";
-import { runtimeCommand, runtimeEnvironment } from "../../account-runtime.js";
-import { runtimeForAccount } from "../../project-runtime.js";
+import path from "node:path";
+import { currentRuntime, runInRuntime, multiUserEnabled, serviceRuntime, runtimeCommand, runtimeEnvironment } from "../../account-runtime.js";
+import { runtimeForAccount, withProjectRuntime } from "../../project-runtime.js";
 import { ManagedMcpClient } from "../../mcp/client.js";
 import { callJointBobTool, JOINT_BOB_TOOL_SERVER, listJointBobTools } from "../../assistant-collaboration/bridge-tools.js";
-import { managedMcpStore, type McpAgentIdentity } from "../../mcp/agent.js";
+import { createClaudeMcpAuth, McpAuthError } from "../../harnesses/claude/mcp-auth.js";
+import { spawnPiMcpControl } from "../../mcp/pi-auth.js";
+import { loadPiNativeMcp, piMcpCredentialDirectory } from "../../mcp/pi-native.js";
+import { getAgentDir } from "../../pi-sdk.js";
+import { activeMcpServers } from "../../resource-activation.js";
+import type { ManagedMcpServer } from "../../mcp/store.js";
+import { managedMcpStore, nativeMcpServerConfigs, type McpAgentIdentity } from "../../mcp/agent.js";
 import { parseMcpServers } from "../../mcp/store.js";
 import { activationDecision } from "../../resource-activation.js";
 import { personalAssistantSettings } from "../../personal-assistants.js";
@@ -15,6 +22,7 @@ import { sendError, requireFeature, Feature } from "../http-auth.js";
 
 const clients = new Map<string, ManagedMcpClient>();
 export async function closeManagedMcpClients(): Promise<void> {
+  nativeAuth.closeAll();
   await Promise.all([...clients.values()].map(client => client.close()));
   clients.clear();
 }
@@ -36,24 +44,24 @@ const serverSchema = z.object({ serverName: nameSchema }).strict();
 const finishSchema = z.object({ flowId: z.string().uuid(), callbackUrl: z.string().url().max(8192).optional() }).strict();
 function ownClient() { const account = actingAccount(); if (!account) throw new Error("MCP requires a signed-in account"); return accountClient(account.accountId); }
 function invalid(error: unknown, response: import("express").Response) {
-  sendError(response, 400, error instanceof z.ZodError ? "Invalid MCP configuration or request" : error instanceof Error ? error.message : "MCP operation failed");
+  sendError(response, error instanceof McpAuthError ? error.statusCode : 400, error instanceof z.ZodError ? "Invalid MCP configuration or request" : error instanceof Error ? error.message : "MCP operation failed");
 }
 
 app.get("/api/resources/mcp/managed", (_request, response) => {
   const store = ownClient().store;
-  response.json({ servers: Object.entries(store.servers()).map(([name, server]) => ({ name, transport: server.command ? "stdio" : "http", target: server.url ? new URL(server.url).origin : server.command })) });
+  response.json({ servers: Object.entries(store.servers()).map(([name, server]) => ({ name, authMode: server.authMode ?? "shared", transport: server.command ? "stdio" : "http", target: server.url ? new URL(server.url).origin : server.command })) });
 });
 app.post("/api/resources/mcp/managed", requireFeature(Feature.SETTINGS), (request, response) => {
   try { const servers = parseMcpServers(request.body); ownClient().store.install(servers); response.json({ installed: Object.keys(servers) }); }
   catch (error) { invalid(error, response); }
 });
 app.delete("/api/resources/mcp/managed/:name", requireFeature(Feature.SETTINGS), async (request, response) => {
-  try { const name = nameSchema.parse(request.params.name), client = ownClient(); await client.disconnect(name); client.store.remove(name); response.json({ ok: true }); }
+  try { const name = nameSchema.parse(request.params.name), client = ownClient(); await nativeAuth.cancelServer(actingAccount()!.accountId, name); await client.disconnect(name); client.store.remove(name); response.json({ ok: true }); }
   catch (error) { invalid(error, response); }
 });
 app.get("/api/resources/mcp/managed/auth", async (_request, response) => {
   const client = ownClient();
-  response.json({ servers: await Promise.all(Object.keys(client.store.servers()).map(name => client.status(name))) });
+  response.json({ servers: await Promise.all(Object.entries(client.store.servers()).filter(([, server]) => server.authMode !== "native").map(([name]) => client.status(name))) });
 });
 app.post("/api/resources/mcp/managed/auth/start", async (request, response) => {
   try { response.json(await ownClient().start(serverSchema.parse(request.body).serverName)); }
@@ -72,12 +80,62 @@ app.post("/api/resources/mcp/managed/auth/sign-out", async (request, response) =
   catch (error) { invalid(error, response); }
 });
 
+// Pi's native client owns OAuth. The control worker and real session use the same
+// account-specific directory within the selected OS runtime's Pi agent folder.
+const nativeAuth = createClaudeMcpAuth(cwd => {
+  const account = actingAccount();
+  if (!account) throw new McpAuthError(401, "MCP requires a signed-in account");
+  const runtime = currentRuntime();
+  const agentDir = runtime.name ? path.join(runtime.home, ".pi", "agent") : getAgentDir();
+  return spawnPiMcpControl({ cwd, runtime, directory: piMcpCredentialDirectory(agentDir, account.accountId),
+    servers: activeMcpServers("pi", nativeMcpServerConfigs()) as Record<string, ManagedMcpServer> });
+});
+const nativeScopeSchema = z.object({ projectId: z.string().min(1).max(200).optional() }).strict();
+const nativeServerSchema = nativeScopeSchema.extend({ serverName: nameSchema });
+async function inNativeScope<T>(projectId: string | undefined, work: (context: { cwd: string; ownerKey: string }) => Promise<T>): Promise<T> {
+  const account = actingAccount();
+  if (!account) throw new McpAuthError(401, "MCP requires a signed-in account");
+  await loadPiNativeMcp();
+  if (projectId) {
+    const project = await getProject(projectId);
+    if (!project) throw new McpAuthError(404, "Project not found");
+    return withProjectRuntime(projectId, () => work({ cwd: project.path, ownerKey: account.accountId }));
+  }
+  const runtime = multiUserEnabled() ? runtimeForAccount(account.accountId) : serviceRuntime();
+  return runInRuntime(runtime, () => work({ cwd: runtime.home, ownerKey: account.accountId }));
+}
+app.get("/api/resources/mcp/native/auth", async (request, response) => {
+  try {
+    const scope = nativeScopeSchema.parse(request.query);
+    response.json({ servers: await inNativeScope(scope.projectId, context => nativeAuth.status(context)) });
+  } catch (error) { invalid(error, response); }
+});
+app.post("/api/resources/mcp/native/auth/start", async (request, response) => {
+  try { const body = nativeServerSchema.parse(request.body); response.json(await inNativeScope(body.projectId, context => nativeAuth.start(context, body.serverName))); }
+  catch (error) { invalid(error, response); }
+});
+app.post("/api/resources/mcp/native/auth/finish", async (request, response) => {
+  try {
+    const body = finishSchema.parse(request.body);
+    response.json({ server: await nativeAuth.finish(body.flowId, actingAccount()!.accountId, body.callbackUrl) });
+  } catch (error) { invalid(error, response); }
+});
+app.post("/api/resources/mcp/native/auth/cancel", (request, response) => {
+  try { const body = finishSchema.omit({ callbackUrl: true }).parse(request.body); nativeAuth.cancel(body.flowId, actingAccount()!.accountId); response.json({ ok: true }); }
+  catch (error) { invalid(error, response); }
+});
+app.post("/api/resources/mcp/native/auth/sign-out", async (request, response) => {
+  try { const body = nativeServerSchema.parse(request.body); await inNativeScope(body.projectId, context => nativeAuth.signOut(context, body.serverName)); response.json({ ok: true }); }
+  catch (error) { invalid(error, response); }
+});
+
 const agentSchema = z.object({ server: nameSchema, action: z.enum(["tools", "call"]), tool: z.string().min(1).max(300).optional(), arguments: z.record(z.unknown()).optional() }).strict();
 export async function authorizeMcpServer(identity: McpAgentIdentity, name: string): Promise<boolean> {
   if (!await getProject(identity.projectId)) return false;
   // Joint Bob's own tools decide for themselves who may use them.
   if (name === JOINT_BOB_TOOL_SERVER) return true;
-  if (!Object.hasOwn(managedMcpStore(identity.account.accountId).servers(), name)) return false;
+  const server = managedMcpStore(identity.account.accountId).servers()[name];
+  if (!server || server.authMode === "native") return false;
   if (!activationDecision("mcp", name, identity.engine, false).enabled) return false;
   const policy = await personalAssistantSettings(identity.account.accountId, identity.projectId, identity.engine, identity.conversationId);
   return !policy || policy.mcpServerNames === null || policy.mcpServerNames.includes(name);

@@ -26,7 +26,9 @@ import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSum
 import { toolTarget } from "./tool-target.js";
 import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";
 import { currentRuntime, runInRuntime, serviceRuntime } from "./account-runtime.js";
-import { managedMcpBridgeConfigs } from "./mcp/agent.js";
+import { managedMcpBridgeConfigs, nativeMcpServerConfigs } from "./mcp/agent.js";
+import { actingAccount } from "./account-context.js";
+import type { ManagedMcpServer } from "./mcp/store.js";
 import { activeMcpServers } from "./resource-activation.js";
 
 export type { PiSessionHandle } from "./pi-session-core.js";
@@ -682,9 +684,14 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
       const resources = piAgentResourcePaths(undefined, configured);
       const scope = { projectId: options.projectId, conversationId };
       const blocked = blockedSkillNames("pi", scope);
+      const account = actingAccount();
+      const policy = account ? await (await import("./personal-assistants.js")).personalAssistantSettings(account.accountId, options.projectId, "pi", conversationId) : undefined;
+      const native = Object.fromEntries(Object.entries(activeMcpServers("pi", nativeMcpServerConfigs()))
+        .filter(([name]) => !policy || policy.mcpServerNames === null || policy.mcpServerNames.includes(name))) as Record<string, ManagedMcpServer>;
       return {
         strictResourceIsolation: strict,
         managedMcpServers: Object.keys(activeMcpServers("pi", managedMcpBridgeConfigs())),
+        ...(account ? { nativeMcp: { accountId: account.accountId, servers: native } } : {}),
         packagesFile: agentResourcePaths().piPackages,
         extensions: resources.extensions,
         prompts: resources.prompts,

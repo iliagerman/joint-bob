@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { serviceRuntime } from "../src/account-runtime.js";
+import { createClaudeMcpAuth } from "../src/harnesses/claude/mcp-auth.js";
+import { spawnPiMcpControl } from "../src/mcp/pi-auth.js";
+import { piSdkEntry } from "../src/pi-sdk.js";
+import { nativeCallback, nativeMcpFixture } from "./native-mcp-fixture.js";
+const sdk = await import(piSdkEntry ?? import.meta.resolve("@earendil-works/pi-coding-agent"));
+test("control-only native Pi OAuth binds flow ownership, verifies callbacks and cleans up cancellation", { skip: typeof sdk.createMcpExtension !== "function" ? "Requires selected modern Pi SDK" : false }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-native-control-")), fixture = await nativeMcpFixture();
+  const spawn = (cwd: string) => spawnPiMcpControl({ cwd, directory: root, servers: { fixture: { url: `${fixture.origin}/mcp` } }, runtime: serviceRuntime() });
+  const auth = createClaudeMcpAuth(spawn);
+  const expiring = createClaudeMcpAuth(spawn, { flowTimeoutMs: 25 });
+  const context = { cwd: root, ownerKey: "alice" };
+  try {
+    assert.equal((await auth.status(context))[0].status, "needs-auth");
+    const start = await auth.start(context, "fixture"); assert.ok(start.authUrl);
+    const callback = nativeCallback(start.authUrl);
+    await assert.rejects(auth.finish(start.flowId, "bob", callback.href), /sign-in has ended/);
+    const forged = new URL(callback); forged.searchParams.set("state", "wrong");
+    await assert.rejects(auth.finish(start.flowId, "alice", forged.href), /Invalid MCP sign-in callback/);
+    assert.equal((await auth.finish(start.flowId, "alice", callback.href)).status, "connected");
+    assert.equal(auth.openFlows(), 0);
+    assert.equal((await auth.status(context))[0].status, "connected");
+    await auth.signOut(context, "fixture");
+    assert.equal((await auth.status(context))[0].status, "needs-auth");
+    const cancelled = await auth.start(context, "fixture"); auth.cancel(cancelled.flowId, "alice");
+    await assert.rejects(auth.finish(cancelled.flowId, "alice"), /sign-in has ended/);
+    await auth.start(context, "fixture");
+    await auth.signOut(context, "fixture");
+    assert.equal(auth.openFlows(), 0, "sign-out must terminate pending native sign-ins");
+    const expired = await expiring.start(context, "fixture");
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(expiring.openFlows(), 0);
+    await assert.rejects(expiring.finish(expired.flowId, "alice"), /sign-in has ended/);
+  } finally { auth.closeAll(); expiring.closeAll(); await fixture.close(); await rm(root, { recursive: true, force: true }); }
+});

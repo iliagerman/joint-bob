@@ -33,6 +33,7 @@ export interface InventorySkill {
 export type McpSource = "shared" | "user" | "local" | "project" | "plugin" | "enterprise" | "account";
 
 export interface InventoryMcpServer {
+  authMode?: "shared" | "native";
   name: string;
   source: McpSource;
   /** The config file the server comes from. */
@@ -232,7 +233,8 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
   ]);
   const decisions = projectPath ? claudeProjectMcpDecisions(projectPath) : undefined;
   const account = actingAccount();
-  const managed = account ? servers(managedMcpStore(account.accountId).servers(), { source: "account", file: "", harnesses: [...discovered] }) : [];
+  const managed = account ? Object.entries(managedMcpStore(account.accountId).servers()).flatMap(([name, server]) =>
+    servers({ [name]: server }, { source: "account", file: "", authMode: server.authMode ?? "shared", harnesses: server.authMode === "native" ? [...discovered].filter(id => id === "pi") : [...discovered] })) : [];
   const entries = [...managed, ...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })]
     .map((server) => {
       const activation = Object.fromEntries(server.harnesses.map((harness) => {

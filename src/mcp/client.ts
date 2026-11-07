@@ -63,6 +63,7 @@ export class ManagedMcpClient {
   private async connect(name: string): Promise<Client> {
     const server = this.store.servers()[name];
     if (!server) throw new Error("MCP server not found");
+    if (server.authMode === "native") throw new Error("Use the native Pi sign-in controls for this server");
     const client = new Client({ name: "joint-bob", version: "1.0.0" });
     const data = this.store.readAuth(name);
     const transport = server.command ? new StdioClientTransport({ ...this.command(server), stderr: "pipe" })
@@ -116,6 +117,7 @@ export class ManagedMcpClient {
   private async beginSignIn(name: string) {
     const server = this.store.servers()[name];
     if (!server?.url) throw new Error("OAuth sign-in requires an installed HTTP MCP server");
+    if (server.authMode === "native") throw new Error("Use the native Pi sign-in controls for this server");
     await this.disconnectNow(name);
     if (this.flows.size >= 10) throw new Error("Finish or cancel an existing MCP sign-in first");
     const listener = createServer((request, response) => {
