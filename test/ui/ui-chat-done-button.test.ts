@@ -40,6 +40,19 @@ test("the chat More menu closes a conversation out without a nested menu", { tim
     const doneButton = page.getByTestId("chat-done-button");
     assert.equal(await doneButton.innerText(), "Mark done");
     await doneButton.click();
+    const description = page.getByTestId("conversation-feedback-description");
+    assert.equal(await description.isVisible(), false, "not important needs no explanation");
+    for (const rating of ["good", "bad"]) {
+      await page.getByTestId(`conversation-feedback-${rating}`).check();
+      assert.equal(await description.isVisible(), true);
+      assert.equal(await description.getAttribute("required"), null, "both descriptions are optional");
+    }
+    await page.keyboard.press("Escape");
+    await page.getByTestId("conversation-feedback-dialog").waitFor({ state: "detached" });
+    await page.getByTestId("chat-more-button").click();
+    assert.equal(await doneButton.innerText(), "Mark done", "cancelling leaves the conversation active");
+    await doneButton.click();
+    await page.getByTestId("conversation-feedback-submit").click();
     await page.locator(".toast-message").first().waitFor();
     assert.equal(await page.locator(".toast-message").first().innerText(), "Conversation marked done");
 

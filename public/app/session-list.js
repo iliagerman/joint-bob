@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { chooseConversationFeedback } from "./conversation-feedback.js";
 import { openScheduledTasks } from "./cron.js";
 import { clearAttachments } from "./attachments.js";
 import { renderChatSessionControls, setComposerEnabled } from "./chat-controls.js";
@@ -80,7 +81,15 @@ export function renderSessions() {
   updateChatFilterCounts();
   elements.markAllReviewedButton.disabled = !project || !reviewableSessions().length;
 
-  if (!project || state.sessionsLoading) return;
+  if (!project) return;
+  if (state.sessionsLoading) {
+    const loading = document.createElement("p");
+    loading.className = "muted";
+    loading.dataset.testid = "session-list-loading";
+    loading.textContent = "Loading conversations…";
+    elements.sessionList.append(loading);
+    return;
+  }
   const sessions = filteredSessions();
   const narrowed = Boolean(state.classificationFilters.size || state.sessionClusterFilters.size || normalizedQuery(elements.sessionSearchInput.value || ""));
   const sessionIsActive = (candidate) => state.activeSessionId ? candidate.id === state.activeSessionId : candidate.path === state.activeSessionPath;
@@ -194,8 +203,9 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
     const doneBadge = document.createElement("em");
     doneBadge.className = "session-done-badge";
     doneBadge.dataset.testid = "session-done-badge";
-    doneBadge.title = `Marked done ${formatDate(session.doneAt)}`;
-    doneBadge.textContent = "Done";
+    const feedback = session.feedback;
+    doneBadge.title = `Marked done ${formatDate(session.doneAt)}${feedback ? ` · ${feedback.source}${feedback.feedback ? ` · ${feedback.feedback.rating}: ${feedback.feedback.description}` : ""}${feedback.error ? ` · Learning failed: ${feedback.error}` : ""}` : ""}`;
+    doneBadge.textContent = feedback?.status === "error" ? "Done · learning failed" : feedback?.status === "pending" ? "Done · learning…" : feedback?.feedback?.rating === "good" ? "Done 👍" : feedback?.feedback?.rating === "bad" ? "Done 👎" : "Done";
     meta.append(" ", doneBadge);
   }
   // The list snapshot may lag behind the live chat or come from a different node.
@@ -532,17 +542,22 @@ async function toggleSessionDone(session) {
   const done = !session.doneAt;
   const projectId = state.activeProjectId;
   const engine = sessionEngine(session);
-  toast(done ? "Conversation marked done" : "Conversation reopened");
+  const feedback = done ? await chooseConversationFeedback(session) : undefined;
+  if (done && !feedback) return;
+  toast(done ? (feedback.rating === "unimportant" ? "Conversation marked done" : "Conversation marked done; reviewing feedback…") : "Conversation reopened");
   let result;
   try {
     result = await changeSessionOptimistically(session, { patch: { doneAt: done ? new Date().toISOString() : undefined } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/done`, {
       method: "PUT",
-      body: JSON.stringify({ sessionId: session.conversationId || session.id, engine, done }),
+      body: JSON.stringify({ sessionId: session.conversationId || session.id, engine, done, ...(feedback ? { feedback } : {}) }),
     }), renderSessions);
   } catch (error) {
     throw new Error(`${done ? "Could not mark the conversation done" : "Could not reopen the conversation"}: ${error.message}`);
   }
+  if (result.feedbackError) toast(`Conversation is done, but learning failed: ${result.feedbackError}`, 10000);
+  else if (done && feedback.rating !== "unimportant") toast("Feedback reviewed. Any new rule proposals are in Project knowledge.");
   if (state.activeProjectId !== projectId) return;
+  void refreshSessionsQuietly();
   state.worktreeCleanupReasons = result.retainedWorktrees || {};
   const deleted = result.deletedWorktreeIds?.length;
   if (deleted) await loadWorktrees();

@@ -40,6 +40,7 @@ test("the open conversation offers the same menu its row offers", { timeout: 120
 
     // The actions act on the open conversation, not on whatever the list last touched.
     await page.getByTestId("session-done-button").click();
+    await page.getByTestId("conversation-feedback-submit").click();
     await page.locator("#sessionList").getByText("Short one", { exact: true }).waitFor({ state: "hidden" });
     await page.getByTestId("chat-session-menu-button").click();
     assert.equal(await page.getByTestId("session-done-button").innerText(), "Mark not done");

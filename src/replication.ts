@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { closeoutRecordSchema } from "./conversation-closeout.js";
 import { applyQueuedPromptEvent, applyConversationRoutingEvent } from "./prompt-queue.js";
 import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -38,7 +39,7 @@ export interface ReplicationEvent {
 export interface ReplicationBatch { events: ReplicationEvent[]; }
 export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "pinsChanged" | "recentsChanged" | "instructionsChanged";
 interface OutboxRow { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string; }
-interface NamePayload { scope: "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
+interface NamePayload { scope: "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done" | "session_feedback"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
 interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
 interface TaskPayload { projectId: string; task: TaskRecord | null; originNodeId: string; updatedAt?: string; }
 type LocalTranscript = { root: string; sessionId: (pointer: string) => string | undefined };
@@ -286,9 +287,10 @@ export function resolveProjectAlias(db: DatabaseSync, projectId: string): string
 function namePayload(event: ReplicationEvent): NamePayload {
   if (event.entityType !== "name.override" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported replication event");
   const value = event.payload as Partial<NamePayload>;
-  if (!value || typeof value !== "object" || Array.isArray(value) || !["projects", "sessions", "session_colors", "session_classifications", "session_done"].includes(value.scope ?? "") || typeof value.key !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || !(typeof value.name === "string" || value.name === null) || (event.operation === "upsert") !== (typeof value.name === "string") || event.entityKey !== `${value.scope}:${value.key}`) throw new Error("Malformed name replication payload");
+  if (!value || typeof value !== "object" || Array.isArray(value) || !["projects", "sessions", "session_colors", "session_classifications", "session_done", "session_feedback"].includes(value.scope ?? "") || typeof value.key !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || !(typeof value.name === "string" || value.name === null) || (event.operation === "upsert") !== (typeof value.name === "string") || event.entityKey !== `${value.scope}:${value.key}`) throw new Error("Malformed name replication payload");
   if (value.scope === "session_classifications" && typeof value.name === "string" && (!value.name.trim() || value.name.length > 80)) throw new Error("Malformed name replication payload");
   if (value.scope === "session_colors" && typeof value.name === "string" && !projectColors.has(value.name)) throw new Error("Malformed name replication payload");
+  if (value.scope === "session_feedback" && typeof value.name === "string") closeoutRecordSchema.parse(JSON.parse(value.name));
   if (value.scope === "session_done" && typeof value.name === "string" && !Number.isFinite(Date.parse(value.name))) throw new Error("Malformed name replication payload");
   return value as NamePayload;
 }

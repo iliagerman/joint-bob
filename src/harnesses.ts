@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { isInternalSession } from "./internal-sessions.js";
-import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionTitleOverrides } from "./names.js";
+import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionFeedbackOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords, listConversationSegments, parseConversationDraftPath, type ConversationRecord } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
@@ -323,12 +323,13 @@ interface ConversationLabels {
   colors: Awaited<ReturnType<typeof sessionColorOverrides>>;
   classifications: Record<string, string>;
   doneMarks: Record<string, string>;
+  feedback: Awaited<ReturnType<typeof sessionFeedbackOverrides>>;
   autoResponders: Awaited<ReturnType<typeof autoRespondListing>>;
 }
 
 function conversationLabels(projectId: string): Promise<ConversationLabels> {
-  return Promise.all([sessionTitleOverrides(), sessionColorOverrides(), sessionClassificationOverrides(), sessionDoneOverrides(), autoRespondListing(projectId)])
-    .then(([overrides, colors, classifications, doneMarks, autoResponders]) => ({ overrides, colors, classifications, doneMarks, autoResponders }));
+  return Promise.all([sessionTitleOverrides(), sessionColorOverrides(), sessionClassificationOverrides(), sessionDoneOverrides(), autoRespondListing(projectId), sessionFeedbackOverrides()])
+    .then(([overrides, colors, classifications, doneMarks, autoResponders, feedback]) => ({ overrides, colors, classifications, doneMarks, autoResponders, feedback }));
 }
 
 /**
@@ -358,6 +359,7 @@ function groupConversation(conversationId: string, segments: Array<{ session: Se
     ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
     ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
     ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),
+    ...(labels.feedback[conversationId] ? { feedback: labels.feedback[conversationId] } : {}),
     ...(autoResponders[conversationId] ? { autoRespond: autoResponders[conversationId] } : {}),
     ...(createdAt ? { createdAt } : {}),
   };

@@ -461,6 +461,7 @@ test("marking the last conversation done removes its worktree header and folder"
   await row.getByTestId("session-menu-button").click();
   const marked = page.waitForResponse((response) => response.url().endsWith("/sessions/done") && response.request().method() === "PUT");
   await page.getByTestId("session-done-button").click();
+  await page.getByTestId("conversation-feedback-submit").click();
   const result = await (await marked).json();
   assert.deepEqual(result.deletedWorktreeIds, [path.basename(worktree)], JSON.stringify(result));
   await page.getByTestId("worktree-section").waitFor({ state: "detached", timeout: 20_000 });
@@ -509,6 +510,7 @@ test("a conversation whose worktree has not synced to this machine is grouped un
   await row.getByTestId("session-menu-button").click();
   const marked = page.waitForResponse((response) => response.url().endsWith("/sessions/done") && response.request().method() === "PUT");
   await page.getByTestId("session-done-button").click();
+  await page.getByTestId("conversation-feedback-submit").click();
   await marked;
   await header.waitFor({ state: "detached", timeout: 20_000 });
   assert.equal(await page.getByTestId("other-worktrees").count(), 0, "no empty group for a worktree that cannot be used here");

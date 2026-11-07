@@ -94,6 +94,7 @@ import { startCronScheduler } from "./server/cron.js";
 import { recoverAutoResponders } from "./server/auto-respond-recovery.js";
 import { startConversationDigests } from "./server/conversation-digest-runner.js";
 import { startKnowledgeCleanupScheduler } from "./server/knowledge-cleanup.js";
+import { startConversationCloseoutScheduler } from "./server/conversation-closeout.js";
 import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
 import "./server/routes/tasks.js";
@@ -179,6 +180,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     startUpdateScheduler();
     startHarnessUpdateScheduler();
     startKnowledgeCleanupScheduler();
+    startConversationCloseoutScheduler();
     void loadHarnessVersions().catch((error) => console.warn("Harness versions could not be read", error));
     // An installed node runs a newly installed Pi harness after restarting, once nothing is running.
     if (/^[0-9a-f]{40}$/i.test(process.env.JOINT_BOB_RELEASE ?? "")) configurePiSdkSwitch({

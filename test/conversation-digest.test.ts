@@ -218,12 +218,24 @@ test("the digest route folds new messages into the summary and follows the node'
     assert.deepEqual([unstarted.status, unstarted.body.digest, unstarted.body.stale, unstarted.body.turns], [200, null, false, 0], "a conversation with no transcript yet simply has no summary");
     assert.equal((await api(node, auth, "POST", `/projects/${project.id}/conversations/00000000-0000-4000-8000-000000000000/digest`, {})).status, 404);
 
+    // Unimportant closes without a learning call, and subsequent summaries do not request or persist lessons.
+    const beforeClose = (await callsMade()).length;
+    const closed = await api(node, auth, "PUT", `/projects/${project.id}/sessions/done`, { sessionId: conversationId, engine: "claude", done: true, feedback: { rating: "unimportant" } });
+    assert.equal(closed.status, 200);
+    assert.equal((await callsMade()).length, beforeClose);
+    const notesBefore = readNotes(project.path);
+    await append([record("user", 12, [{ type: "text", text: "One last status" }]), record("assistant", 13, [{ type: "text", text: "All rotated." }])]);
+    await api(node, auth, "POST", endpoint, {});
+    assert.doesNotMatch((await callsMade()).at(-1).instructions, /@@knowledge/);
+    assert.deepEqual(readNotes(project.path), notesBefore);
+    assert.equal(listProposals(project.path).length, proposals.length);
+
     // A model that fails leaves the stored summary in place and says why.
     await append([record("user", 8, [{ type: "text", text: "FAIL please" }]), record("assistant", 9, [{ type: "text", text: "Trying." }])]);
     const failed = await api<DigestResponse>(node, auth, "POST", endpoint, {});
     assert.equal(failed.status, 200);
     assert.match(failed.body.error ?? "", /model unavailable/);
-    assert.equal(failed.body.digest?.turns, 4, "the last good summary is still returned");
+    assert.equal(failed.body.digest?.turns, 5, "the last good summary, written after the unimportant close, is still returned");
     assert.equal((await api(node, auth, "POST", `/projects/not-a-project/conversations/${conversationId}/digest`, {})).status, 404);
   } finally {
     await stopDevNode(server);

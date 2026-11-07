@@ -7,6 +7,7 @@ import { getClusterNode } from "./cluster.js";
 import { enqueueReplicationEvent, ensureReplicationSchema } from "./replication.js";
 import { canonicalProjectId } from "./store.js";
 import type { ProjectColor } from "./types.js";
+import { closeoutRecordSchema, type CloseoutRecord } from "./conversation-closeout.js";
 
 interface NameEntry {
   name: string;
@@ -18,7 +19,7 @@ interface NameStore {
   sessions: Record<string, NameEntry>;
 }
 
-type OverrideScope = "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done";
+type OverrideScope = "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done" | "session_feedback";
 
 const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
@@ -181,6 +182,15 @@ export async function sessionDoneOverrides(): Promise<Record<string, string>> {
 /** Storing the moment it was marked keeps "done" a fact with a date, not a bare flag. */
 export async function setSessionDone(conversationId: string, done: boolean): Promise<void> {
   await setEntry("session_done", conversationId, done ? new Date().toISOString() : "");
+}
+
+export async function sessionFeedbackOverrides(): Promise<Record<string, CloseoutRecord>> {
+  return Object.fromEntries(Object.entries(await entries("session_feedback"))
+    .map(([id, value]) => [id, closeoutRecordSchema.parse(JSON.parse(value))]));
+}
+
+export async function setSessionFeedback(conversationId: string, feedback: CloseoutRecord | null): Promise<void> {
+  await setEntry("session_feedback", conversationId, feedback ? JSON.stringify(closeoutRecordSchema.parse(feedback)) : "");
 }
 
 export async function sessionColorOverrides(): Promise<Record<string, ProjectColor>> {

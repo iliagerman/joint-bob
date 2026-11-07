@@ -53,6 +53,7 @@ test("conversation actions change the row before the server answers and undo on 
     await page.route("**/sessions/done", done.handle);
     await row.getByTestId("session-menu-button").click();
     await page.getByTestId("session-done-button").click();
+    await page.getByTestId("conversation-feedback-submit").click();
     await row.waitFor({ state: "detached" });
     assert.equal(done.count(), 1, "the row left the list while the server had not answered");
     // A list asked for before the server saved the mark must not bring the row back.

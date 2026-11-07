@@ -40,6 +40,7 @@ test("done conversations leave the list until the reader asks for them", { timeo
     const menuItem = page.getByTestId("session-done-button");
     assert.equal(await menuItem.innerText(), "Mark done");
     await menuItem.click();
+    await page.getByTestId("conversation-feedback-submit").click();
 
     await page.locator("#sessionList").getByText("Thread-Based Agent Builder").waitFor({ state: "hidden" });
     assert.equal(await rows.count(), sessions.length - 1, "a done conversation leaves the default list");

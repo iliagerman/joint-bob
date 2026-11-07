@@ -12,6 +12,7 @@ import { type RoutingMapping } from "../routing-policy.js";
 import { type ConversationNote, type KnowledgeProblem, listProposals, normalizedRuleText, readNotes, readSubjects, writeNote, writeProposal } from "../project-knowledge.js";
 import { genericSecretEnvironment } from "../secrets.js";
 import { getSettings } from "../settings.js";
+import { sessionFeedbackOverrides } from "../names.js";
 import { getProject } from "../store.js";
 import { randomUUID } from "node:crypto";
 import type { ChatMessage, HarnessId, ProjectRecord } from "../types.js";
@@ -130,9 +131,10 @@ function digestKnowledge(project: ProjectRecord, conversationId: string): Digest
 }
 
 /** Records the writer's problems and files its rules as proposals, unless a rule or proposal already says the same or a person dismissed it. */
-function recordKnowledge(project: ProjectRecord, conversationId: string, knowledge: DigestKnowledge, reply: { problems?: KnowledgeProblem[]; rules?: ProposedRule[] }): void {
+async function recordKnowledge(project: ProjectRecord, conversationId: string, knowledge: DigestKnowledge, reply: { problems?: KnowledgeProblem[]; rules?: ProposedRule[] }): Promise<void> {
   if (!reply.problems && !reply.rules) return;
   try {
+    if ((await sessionFeedbackOverrides())[conversationId]?.feedback?.rating === "unimportant") return;
     const previous = readNotes(project.path).find((note) => note.conversationId === conversationId);
     const note: ConversationNote = { conversationId, updatedAt: new Date().toISOString(), problems: (reply.problems ?? previous?.problems ?? []).slice(-NOTE_PROBLEM_LIMIT), dismissed: previous?.dismissed ?? [] };
     if (reply.problems) writeNote(project.path, note);
@@ -157,7 +159,8 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
   }
   const material = digestMaterial(said, coveredMessages(previous, said));
   onWriting();
-  const knowledge = digestKnowledge(project, conversationId);
+  const unimportant = (await sessionFeedbackOverrides())[conversationId]?.feedback?.rating === "unimportant";
+  const knowledge = unimportant ? undefined : digestKnowledge(project, conversationId);
   const instructions = digestPrompt(previous?.summary, knowledge, nodeSummaryInstructions());
   const run = await summaryRun(await summaryPolicyNow(), project, live, messages, lastHarness, material);
   const model: DigestModel = { harnessId: run.harnessId, provider: run.provider, modelId: run.modelId, source: run.source };
@@ -181,7 +184,7 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
   saveDigest(project.id, conversationId, digest);
   // The control center's cards show this summary as their live line.
   broadcastToAllClients({ type: "controlCenterChanged" });
-  recordKnowledge(project, conversationId, knowledge, reply);
+  if (knowledge) await recordKnowledge(project, conversationId, knowledge, reply);
   return digest;
 }
 

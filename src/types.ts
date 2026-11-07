@@ -101,6 +101,7 @@ export interface SessionSummary {
   classification?: string;
   /** When the user closed the conversation out; absent while it is still live. */
   doneAt?: string;
+  feedback?: import("./conversation-closeout.js").CloseoutRecord;
   /** Auto respond is on (or stopped) for this conversation; absent while it is off. */
   autoRespond?: { status: "active" | "stopped"; responses: number; maxResponses: number | null; stopReason: string | null };
   /**

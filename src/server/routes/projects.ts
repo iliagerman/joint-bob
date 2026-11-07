@@ -10,13 +10,14 @@ import { listHarnessSessions } from "../../harnesses.js";
 import type { HarnessId, ProjectRecord } from "../../types.js";
 import { terminalAccessSettings, terminalAllowedFor } from "../../settings.js";
 import { cleanupDoneWorktrees } from "../worktree-cleanup.js";
+import { beginConversationCloseout, finishConversationCloseout } from "../conversation-closeout.js";
 import { z } from 'zod';
 import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { listHarnessCommands } from "../../commands.js";
 import { ensureManagedHome, managedProjectPath } from "../../managed-home.js";
-import { setProjectName, setSessionClassification, setSessionColor, setSessionDone, setSessionTitle } from "../../names.js";
+import { setProjectName, setSessionClassification, setSessionColor, setSessionDone, setSessionFeedback, sessionFeedbackOverrides, setSessionTitle } from "../../names.js";
 import { importProjectDirectory, ProjectDirectoryImportError } from "../../project-directory-import.js";
 import { setProjectLock } from "../../project-locks.js";
 import { getScopedResourcePaths, getSettings } from "../../settings.js";
@@ -318,13 +319,21 @@ export async function markConversationDoneAsActor(projectId: string, raw: unknow
   const payload = sessionDoneSchema.parse(raw);
   if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) throw new NotFoundError("Conversation not found");
   // Like classification, a conversation can be closed out before its transcript exists.
-  await setSessionDone(payload.sessionId, payload.done);
-  const cleanup = payload.done ? await cleanupDoneWorktrees(project).catch((error) => {
+  let feedbackError: string | undefined;
+  if (payload.done) {
+    const record = await beginConversationCloseout(project, payload.engine, payload.sessionId, payload.feedback ?? { rating: "unimportant", description: "" });
+    feedbackError = await finishConversationCloseout(project, payload.sessionId, record);
+  } else {
+    await setSessionFeedback(payload.sessionId, null);
+    await setSessionDone(payload.sessionId, false);
+  }
+  const pendingFeedback = Object.values(await sessionFeedbackOverrides()).some((record) => record.projectId === project.id && record.status !== "complete");
+  const cleanup = payload.done && !feedbackError && !pendingFeedback ? await cleanupDoneWorktrees(project).catch((error) => {
     console.warn("Done worktree cleanup failed", error);
     return undefined;
   }) : undefined;
   broadcastToProject(project.id, { type: "sessionsChanged" });
-  return cleanup;
+  return { ...cleanup, ...(feedbackError ? { feedbackError } : {}) };
 }
 
 app.put("/api/projects/:projectId/sessions/done", async (request, response, next) => {

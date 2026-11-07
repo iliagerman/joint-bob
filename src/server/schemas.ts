@@ -1,4 +1,5 @@
 import path from "node:path";
+import { closeoutFeedbackSchema } from "../conversation-closeout.js";
 import { autoRespondConfigSchema } from "../conversation-auto-respond.js";
 import { conversationDefaultsSchema } from "../harnesses/defaults.js";
 import { queuedSettingsSchema } from "../prompt-queue.js";
@@ -184,6 +185,7 @@ export const sessionDoneSchema = z.object({
   sessionId: z.string().trim().min(1).max(240),
   engine: registeredHarnessIdSchema,
   done: z.boolean(),
+  feedback: closeoutFeedbackSchema.optional(),
 }).strict();
 export const sessionColorSchema = z.object({
   sessionId: z.string().min(1),
