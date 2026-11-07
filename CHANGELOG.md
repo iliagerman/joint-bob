@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.224.0 — 2026-11-07
+
+- Each message in Bob's chat opens with where it comes from (Review check, Guardian, Auto respond, Bob), the conversation it is about, its project and its time. Click the conversation's name to open it. How it was decided is a small line under the message.
+- A conversation that waits for you can be closed from Bob's chat: **Done** closes it, and **Abandon** stops it and closes it without finishing. **Push it on** still tells it to go on. Finished cards on the board have **Done** too, with the same question about what to learn as the project list.
+- Choosing a project in the chat's filter focuses the whole control center on it: the chat, the board's cards, and where a new message goes. Choosing one project in the board's chips does the same.
+- A conversation marked done leaves the board, even when it was waiting for review.
+
 ## 2.223.1 — 2026-11-07
 
 - Opening a project you have already used this session shows its conversations at once while the latest list loads. The tasks board loads alongside the list, and the server waits on the disk less often while it is busy.
