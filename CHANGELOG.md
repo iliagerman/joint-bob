@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.223.0 — 2026-11-06
+
+- Marking a conversation **Done** asks how it went: **Good** or **Bad** with an optional note, or **Nothing — not important**. Good and Bad conversations propose lessons in **Project knowledge**, which you accept or dismiss; not important ones close without a model call. Conversations idle for more than four days are marked Done and classified on their own.
+- Pi can connect to an MCP server with its own OAuth sign-in: install the server as **Native Pi OAuth · Pi only**, then choose **Sign in** under **Resources**. It needs Pi 1.5.0 or newer.
+- Subscription pools now also cover automatic compaction, goal turns and task runs, which switch accounts the way chat turns do.
+- An assistant's Telegram chat understands voice messages, photos and files, and answers a voice message with voice by default. Voice uses the open-source voice installed on the machine, or the project's ElevenLabs account.
+- New Kiro conversations start on Kiro CLI V3. Conversations started earlier stay on V2.
+
 ## 2.222.0 — 2026-11-06
 
 - Bob can change how Joint Bob looks. Ask him in the control center chat to switch the theme, or to make the text or a panel bigger or smaller. He hands the request to Joint Bob's display agent, which changes Settings → Appearance in the browser you asked from and reports back. **Undo** puts the earlier settings back.
