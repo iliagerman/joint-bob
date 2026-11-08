@@ -96,6 +96,9 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.match(await page.locator('[data-key="p1:c1"]').textContent() ?? "", /Running the UI tests/);
   assert.match(await page.locator('[data-key="p1:c1"]').textContent() ?? "", /System drives/, "auto respond drives it");
   assert.match(await page.locator('[data-key="p2:c2"]').textContent() ?? "", /Working…/);
+  // Every running card says so on top, with a ring that turns; finished work does not.
+  assert.deepEqual(await page.getByTestId("control-card-running").evaluateAll((badges) => badges.map((badge) => [badge.closest("[data-key]")!.getAttribute("data-key"), badge.textContent]).sort()), [["p1:c1", "Running"], ["p2:c2", "Running"]]);
+  assert.notEqual(await page.locator('[data-key="p1:c1"] .control-running-ring').evaluate((ring) => getComputedStyle(ring).animationName), "none");
   assert.equal(await page.locator('[data-key="p1:c3"]').getAttribute("data-column"), "review");
   // A card says briefly where the conversation stands: the first sentence of the summary's current state, without Markdown.
   const review = page.locator('[data-key="p1:c3"]');

@@ -130,6 +130,10 @@
 .control-badge.control { color: #f2b44b; border-color: color-mix(in srgb, #f2b44b 55%, transparent); }
 /* Finished work waiting for the person stands out from what is still running. */
 .control-badge.review { color: #fff; background: #5b6cf0; border-color: #5b6cf0; font-weight: 600; }
+.control-badge.running { display: inline-flex; align-items: center; gap: 5px; color: #5fd47f; border-color: color-mix(in srgb, #5fd47f 55%, transparent); font-weight: 600; white-space: nowrap; }
+.control-running-ring { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; animation: control-running-spin 1s linear infinite; }
+@keyframes control-running-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .control-running-ring { animation: none; background: currentColor; border-color: currentColor; } }
 .control-card[data-column="review"]:not(.colored) { border-color: color-mix(in srgb, #7b8cff 60%, transparent); box-shadow: inset 3px 0 0 #7b8cff; }
 .control-overview-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .control-overview-head select { width: auto; max-width: 260px; }
