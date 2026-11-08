@@ -5,6 +5,8 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Included the quality analytics page in the offline app assets so releases pass packaging checks.
+
 - Fixed built-in file sync upgrades to preserve existing sync state while enabling the faster backlog picker.
 
 ## 2.240.0 — 2026-11-08
