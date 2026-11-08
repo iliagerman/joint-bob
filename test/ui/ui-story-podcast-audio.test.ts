@@ -3,7 +3,7 @@ import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
 // Real player, drawn hosts and browser audio; only the voice-generation service is held back.
-test("narrated mouths wait for audio between lines and resume without skipping speech", { timeout: 90_000 }, async (t) => {
+test("the movie makes every clip before it plays, then speaks each line without waiting", { timeout: 90_000 }, async (t) => {
   const { page, node, environment } = await nativeUiFixture(t);
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -23,8 +23,9 @@ test("narrated mouths wait for audio between lines and resume without skipping s
       writeup: { changed: [], how: [], why: [], rejected: [], limits: [] }, followUps: [],
     };
     const settings = { backdrops: true, locations: ['podcast'], moods: true, codeSlides: true, codeWriteup: true, ask: false };
-    // Two seconds of a quiet tone, generated locally; no credentials or remote audio.
-    const rate = 24000, samples = rate * 2;
+    // Twenty seconds of a quiet tone, generated locally; no credentials or remote audio. A line never ends by itself
+    // while the test checks it, since the test skips to each clip's end.
+    const rate = 24000, samples = rate * 20;
     const wav = new DataView(new ArrayBuffer(44 + samples * 2));
     const text = (offset, value) => [...value].forEach((char, index) => wav.setUint8(offset + index, char.charCodeAt(0)));
     text(0, 'RIFF'); wav.setUint32(4, 36 + samples * 2, true); text(8, 'WAVEfmt '); wav.setUint32(16, 16, true);
@@ -46,44 +47,43 @@ test("narrated mouths wait for audio between lines and resume without skipping s
   const caption = page.locator(".gsp-caption > span:last-child");
   // The stage draws the hosts on a canvas and says which of them is talking, so a mouth moves only while they are.
   const speaking = () => page.locator(".gsp-stage").getAttribute("data-speaking");
-  const voiceNote = page.locator(".gsp-voice-note");
-  await page.locator(".gsp-play").click();
-  await voiceNote.waitFor({ state: "visible" });
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await speaking(), "", "Mouths must stay closed while the first clip is being generated");
+  const play = page.locator(".gsp-play");
+  const progress = page.locator(".gsp-progress");
+
+  // Every line's clip is made before the movie can start, so a slow voice never holds it at a line.
+  await progress.filter({ hasText: "Preparing the voice: 0 of 3 lines." }).waitFor();
+  assert.equal(await play.isDisabled(), true, "Play waits for the voice");
+  assert.deepEqual(await page.evaluate("window.__voiceRequests.map((request) => request.text)"), ["The first complete line.", "The second complete line.", "The final complete line."]);
+  await page.evaluate("window.__releaseVoice('The second complete line.')");
+  await progress.filter({ hasText: "1 of 3 lines." }).waitFor();
+  await page.evaluate("window.__releaseVoice('The first complete line.')");
+  await page.evaluate("window.__releaseVoice('The final complete line.')");
+  await progress.waitFor({ state: "hidden" });
+  assert.equal(await play.isDisabled(), false);
+  assert.equal(await speaking(), "", "Mouths stay closed until the movie plays");
   assert.equal(await caption.innerText(), "The first complete line.");
 
-  await page.evaluate("window.__releaseVoice('The first complete line.')");
+  await play.click();
   await page.waitForFunction(() => (window as unknown as { __heard: string[] }).__heard.length === 1);
   await page.waitForFunction(() => document.querySelector(".gsp-stage")!.getAttribute("data-speaking") === "host");
-  assert.equal(await voiceNote.isVisible(), false);
 
   // A real pause stops mouth movement and resumes the same line, not the next one.
-  await page.locator(".gsp-play").click();
+  await play.click();
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await speaking(), "");
   assert.equal(await caption.innerText(), "The first complete line.");
-  await page.locator(".gsp-play").click();
+  await play.click();
   await page.waitForFunction(() => !(window as unknown as { __audio: HTMLAudioElement }).__audio.paused);
+
+  // Each line ends straight into the next, with nothing more asked of the voice service.
   await page.evaluate("window.__audio.currentTime = window.__audio.duration - 0.05");
-
-  // The first line ends, but the next clip is still waiting for the voice service.
-  await page.waitForFunction(() => document.querySelector(".gsp-caption > span:last-child")!.textContent === "The second complete line.");
-  await voiceNote.waitFor({ state: "visible" });
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await speaking(), "", "Mouths must stop between clips, rather than silently acting out the next line");
-  assert.deepEqual(await page.evaluate("window.__heard"), ["The first complete line."]);
-
-  await page.evaluate("window.__releaseVoice('The second complete line.')");
   await page.waitForFunction(() => (window as unknown as { __heard: string[] }).__heard.length === 2);
   await page.waitForFunction(() => document.querySelector(".gsp-stage")!.getAttribute("data-speaking") === "cohost");
-  assert.equal(await voiceNote.isVisible(), false);
   assert.equal(await caption.innerText(), "The second complete line.");
   await page.evaluate("window.__audio.currentTime = window.__audio.duration - 0.05");
-  await page.waitForFunction(() => document.querySelector(".gsp-caption > span:last-child")!.textContent === "The final complete line.");
-  await page.evaluate("window.__releaseVoice('The final complete line.')");
   await page.waitForFunction(() => (window as unknown as { __heard: string[] }).__heard.length === 3);
   await page.evaluate("window.__audio.currentTime = window.__audio.duration - 0.05");
-  await page.locator(".gsp-play", { hasText: "Replay" }).waitFor();
+  await play.filter({ hasText: "Replay" }).waitFor();
   assert.deepEqual(await page.evaluate("window.__heard"), ["The first complete line.", "The second complete line.", "The final complete line."]);
+  assert.equal(await page.evaluate("window.__voiceRequests.length"), 3, "each line is spoken once");
 });

@@ -14,7 +14,8 @@ import { diffClass, renderSlide, revealSlide } from "./git-story-slides.js";
 
 const SECONDS_PER_WORD = 0.4;
 const MIN_LINE_SECONDS = 3;
-const PREFETCH = 2;
+// Clips made at once while the voice is prepared; Kokoro speaks one at a time anyway, ElevenLabs is quicker with a few.
+const VOICE_WORKERS = 3;
 const CLIP_START_MS = 6000;
 const NAMES = { host: "Maya", cohost: "Jonah" };
 const OTHER = { host: "cohost", cohost: "host" };
@@ -88,6 +89,7 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
   showMute();
   showAsk();
   player.frame = requestAnimationFrame(tick);
+  if (player.voice) void work("Getting the voice ready before the movie starts.", (onProgress) => prepare(player.lines, onProgress));
 
   function link() {
     if (document.getElementById("gspStyles")) return;
@@ -115,7 +117,6 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     player.script = script;
     Object.assign(player, build(script), { answers: [], resume: null, seen: new Set() });
     player.mainEnd = player.lines.length;
-    player.clips.clear();
     sketch.reset();
     titleChip.textContent = script.title;
     renderChapters();
@@ -235,10 +236,29 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     void speak(index);
   }
 
-  // Each line is spoken by its own clip, fetched ahead so the next one starts without a pause.
-  function clip(index) {
-    if (!player.clips.has(index)) player.clips.set(index, narrate(player.lines[index].text, player.lines[index].who).then((blob) => { const url = URL.createObjectURL(blob); player.urls.push(url); return url; }));
-    return player.clips.get(index);
+  // Each line is spoken by its own clip, kept by speaker and text so a rewrite or an answer reuses the ones it repeats.
+  function clip({ who, text }) {
+    const key = `${who}\n${text}`;
+    if (!player.clips.has(key)) player.clips.set(key, narrate(text, who).then((blob) => { const url = URL.createObjectURL(blob); player.urls.push(url); return url; }));
+    return player.clips.get(key);
+  }
+
+  // Every clip is made before its lines play: a voice slower than speech would otherwise hold the movie at each line.
+  // A clip that fails turns the voice off, and the movie plays silently.
+  async function prepare(lines, onProgress) {
+    if (!player.voice) return;
+    const left = [...lines];
+    let done = 0;
+    const report = () => onProgress(`Preparing the voice: ${done} of ${lines.length} lines.`);
+    const worker = async () => {
+      for (let line = left.shift(); line && player.voice && !player.gone; line = left.shift()) {
+        await clip(line);
+        done += 1;
+        report();
+      }
+    };
+    report();
+    try { await Promise.all(Array.from({ length: VOICE_WORKERS }, worker)); } catch (error) { if (player.voice && !player.gone) dropVoice(error); }
   }
 
   async function speak(index) {
@@ -248,13 +268,12 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     player.silentLeft = Math.max(MIN_LINE_SECONDS, wordCount(player.lines[index].text) * SECONDS_PER_WORD);
     if (!player.voice) return;
     try {
-      const url = await clip(index);
+      const url = await clip(player.lines[index]);
       if (token !== player.token) return;
       audio.src = url;
       audio.playbackRate = player.speed;
       audio.muted = player.muted;
       if (player.playing) await startClip();
-      for (let ahead = 1; ahead <= PREFETCH && index + ahead < player.lines.length; ahead += 1) clip(index + ahead).catch(() => {});
     } catch (error) {
       if (token === player.token) dropVoice(error);
     }
@@ -318,7 +337,7 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     player.frame = requestAnimationFrame(tick);
   }
 
-  // A rewrite replaces the whole story, so the stage waits for it and questions cannot be asked meanwhile.
+  // Preparing the voice and a rewrite hold the stage, so nothing plays and questions cannot be asked meanwhile.
   async function work(title, run) {
     if (player.busy) return;
     player.busy = true;
@@ -326,7 +345,8 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
     progress.hidden = false;
     progress.textContent = title;
     askInput.disabled = true;
-    try { await run((step) => { progress.textContent = `${title} ${step}`; }); } catch (error) { notify(error.message); } finally { player.busy = false; progress.hidden = true; askInput.disabled = false; }
+    playButton.disabled = true;
+    try { await run((step) => { progress.textContent = `${title} ${step}`; }); } catch (error) { notify(error.message); } finally { player.busy = false; progress.hidden = true; askInput.disabled = false; playButton.disabled = false; }
   }
 
   // A question never stops the story. Questions are answered one at a time, in the order asked, and each answer
@@ -348,12 +368,15 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
         const script = await ask(question, (step) => { player.step = step; showAsk(); });
         if (player.gone) return;
         const first = player.lines.length;
+        const built = build(script);
+        // The answer goes in only once all of it can be spoken.
+        await prepare(built.lines.slice(first), (step) => { player.step = step; showAsk(); });
+        if (player.gone) return;
         player.script = script;
-        Object.assign(player, build(script));
+        Object.assign(player, built);
         player.waiting.shift();
         player.answers.push({ question, start: first, end: player.lines.length - 1, played: false });
         renderWriteup();
-        if (player.voice && !player.hidden) clip(first).catch(() => {});
       } catch (error) {
         if (player.gone) return;
         player.waiting.shift();
@@ -400,7 +423,9 @@ export function playStoryPodcast({ script: first, host, settings, narrate = null
 
   async function again() {
     await work("Writing the story again.", async (onProgress) => {
-      load(await rewrite(onProgress), 0);
+      const script = await rewrite(onProgress);
+      await prepare(build(script).lines, onProgress);
+      load(script, 0);
       setPlaying(true);
     });
   }
