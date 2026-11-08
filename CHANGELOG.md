@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.243.0 — 2026-11-08
+
+- Bob's chat keeps your place when you dismiss, snooze or answer an item, instead of jumping to the newest message. It still follows new messages while you are at the bottom, and goes to the end when you send something or change a filter.
+- A card on the board that waits for you can be closed from the board: every card whose agent is not working has a ✓ Done button at its top right, beside its color. Before, only cards waiting for review had one.
+
 ## 2.242.2 — 2026-11-08
 
 - Test machines keep their sample conversations: they no longer mark them done a minute after starting or delete them five minutes in, so long browser test runs no longer lose the conversations they open.

@@ -114,7 +114,10 @@ function renderCard(card) {
   }
   if (card.column === "running") top.append(runningBadge(card));
   if (card.column === "review") top.append(element("span", "control-badge review", "To review"));
-  top.append(element("span", "control-spacer"), picker);
+  top.append(element("span", "control-spacer"));
+  // Any card whose agent is not working can be closed; its row of buttons has no room left, so Done sits up here.
+  if (card.column !== "running" && !card.turnRunning) top.append(doneButton(card));
+  top.append(picker);
 
   // A step waiting for the person takes the status's place, so every card keeps the same size.
   const body = element("div", "control-card-body");
@@ -400,6 +403,18 @@ async function markDone(card) {
   await refreshControlCenter();
 }
 
+function doneButton(card) {
+  const button = element("button", "control-card-action control-card-done", "✓ Done");
+  button.type = "button";
+  button.title = "Close it: it leaves the board, and you can open it again from its project";
+  button.dataset.testid = "control-card-action-done";
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    markDone(card).catch((error) => toast.error(error.message));
+  });
+  return button;
+}
+
 // Reviewing a finished conversation is reading it: opening it marks it reviewed, and it leaves the review lane.
 registerCardAction({
   id: "review", label: "Review", style: "primary", order: 1, title: "Open it to read what it did; once you have looked, it leaves Done · ready for review",
@@ -414,7 +429,6 @@ export function seeCardOff(projectId, conversationId, label) {
 window.addEventListener("control-bob-action", ({ detail }) => {
   if (detail.actionId === "conversation.done" || detail.actionId === "conversation.abandon") seeCardOff(detail.data.projectId, detail.data.conversationId, detail.label);
 });
-registerCardAction({ id: "done", label: "Done", order: 2, title: "Close it: it leaves the board, and you can open it again from its project", visible: (card) => card.column === "review", run: markDone });
 
 function resetBoard() {
   const { chatRight, chatWidth } = state.controlCenter;

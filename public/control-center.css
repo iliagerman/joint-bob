@@ -113,6 +113,9 @@
 .control-card-actions { display: flex; flex-wrap: wrap; gap: 3px; border-top: 1px dashed var(--line); padding-top: 6px; }
 .control-card-action { border: 1px solid var(--line); background: var(--field); color: var(--muted); border-radius: 6px; padding: 1px 6px; font: inherit; font-size: 11px; cursor: pointer; }
 .control-card-action:hover { color: var(--text); border-color: var(--line-strong); }
+/* Done sits in the card's top row, beside its color, as low as that row. */
+.control-card-done { padding: 0 6px; line-height: 15px; flex: none; }
+.control-card-done:hover { color: #4fd1b5; border-color: color-mix(in srgb, #4fd1b5 60%, transparent); }
 .control-need { border: 1px solid color-mix(in srgb, #f2b44b 55%, transparent); background: color-mix(in srgb, #f2b44b 7%, transparent); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .control-need-title { font-weight: 600; color: #f2b44b; }
 .control-need-subject { font-family: ui-monospace, monospace; font-size: 11.5px; overflow-wrap: anywhere; max-height: 5.5em; overflow: hidden; }

@@ -297,6 +297,16 @@ test("the control center shows the live board, filters by project, colors cards 
   }, column);
   await moveCard("running");
   await page.waitForFunction(() => document.querySelector('[data-id="check"] [data-testid="control-chat-now"]')?.textContent === "Running now");
+  assert.equal(await page.locator('[data-key="p1:c3"]').getByTestId("control-card-action-done").count(), 0, "a running card cannot be closed");
+  // A card that waits for the person can be closed from the board too, in its top row; every button stays whole on the card.
+  await moveCard("needs-you");
+  await page.locator('[data-key="p1:c3"][data-column="needs-you"]').waitFor();
+  const waiting = page.locator('[data-key="p1:c3"]');
+  assert.equal(await waiting.locator(".control-card-top").getByTestId("control-card-action-done").isVisible(), true);
+  const clipped = await waiting.evaluate((card) => [...card.querySelectorAll("button")]
+    .filter((button) => button.getBoundingClientRect().right > button.parentElement!.getBoundingClientRect().right + 0.5)
+    .map((button) => button.textContent));
+  assert.deepEqual(clipped, [], "no button is cut off at the card's edge");
   await moveCard("review");
   await page.waitForFunction(() => document.querySelector('[data-id="check"] [data-testid="control-chat-now"]')?.textContent === "Done · ready for review");
 
@@ -350,6 +360,25 @@ test("the control center shows the live board, filters by project, colors cards 
   await plain.getByTestId("control-item-dismiss").click();
   await plain.waitFor({ state: "detached" });
   assert.deepEqual(await page.evaluate(() => (window as unknown as { __settled: unknown[] }).__settled.at(-1)), { path: "/api/control-center/bob/item", messageId: "plain", how: "dismiss" });
+  // Clearing an item while reading further up keeps the place: the chat does not jump to its end.
+  await page.evaluate(() => {
+    const timeline = (window as unknown as { __timeline: unknown[] }).__timeline;
+    for (let index = 0; index < 12; index += 1) timeline.push({ id: `alert${index}`, role: "system", text: `Prod alert ${index}`, via: null, projectId: "p1", projectName: "Joint Bob", importance: "urgent", createdAt: new Date().toISOString(), actions: [] });
+    window.dispatchEvent(new CustomEvent("control-center-changed"));
+  });
+  const chatLog = page.getByTestId("control-chat-messages");
+  await page.getByTestId("control-chat-entry").filter({ hasText: "Prod alert 11" }).waitFor();
+  const readingAt = await chatLog.evaluate((log) => {
+    log.querySelector('.control-entry[data-id="alert3"]')!.scrollIntoView({ block: "start" });
+    return log.scrollTop;
+  });
+  assert.ok(readingAt > 0, "the chat is scrolled to an item in the middle");
+  const alert = page.getByTestId("control-chat-entry").filter({ hasText: "Prod alert 4" });
+  await alert.getByTestId("control-item-dismiss").click();
+  await alert.waitFor({ state: "detached" });
+  const after = await chatLog.evaluate((log) => ({ top: log.scrollTop, toEnd: log.scrollHeight - log.scrollTop - log.clientHeight }));
+  assert.ok(Math.abs(after.top - readingAt) <= 1, `the chat stays where it was read: ${readingAt} before, ${after.top} after`);
+  assert.ok(after.toEnd > 40, "it did not jump to the end");
 
   // Bob's settings are saved with the account; pausing shows a banner with a way back.
   await page.getByTestId("control-chat-settings-button").click();

@@ -305,22 +305,33 @@ function tickPending() {
 // The chat is drawn again only when what it shows changed: it is read again whenever anything changes, and drawing it anew
 // would take the focus and the scroll away from a reply being written.
 let drawnMessages = "";
+// The place being read stays when an item is cleared or one arrives. The chat goes to its end for another filter, for
+// something sent, or when it was at the end already.
+let drawnView = "";
+let drawnPending = 0;
 
 function renderMessages() {
   const visible = messages.filter(matchesFilter);
   const drawing = JSON.stringify([visible, [...pending.keys()], sendError, replying?.id ?? null, filter.importance]);
   if (drawing === drawnMessages) return;
   drawnMessages = drawing;
+  const list = elements.controlChatMessages;
+  const view = JSON.stringify(filter);
+  const follow = view !== drawnView || pending.size > drawnPending || list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  const top = list.scrollTop;
+  drawnView = view;
+  drawnPending = pending.size;
   const writing = Boolean(document.activeElement?.closest?.(".control-reply"));
   const extra = [...[...pending.values()].map(renderPending), ...(sendError ? [element("div", "control-msg error", sendError)] : [])];
   const shown = visible.map(renderMessage);
   const empty = !shown.length && filter.importance === "cleared" ? [element("p", "control-empty", "Nothing was cleared yet.")] : [];
-  elements.controlChatMessages.replaceChildren(...shown, ...empty, ...extra);
-  const box = elements.controlChatMessages.querySelector(".control-reply textarea");
+  list.replaceChildren(...shown, ...empty, ...extra);
+  list.scrollTop = follow ? list.scrollHeight : top;
+  const box = list.querySelector(".control-reply textarea");
   if (box) {
     if (writing || replying.focus) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); replying.focus = false; }
     box.closest(".control-entry").scrollIntoView({ block: "nearest" });
-  } else elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
+  }
   clearInterval(pendingTicker);
   pendingTicker = pending.size ? setInterval(tickPending, 1000) : null;
 }
