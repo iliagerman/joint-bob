@@ -30,6 +30,21 @@ function save() {
 
 const cardKey = (card) => `${card.projectId}:${card.conversationId}`;
 
+/** The palette a project without a color of its own is given a steady color from; slate is left for what belongs to no project. */
+const PROJECT_PALETTE = ["teal", "blue", "violet", "magenta", "amber", "green", "red"];
+
+/**
+ * A project's color, on the board and in Bob's chat: the one chosen in the project's settings, as its project list shows it,
+ * or a steady one from its id (FNV-1a, so like ids get unlike colors).
+ */
+export function projectColor(projectId) {
+  const chosen = board.projects.find((project) => project.id === projectId)?.color;
+  if (chosen) return chosen;
+  let hash = 0x811c9dc5;
+  for (const character of projectId) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
+  return PROJECT_PALETTE[(hash >>> 0) % PROJECT_PALETTE.length];
+}
+
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -52,8 +67,9 @@ function renderFilters() {
   chips.append(all);
   const withCards = new Set(board.cards.map((card) => card.projectId));
   for (const project of board.projects.filter((item) => withCards.has(item.id) || state.controlCenter.filter.includes(item.id))) {
-    const chip = element("button", "control-chip", project.name);
+    const chip = element("button", "control-chip project", project.name);
     chip.type = "button";
+    chip.dataset.color = projectColor(project.id);
     chip.classList.toggle("active", state.controlCenter.filter.includes(project.id));
     chip.addEventListener("click", () => {
       state.controlCenter.filter = state.controlCenter.filter.includes(project.id) ? state.controlCenter.filter.filter((id) => id !== project.id) : [...state.controlCenter.filter, project.id];
@@ -222,6 +238,7 @@ function renderProjectGroup(cards) {
   const group = element("div", "control-project-group");
   group.dataset.testid = "control-project-group";
   group.dataset.project = first.projectId;
+  group.dataset.color = projectColor(first.projectId);
   const header = element("div", "control-project-head");
   header.append(element("b", "", first.projectName), element("span", "control-project-count", String(cards.length)));
   const project = { projectId: first.projectId, projectName: first.projectName };
@@ -379,8 +396,8 @@ window.addEventListener("control-bob-action", ({ detail }) => {
 registerCardAction({ id: "done", label: "Done", order: 2, title: "Close it: it leaves the board, and you can open it again from its project", visible: (card) => card.column === "review", run: markDone });
 
 function resetBoard() {
-  const { chatSide, chatWidth } = state.controlCenter;
-  state.controlCenter = { colors: {}, filter: [], chatSide, chatWidth };
+  const { chatRight, chatWidth } = state.controlCenter;
+  state.controlCenter = { colors: {}, filter: [], chatRight, chatWidth };
   save();
   render();
 }

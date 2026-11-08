@@ -262,10 +262,10 @@ test("from 1700 px the list is a column between the board and Bob's chat that fo
     return { stage, column, chat };
   };
   let { stage, column, chat } = await order();
-  assert.ok(stage.x + stage.width <= column.x + 1 && column.x + column.width <= chat.x + 1, "board, then the assistants, then Bob's chat");
+  assert.ok(chat.x + chat.width <= column.x + 1 && column.x + column.width <= stage.x + 1, "Bob's chat on the left, then the assistants, then the board");
   await page.getByTestId("control-chat-side").click();
   ({ stage, column, chat } = await order());
-  assert.ok(chat.x + chat.width <= column.x + 1 && column.x + column.width <= stage.x + 1, "still between them when Bob's chat is on the left");
+  assert.ok(stage.x + stage.width <= column.x + 1 && column.x + column.width <= chat.x + 1, "still between them when Bob's chat is on the right");
   await page.getByTestId("control-chat-side").click();
 
   // The column folds to a strip and opens again.

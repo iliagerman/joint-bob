@@ -4,7 +4,7 @@ The control center is one screen for everything that is running. It replaces the
 
 ## The board
 
-Every conversation that is running, one that waits for you, and one that finished and waits for review, in all the projects you can see. Each lane (**Needs you**, **Running**, **Done · ready for review**) groups its conversations by project, projects in name order and the newest conversation first, so one project's work sits together; the lane's count stands out, in blue for what waits for review.
+Every conversation that is running, one that waits for you, and one that finished and waits for review, in all the projects you can see. Each lane (**Needs you**, **Running**, **Done · ready for review**) groups its conversations by project, projects in name order and the newest conversation first, so one project's work sits together; the lane's count stands out, in blue for what waits for review. Each project's group is drawn in the project's color, with its name in that color, so projects tell apart at a glance; its chip in the project filter and its messages in Bob's chat have the same color. The color is the one chosen in the project's settings, as the project list shows it; a project without one gets a steady color from the same palette. When two projects look alike, choose another color for one of them in its settings.
 
 - **Needs you** cards show a step waiting for your OK (a Guardian review: what the agent wants to run, with **Allow once** and **Block**), or an agent whose auto respond stopped on something only you can settle.
 - **Running** cards show the title, the agent and model, and where the conversation stands. The first line, in the accent color, says what the turn is doing now: the tool it runs and what it runs on (*Bash · npm test*), or the last line it wrote, or *Thinking…*. Under it is the first sentence of the summary's *Current state*. Hover a card for its brief: it opens beside the card, in larger type, with the whole title, what the turn does now, and the summary laid out by section as in the conversation's Activity panel. It stays open while the pointer is on it, so a long one can be scrolled. While something runs, the board reads them again every 10 seconds. A conversation that runs on another of your machines keeps its summary and its turn there: the board asks that machine for them, once per machine each time it is drawn, so its card shows them wherever you open the board. A machine that does not answer within a moment, or runs an older version, leaves its cards without them and is asked again a minute later.
@@ -25,8 +25,9 @@ The board is the first tab, **Live agents**. **Project overview** shows one proj
 - **Project filter.** The chips above the board show only the projects that have cards. Select one or several; **All** clears the filter.
 - **Color.** The circle in a card's corner is a color picker. The whole card takes the color.
 - **Reset** clears the colors and the filter.
+- **Bob's chat** sits on the left of the board. **⇄** in its header moves it to the right and back; drag its edge to make it wider.
 
-Colors, the filter, and the chat's side and width are kept with your account. Bob's answers are formatted (lists, bold, code), not shown as raw Markdown.
+Colors, the filter, and the chat's side and width are kept with your account. The chat's side as kept before 2.235.0 is not used: the chat starts on the left once, and **⇄** moves it back. Bob's answers are formatted (lists, bold, code), not shown as raw Markdown.
 
 ## Bob
 

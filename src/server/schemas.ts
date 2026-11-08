@@ -468,7 +468,9 @@ export const userPreferencesSchema = z.object({
     positions: z.unknown().optional(),
     layout: z.unknown().optional(),
     filter: z.array(z.string().min(1).max(200)).max(200),
-    chatSide: z.enum(["left", "right"]),
+    chatRight: z.boolean().default(false),
+    // Sent by pages before 2.235, which kept the chat on the right unless it was moved; accepted and not kept.
+    chatSide: z.unknown().optional(),
     chatWidth: z.number().min(300).max(820),
   }).strict().optional(),
   gitReviewer: z.object({

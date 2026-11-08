@@ -3,7 +3,7 @@ import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
 const BOARD = {
-  projects: [{ id: "p1", name: "Joint Bob" }, { id: "p2", name: "DAK Live" }],
+  projects: [{ id: "p1", name: "Joint Bob", color: "violet" }, { id: "p2", name: "DAK Live" }],
   cards: [
     { projectId: "p1", projectName: "Joint Bob", conversationId: "c1", sessionId: "c1", path: "/c1", title: "Mobile menu", column: "running", agentId: "claude", agentLabel: "Claude", agentModel: "sonnet", executionNodeId: null, updatedAt: "2026-11-05T10:00:00Z", turnRunning: true, backgroundRunning: false, summary: "Running the UI tests", activity: "Bash · npm run test:ui -- test/ui/menu.test.ts", autoRespondActive: true },
     { projectId: "p2", projectName: "DAK Live", conversationId: "c2", sessionId: "c2", path: "/c2", title: "Slice 7: stop follow-up nudges while an agent owes the customer an answer, then map it", column: "running", agentId: "pi", agentLabel: "Pi", agentModel: null, executionNodeId: null, updatedAt: "2026-11-05T09:00:00Z", turnRunning: true, backgroundRunning: false, summary: null, autoRespondActive: false, startedBy: "bob" },
@@ -103,6 +103,14 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.match(await review.textContent() ?? "", /To review/, "finished work waiting for the person is marked");
   assert.equal(await review.getByTestId("control-card-check").textContent(), "✓ Bob checked: done", "Bob checked that it is really done");
   assert.equal(await page.locator('.control-lane[data-column="review"] .control-lane-count').textContent(), "1");
+  // Each project's group is in the project's color: the one chosen in its settings, or a steady one from the palette.
+  const colorOf = (id: string) => page.locator(`[data-testid="control-project-group"][data-project="${id}"]`).first().getAttribute("data-color");
+  assert.equal(await colorOf("p1"), "violet", "the color chosen for the project");
+  assert.ok(["teal", "blue", "magenta", "amber", "green", "red"].includes((await colorOf("p2")) ?? ""), "a project without one gets one from the palette");
+  const tops = await page.getByTestId("control-project-group").evaluateAll((groups) => groups.map((group) => getComputedStyle(group).borderTopColor));
+  assert.ok(new Set(tops).size >= 2, `the projects' groups have different colors: ${tops.join(", ")}`);
+  assert.equal(await page.getByTestId("control-center-filters").locator('.control-chip.project[data-color="violet"]').textContent(), "Joint Bob", "its filter chip too");
+
   // Every card is the same size, whatever its title, status, ribbon or check line; a long title is cut, and whole on hover.
   const heights = await page.getByTestId("control-center-card").evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().height));
   assert.equal(new Set(heights).size, 1, `card heights: ${heights.join(", ")}`);
@@ -271,6 +279,7 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.match(await check.locator(".control-entry-event").innerText(), /^Needs you\s+Bob checked it when it stopped\s+\S/);
   assert.equal(await check.locator(".control-msg").innerText(), "Waits for you.\nIt asks which plan to use.", "the name is not repeated");
   assert.notEqual(await check.evaluate((card) => getComputedStyle(card).borderLeftColor), await page.getByTestId("control-chat-entry").filter({ hasText: "Morning report" }).evaluate((entry) => getComputedStyle(entry).borderLeftColor), "drawn in its project's color");
+  assert.equal(await check.getAttribute("data-color"), "violet", "the same color as the project's group on the board");
   assert.equal(await check.getByTestId("control-chat-about").evaluate((link) => link.tagName), "BUTTON", "the conversation opens from its name");
   assert.equal(await check.locator(".control-via").textContent(), "Decision model 96%");
   assert.deepEqual(await check.locator(".control-action").allTextContents(), ["Push it on", "Done", "Abandon", "Open", "Reply", "Dismiss"], "its own buttons, then reply and dismiss; it has its own Done");
@@ -344,19 +353,20 @@ test("the control center shows the live board, filters by project, colors cards 
   await page.getByRole("button", { name: "Restore" }).click();
   await page.getByTestId("control-chat-paused").waitFor({ state: "hidden" });
 
-  // The chat moves to the other side and is resized by its edge; both stay with the account.
+  // The chat starts on the left; it moves to the other side and is resized by its edge, and both stay with the account.
+  assert.equal(await page.locator(".control-main.chat-left").count(), 1, "the chat starts on the left");
   await page.getByTestId("control-chat-side").click();
-  assert.equal(await page.locator(".control-main.chat-left").count(), 1);
+  assert.equal(await page.locator(".control-main.chat-left").count(), 0);
   const handle = (await page.getByTestId("control-chat-resize").boundingBox())!;
   await page.mouse.move(handle.x + 3, handle.y + 100);
   await page.mouse.down();
-  await page.mouse.move(handle.x + 203, handle.y + 100);
+  await page.mouse.move(handle.x - 197, handle.y + 100);
   await page.mouse.up();
   const width = await page.getByTestId("control-chat").evaluate((chat) => chat.getBoundingClientRect().width);
   assert.ok(width > 450, `dragging the edge widened the chat, got ${width}`);
   await page.waitForFunction(async () => {
     const saved = await (await fetch("/api/preferences")).json();
-    return saved.controlCenter.chatSide === "left" && saved.controlCenter.chatWidth > 450;
+    return saved.controlCenter.chatRight === true && saved.controlCenter.chatWidth > 450;
   });
 
   // Exit and Esc both leave.

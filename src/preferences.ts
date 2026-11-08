@@ -355,12 +355,12 @@ export interface ControlCenterPreference {
   colors: Record<string, string>;
   /** Project ids the board is limited to; empty shows every project. */
   filter: string[];
-  /** Which side Bob's chat sits on, and how wide it is in pixels. */
-  chatSide: "left" | "right";
+  /** Bob's chat sits on the left unless the person moved it to the right; how wide it is in pixels. */
+  chatRight: boolean;
   chatWidth: number;
 }
 
-const emptyControlCenter = (): ControlCenterPreference => ({ colors: {}, filter: [], chatSide: "right", chatWidth: 400 });
+const emptyControlCenter = (): ControlCenterPreference => ({ colors: {}, filter: [], chatRight: false, chatWidth: 400 });
 
 function parseControlCenter(value: string): ControlCenterPreference {
   try {
@@ -369,7 +369,7 @@ function parseControlCenter(value: string): ControlCenterPreference {
     return {
       colors: stored.colors && typeof stored.colors === "object" ? Object.fromEntries(Object.entries(stored.colors).filter(([key, color]) => key.length <= 300 && /^#[0-9a-f]{6}$/i.test(String(color)))) : {},
       filter: Array.isArray(stored.filter) ? stored.filter.filter((id): id is string => typeof id === "string" && id.length <= 200) : [],
-      chatSide: stored.chatSide === "left" ? "left" : "right",
+      chatRight: stored.chatRight === true,
       chatWidth: typeof stored.chatWidth === "number" && stored.chatWidth >= 300 && stored.chatWidth <= 820 ? stored.chatWidth : 400,
     };
   } catch { return emptyControlCenter(); }
@@ -469,8 +469,12 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as KeymapPreference)],
     ["conversationLastRead", "conversation_last_read", (value) => JSON.stringify(boundConversationLastRead(value as Record<string, number>))],
     ["projectConversationVisibility", "project_conversation_visibility", (value) => JSON.stringify(value)],
-    // A 2.213 page still sends the free layout's positions and mode; the board has one layout now, so they are not kept.
-    ["controlCenter", "control_center", (value) => { const { positions: _positions, layout: _layout, ...kept } = value as ControlCenterPreference & { positions?: unknown; layout?: unknown }; return JSON.stringify(kept); }],
+    // A 2.213 page still sends the free layout's positions and mode; the board has one layout now, so they are not kept. The chat's
+    // side as pages before 2.235 saved it (right unless moved) is not kept either: the chat starts on the left once for everyone.
+    ["controlCenter", "control_center", (value) => {
+      const { positions: _positions, layout: _layout, chatSide: _chatSide, ...kept } = value as ControlCenterPreference & { positions?: unknown; layout?: unknown; chatSide?: unknown };
+      return JSON.stringify(kept);
+    }],
     ["gitReviewer", "git_reviewer", (value) => JSON.stringify(value)],
   ];
   for (const [property, column, serialize] of fields) {

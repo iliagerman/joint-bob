@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { appearanceContext, applyAppearance } from "./appearance.js";
 import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
-import { focusProject, openConversation, refreshControlCenter, saveControlCenter, seeCardOff } from "./control-center.js";
+import { focusProject, openConversation, projectColor, refreshControlCenter, saveControlCenter, seeCardOff } from "./control-center.js";
 import { vanish } from "./control-vanish.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { state } from "./state.js";
@@ -31,8 +31,8 @@ function element(tag, className, text) {
 }
 
 function applyLayout() {
-  const { chatSide, chatWidth } = state.controlCenter;
-  elements.controlCenterMain.classList.toggle("chat-left", chatSide === "left");
+  const { chatRight, chatWidth } = state.controlCenter;
+  elements.controlCenterMain.classList.toggle("chat-left", !chatRight);
   elements.controlChat.style.setProperty("--control-chat-width", `${chatWidth}px`);
 }
 
@@ -61,13 +61,6 @@ const SOURCE_WORDS = {
   "Auto respond ended": "Auto respond stopped",
   Organize: "Bob",
 };
-
-/** A steady color for each project, so its messages are told apart at a glance: an FNV-1a hash, so like ids get unlike hues. */
-function projectHue(key) {
-  let hash = 0x811c9dc5;
-  for (const character of key) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
-  return (hash >>> 0) % 360;
-}
 
 /** The message without the conversation's name it starts with: the card already shows it on top. */
 function withoutTitle(text, title) {
@@ -206,7 +199,8 @@ const settledWord = (message) => message.resolution.match(/^You chose “(.+)”
  */
 function renderConversationNotice(message, about) {
   const wrap = entry(message, "about");
-  wrap.style.setProperty("--project-hue", String(projectHue(message.projectId ?? message.projectName ?? "")));
+  // In its project's color, as on the board; what belongs to no project is slate.
+  wrap.dataset.color = message.projectId ? projectColor(message.projectId) : "slate";
   const source = element("div", "control-entry-source");
   const name = element(about.open ? "button" : "span", "control-entry-conversation", about.title);
   name.dataset.testid = "control-chat-about";
@@ -623,11 +617,14 @@ window.addEventListener("control-center-rendered", (event) => {
     select.replaceChildren(...first, ...event.detail.projects.map((project) => new Option(project.name, project.id)));
     select.value = chosen;
   };
-  const projects = JSON.stringify(event.detail.projects.map((project) => [project.id, project.name]));
+  const projects = JSON.stringify(event.detail.projects.map((project) => [project.id, project.name, project.color]));
   if (projects !== listedProjects) {
     listedProjects = projects;
     choose(elements.controlChatProject, [new Option("Auto", "")]);
     choose(elements.controlChatFilterProject, [new Option("All projects", ""), new Option("General", "general")]);
+    // A project's color is known once the board has its projects, or changed in its settings: the messages take it.
+    drawnMessages = "";
+    renderMessages();
   }
   applyLayout();
   // The board's own project chips focus the chat too: one project chosen there filters it here.
@@ -655,7 +652,7 @@ window.addEventListener("control-center-activated", () => {
 });
 
 elements.controlChatSide.addEventListener("click", () => {
-  state.controlCenter.chatSide = state.controlCenter.chatSide === "left" ? "right" : "left";
+  state.controlCenter.chatRight = !state.controlCenter.chatRight;
   applyLayout();
   saveControlCenter();
 });
@@ -665,7 +662,7 @@ elements.controlChatResize.addEventListener("mousedown", (event) => {
   elements.controlChatResize.classList.add("dragging");
   const bounds = elements.controlCenterMain.getBoundingClientRect();
   const move = (moveEvent) => {
-    const fromEdge = state.controlCenter.chatSide === "left" ? moveEvent.clientX - bounds.left : bounds.right - moveEvent.clientX;
+    const fromEdge = state.controlCenter.chatRight ? bounds.right - moveEvent.clientX : moveEvent.clientX - bounds.left;
     state.controlCenter.chatWidth = Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, fromEdge)));
     applyLayout();
   };

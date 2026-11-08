@@ -88,9 +88,9 @@ test("preferences store the keymap, ignore the removed canvas layout and map a s
     assert.equal("splitRight" in savedKeymapBody.canvasKeymap.commands, false, "pane commands left with the canvas");
 
     // The control center keeps card colors, free positions, the layout and the project filter with the account.
-    const controlCenter = { colors: { "p:c": "#ff6b9a" }, filter: ["p"], chatSide: "left", chatWidth: 520 };
-    // An older page still sends the free layout it had; it is accepted and not kept.
-    const savedBoard = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ controlCenter: { ...controlCenter, positions: { "p:c": { x: 10, y: 20 } }, layout: "free" } }) });
+    const controlCenter = { colors: { "p:c": "#ff6b9a" }, filter: ["p"], chatRight: true, chatWidth: 520 };
+    // An older page still sends the free layout it had, and the chat's side as it kept it then; they are accepted and not kept.
+    const savedBoard = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ controlCenter: { ...controlCenter, positions: { "p:c": { x: 10, y: 20 } }, layout: "free", chatSide: "right" } }) });
     assert.equal(savedBoard.status, 200);
     assert.deepEqual((await savedBoard.json() as { controlCenter: unknown }).controlCenter, controlCenter);
     const badColor = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ controlCenter: { ...controlCenter, colors: { "p:c": "red" } } }) });
