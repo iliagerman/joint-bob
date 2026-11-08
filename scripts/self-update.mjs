@@ -87,6 +87,18 @@ function requiredEnv(name) {
   return value;
 }
 
+/** Turns an earlier update interrupted that are still being finished; the service refuses to update until they end. */
+function interruptedTurns(databasePath) {
+  const db = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'update_recoveries'").get();
+    return table ? db.prepare("SELECT count(*) AS pending FROM update_recoveries WHERE status = 'pending'").get().pending : 0;
+  } finally {
+    db.close();
+  }
+}
+
 function markJob(databasePath, jobId, state, error = null) {
   const db = new DatabaseSync(databasePath);
   try {
@@ -114,6 +126,10 @@ async function run() {
   };
 
   try {
+    // Checked before anything is downloaded or built: the service would refuse at the end, after a minute of work, and the
+    // job would only say the installer failed.
+    const waiting = interruptedTurns(databasePath);
+    if (waiting) throw new Error(`This machine is still finishing ${waiting} conversation turn${waiting === 1 ? "" : "s"} that an earlier update interrupted. It can update once ${waiting === 1 ? "that turn ends" : "they end"}; stop ${waiting === 1 ? "it" : "them"} to update now.`);
     mkdirSync(updatesDir, { recursive: true, mode: 0o700 });
     log(`downloading ${archiveUrl}`);
     const checksum = parseChecksum(await downloadFile(checksumUrl));

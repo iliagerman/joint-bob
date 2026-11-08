@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.246.1 — 2026-11-08
+
+- An update no longer fails with a bare "Installation failed with status 1" while this machine is still finishing a conversation turn that an earlier update interrupted: it stops before downloading anything, says what it waits for, and that stopping the turn lets it update now. The service's own reason for refusing an update is kept in the message too.
+
 ## 2.246.0 — 2026-11-08
 
 - Marking a conversation done answers at once, with or without a comment. For Good or Bad, what to learn from it is worked out in the background, and the page says once when that finished or failed; before, the request waited up to a minute for it.

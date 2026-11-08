@@ -310,6 +310,48 @@ test("the detached helper records which download failed and why", async () => {
   }
 });
 
+test("the helper does not start while turns an earlier update interrupted are still being finished, and says so", async () => {
+  const { spawn } = await import("node:child_process");
+  const { DatabaseSync } = await import("node:sqlite");
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-self-update-recovering-"));
+  try {
+    const stateDir = path.join(root, "state");
+    await mkdir(stateDir, { recursive: true });
+    const db = new DatabaseSync(path.join(stateDir, "node.db"));
+    db.exec("CREATE TABLE update_jobs (id TEXT PRIMARY KEY, target_version TEXT NOT NULL, state TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+    db.exec("CREATE TABLE update_recoveries (id TEXT PRIMARY KEY, status TEXT NOT NULL)");
+    db.exec("INSERT INTO update_recoveries VALUES ('r1', 'pending'), ('r2', 'failed')");
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO update_jobs (id, target_version, state, error, created_at, updated_at) VALUES ('job-4', '9.9.9', 'downloading', NULL, ?, ?)").run(now, now);
+    let downloads = 0;
+    const assets = createServer((_request, response) => { downloads += 1; response.writeHead(404).end(); });
+    await new Promise<void>((resolve) => assets.listen(0, "127.0.0.1", resolve));
+    const port = (assets.address() as { port: number }).port;
+    const child = spawn(process.execPath, [path.join(process.cwd(), "scripts", "self-update.mjs")], {
+      env: {
+        ...process.env,
+        JOINT_BOB_DATA_DIR: stateDir,
+        JOINT_BOB_UPDATE_JOB_ID: "job-4",
+        JOINT_BOB_UPDATE_TARGET: "9.9.9",
+        JOINT_BOB_UPDATE_ARCHIVE_URL: `http://127.0.0.1:${port}/joint-bob.tar.gz`,
+        JOINT_BOB_UPDATE_CHECKSUM_URL: `http://127.0.0.1:${port}/joint-bob.tar.gz.sha256`,
+        JOINT_BOB_UPDATE_INSTALL_DIR: path.join(root, "install"),
+        JOINT_BOB_UPDATE_PORT: "1",
+      },
+      stdio: "ignore",
+    });
+    const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+    await new Promise<void>((resolve) => assets.close(() => resolve()));
+    assert.notEqual(status, 0);
+    assert.equal(downloads, 0, "nothing was downloaded");
+    const row = db.prepare("SELECT state, error FROM update_jobs WHERE id = 'job-4'").get() as { state: string; error: string | null };
+    assert.deepEqual({ ...row }, { state: "failed", error: "This machine is still finishing 1 conversation turn that an earlier update interrupted. It can update once that turn ends; stop it to update now." });
+    db.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the release workflow produces checksums and packages the self-update helper", async () => {
   const [workflow, manifest] = await Promise.all([
     readFile(".github/workflows/release.yml", "utf8"),

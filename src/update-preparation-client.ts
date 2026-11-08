@@ -10,7 +10,11 @@ const preparationResponseSchema = z.object({
 }).strict();
 
 async function recoveryCount(response: Response): Promise<number> {
-  if (!response.ok) throw new Error(`Service update preparation failed (${response.status})`);
+  // The service says why it refused (interrupted work still recovering, another update running): that reason is the message.
+  if (!response.ok) {
+    const reason = await response.json().then((body: { error?: unknown }) => typeof body.error === "string" ? body.error : null, () => null);
+    throw new Error(`Service update preparation failed (${response.status})${reason ? `: ${reason}` : ""}`);
+  }
   return preparationResponseSchema.parse(await response.json()).recoveryCount;
 }
 
