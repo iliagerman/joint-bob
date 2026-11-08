@@ -968,15 +968,6 @@
             </label>
             <p class="settings-hint">When on, this node describes uploaded images and browser screenshots with a vision-capable Pi model and inlines small text files, sending the words and the file path instead of the raw image so the harness does not carry every picture in its history. Agents can still open the file. When off, attachments are sent as today.</p>
           </fieldset>
-          <fieldset class="phase-settings" data-testid="settings-background-agent" data-admin-only>
-            <legend>Background agent</legend>
-            <label>Background agent harness
-              <select id="settingsBackgroundAgentHarness" data-testid="settings-background-agent-harness"></select>
-            </label>
-            <div id="settingsBackgroundAgentModel"></div>
-            <output id="settingsBackgroundAgentStatus" class="engine-readiness" data-testid="settings-background-agent-status"></output>
-            <p class="settings-hint">The agent Joint Bob uses for its own work on this node: Bob, conversation summaries when the conversation's agent cannot write them, titles, icons, knowledge cleanup, and the sync check and dashboards unless they have their own choice. Automatic uses the first agent that is installed and signed in here (Pi, then Claude, then Kiro) at its default model and effort from the agent settings above. Choose an agent to set its model and effort yourself.</p>
-          </fieldset>
           <fieldset class="phase-settings" data-testid="settings-sync-check" data-admin-only>
             <legend>Sync check</legend>
             <label class="checkbox-row">
@@ -3041,11 +3032,13 @@
           <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
           <fieldset class="relay-form-section"><legend>Tags</legend><div id="cronAutomationTags" data-testid="cron-automation-tags"></div></fieldset>
           <div class="cron-schedule-grid">
-            <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="minutely">Minutes</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+            <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="once">Once</option><option value="minutely">Minutes</option><option value="hourly" selected>Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+            <label id="cronStartDateLabel"><span id="cronStartDateText">From (optional)</span><input name="startDate" type="date" data-testid="cron-start-date"></label>
             <label id="cronTimeLabel">Start time<input name="time" type="time" value="08:00" required data-testid="cron-time"></label>
             <label id="cronMinuteIntervalLabel" hidden>Repeat every (minutes)<input name="intervalMinutes" type="number" inputmode="numeric" min="1" max="1440" value="15" data-testid="cron-interval-minutes"></label>
             <label id="cronIntervalLabel">Repeat every (hours)<input name="intervalHours" type="number" inputmode="numeric" min="1" max="168" value="1" required data-testid="cron-interval-hours"></label>
             <label id="cronWeekdayLabel">Day<select name="weekday" data-testid="cron-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+            <label id="cronEndDateLabel">Until (optional)<input name="endDate" type="date" data-testid="cron-end-date"></label>
           </div>
           <fieldset id="cronDays" class="cron-days"><legend>Run on days <small>(unchecked days stay quiet)</small></legend>
             <div class="cron-day-options">
@@ -3063,7 +3056,7 @@
             <label>From<input name="quietStart" type="time" value="22:00" data-testid="cron-quiet-start"></label>
             <label>Until<input name="quietEnd" type="time" value="08:00" data-testid="cron-quiet-end"></label>
           </div>
-          <p class="cron-help">Times and days use this timezone. Quiet hours can cross midnight; end time is when runs resume. Skipped runs are not made up.</p>
+          <p class="cron-help">Like a meeting in a calendar: once on a day, or repeating from a first day until an optional last one; a monthly task repeats on its first day's date. Times and days use this timezone. Quiet hours can cross midnight; end time is when runs resume. Skipped runs are not made up.</p>
           <label>Timezone<input name="timezone" list="cronTimezones" required autocomplete="off" data-testid="cron-timezone"></label>
           <datalist id="cronTimezones"></datalist>
           <label>Execution node<select name="ownerNodeId" required data-testid="cron-owner"></select></label>

@@ -22,6 +22,11 @@ let availableModels = [];
 let modelRequest = 0;
 let autoReplyDefaults;
 const inputOf = ({ id, nextRun, lastRun, ...input }) => input;
+/** Later than any real time: the task has no run left (a one-time task that ran or whose time passed, or one past its last day). */
+const NO_MORE_RUNS = 8_640_000_000_000_000;
+const nextRunText = (task) => task.nextRun >= NO_MORE_RUNS
+  ? task.schedule.frequency === "once" ? (task.lastRun ? "None: it ran" : "None: its time has passed") : "None: past its last day"
+  : new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone });
 const command = (nodeId, value) => api("/api/cron", { method: "POST", body: JSON.stringify({ nodeId, command: value }) });
 
 const profilePicker = createAutomationProfilePicker(field("model").closest("label"), "cron-provider-profile", () => command(field("ownerNodeId").value, { action: "profiles", projectId: context.projectId }));
@@ -118,13 +123,18 @@ async function refreshTasks() {
     details.className = "cron-task-details";
     const harness = availableHarnesses.find(candidate => candidate.id === task.engine);
     const reasoning = task.reasoning ?? task.model?.reasoning;
-    const repeat = task.schedule.frequency === "minutely" ? `Every ${task.schedule.intervalMinutes} minute${task.schedule.intervalMinutes === 1 ? "" : "s"}` : task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
+    const repeat = task.schedule.frequency === "once" ? `Once, on ${task.schedule.startDate}`
+      : task.schedule.frequency === "monthly" ? `Monthly, on day ${Number(task.schedule.startDate.slice(8))}`
+        : task.schedule.frequency === "minutely" ? `Every ${task.schedule.intervalMinutes} minute${task.schedule.intervalMinutes === 1 ? "" : "s"}` : task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
+    const calendar = task.schedule.frequency === "once" ? [] : [["From", task.schedule.startDate || "Now"], ["Until", task.schedule.endDate || "No end"]];
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    // A dated run is on the day it names: days of the week and quiet hours shape only a repeating rhythm.
+    const rhythm = task.schedule.frequency === "once" || task.schedule.frequency === "monthly" ? [] : [["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
+      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"]];
     const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
-      ["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
-      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["Auto reply", task.autoRespond ? `${task.autoRespond.modelId} · ${task.autoRespond.maxResponses ?? "Unlimited"} replies` : "Off"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview ? "Counts toward review" : "Silent"], ["Conversation history", task.hideFromHistory ? "Hidden" : "Visible when Show scheduled is on"]];
+      ...calendar, ...rhythm, ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["Auto reply", task.autoRespond ? `${task.autoRespond.modelId} · ${task.autoRespond.maxResponses ?? "Unlimited"} replies` : "Off"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview ? "Counts toward review" : "Silent"], ["Conversation history", task.hideFromHistory ? "Hidden" : "Visible when Show scheduled is on"]];
     const entries = task.enabled
-      ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
+      ? [["Next run", nextRunText(task)], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
     for (const [label, value] of entries) {
       const term = document.createElement("dt"); term.textContent = label;
@@ -332,6 +342,8 @@ function editTask(task) {
     field("intervalHours").value = task.schedule.intervalHours ?? 1;
     field("intervalMinutes").value = task.schedule.intervalMinutes ?? 15;
     field("time").value = `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`;
+    field("startDate").value = task.schedule.startDate ?? "";
+    field("endDate").value = task.schedule.endDate ?? "";
     field("quietEnabled").checked = Boolean(task.schedule.quietStart);
     if (task.schedule.quietStart) field("quietStart").value = task.schedule.quietStart;
     if (task.schedule.quietEnd) field("quietEnd").value = task.schedule.quietEnd;
@@ -343,16 +355,30 @@ function editTask(task) {
   updateCronContext();
   showScheduleFields(); field("name").focus();
 }
+/** Today on this device's calendar, as a date field takes it. */
+function localToday() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
 function showScheduleFields() {
-  const hourly = field("frequency").value === "hourly";
-  const minutely = field("frequency").value === "minutely";
+  const frequency = field("frequency").value;
+  const hourly = frequency === "hourly";
+  const minutely = frequency === "minutely";
+  const dated = frequency === "once" || frequency === "monthly";
+  // The day: when a one-time task runs, the first day (and date) of a monthly one, or an optional first day of any other.
+  document.querySelector("#cronStartDateText").textContent = { once: "On", monthly: "From (repeats on this date)" }[frequency] ?? "From (optional)";
+  field("startDate").required = dated;
+  if (dated && !field("startDate").value) field("startDate").value = localToday();
+  document.querySelector("#cronEndDateLabel").hidden = frequency === "once";
   document.querySelector("#cronIntervalLabel").hidden = !hourly;
   field("intervalHours").required = hourly;
   document.querySelector("#cronMinuteIntervalLabel").hidden = !minutely;
   field("intervalMinutes").required = minutely;
   document.querySelector("#cronWeekdayLabel").hidden = field("frequency").value !== "weekly";
-  document.querySelector("#cronDays").hidden = field("frequency").value === "weekly";
-  document.querySelector("#cronQuietTimes").hidden = !field("quietEnabled").checked;
+  document.querySelector("#cronDays").hidden = frequency === "weekly" || dated;
+  // Quiet hours shape a repeating rhythm; a dated run is at the time it names.
+  field("quietEnabled").closest("label").hidden = dated;
+  document.querySelector("#cronQuietTimes").hidden = dated || !field("quietEnabled").checked;
 }
 form.addEventListener("submit", async event => {
   event.preventDefault();
@@ -362,7 +388,9 @@ form.addEventListener("submit", async event => {
   try {
     const [hour, minute] = field("time").value.split(":").map(Number);
     const days = [...form.querySelectorAll('[name="days"]:checked')].map(checkbox => Number(checkbox.value));
-    if (field("frequency").value !== "weekly" && !days.length) throw new Error("Select at least one run day");
+    const frequency = field("frequency").value;
+    const dated = frequency === "once" || frequency === "monthly";
+    if (frequency !== "weekly" && !dated && !days.length) throw new Error("Select at least one run day");
     if (field("quietEnabled").checked && field("quietStart").value === field("quietEnd").value) throw new Error("Quiet hours need different start and end times");
     const [provider, modelId] = field("model").value.split("|");
     const session = boundSession();
@@ -379,9 +407,10 @@ form.addEventListener("submit", async event => {
         intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
         hour, minute, startHour: field("frequency").value === "hourly" ? hour : undefined,
         weekday: Number(field("weekday").value), timezone: field("timezone").value,
-        days: field("frequency").value === "weekly" ? undefined : days,
-        quietStart: field("quietEnabled").checked ? field("quietStart").value : undefined,
-        quietEnd: field("quietEnabled").checked ? field("quietEnd").value : undefined },
+        days: frequency === "weekly" || dated ? undefined : days,
+        startDate: field("startDate").value || undefined, endDate: frequency === "once" ? undefined : field("endDate").value || undefined,
+        quietStart: field("quietEnabled").checked && !dated ? field("quietStart").value : undefined,
+        quietEnd: field("quietEnabled").checked && !dated ? field("quietEnd").value : undefined },
     };
     await command(editing ? editing.ownerNodeId : input.ownerNodeId, editing ? { action: "update", id: editing.id, input } : { action: "create", input });
     if (!input.sessionId && context.session) context.session = null;

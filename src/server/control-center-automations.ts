@@ -6,7 +6,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { bobRow, compareRows, rowMatchesFilter, scheduleRow, webhookRow, type AutomationKind, type AutomationRow, type RowContext } from "../control-center/automations.js";
 import { bobScheduleChangeSchema, bobScheduleInputSchema, createBobSchedule, deleteBobSchedule, ensureBobScheduleSchema, listBobSchedules, updateBobSchedule, type BobSchedule } from "../control-center/bob-schedules.js";
 import { bobDatabase } from "../control-center/bob-store.js";
-import type { CronInput, CronTask } from "../cron.js";
+import { calendarDateSchema, type CronInput, type CronTask } from "../cron.js";
 import { Feature, hasFeature } from "../features.js";
 import { getProject } from "../store.js";
 import { webhookDeliveries, webhookInputSchema, type Webhook } from "../webhooks.js";
@@ -144,9 +144,13 @@ const timezoneSchema = z.string().min(1).max(100).refine((value) => {
 }, "Unknown timezone");
 
 const compactSchedule = z.object({
-  frequency: z.enum(["hourly", "daily", "weekly"]),
+  frequency: z.enum(["once", "hourly", "daily", "weekly", "monthly"]),
   time: clockSchema,
   weekday: z.number().int().min(0).max(6).default(1),
+  /** The day a one-time task runs, the first day of a monthly one (whose date it repeats on), or the first day of any other. */
+  date: calendarDateSchema.nullable().optional(),
+  /** The last day a repeating task may run. */
+  until: calendarDateSchema.nullable().optional(),
   timezone: timezoneSchema,
 }).strict();
 export type CompactSchedule = z.infer<typeof compactSchedule>;
@@ -182,9 +186,11 @@ function cronSchedule(compact: CompactSchedule): CronInput["schedule"] {
   const hour = Number(compact.time.slice(0, 2));
   const minute = Number(compact.time.slice(3));
   const every = [0, 1, 2, 3, 4, 5, 6];
-  if (compact.frequency === "weekly") return { frequency: "weekly", hour, minute, weekday: compact.weekday, timezone: compact.timezone };
-  if (compact.frequency === "hourly") return { frequency: "hourly", intervalHours: 1, hour, minute, startHour: hour, weekday: compact.weekday, timezone: compact.timezone, days: every };
-  return { frequency: "daily", hour, minute, weekday: compact.weekday, timezone: compact.timezone, days: every };
+  const days = { ...compact.date ? { startDate: compact.date } : {}, ...compact.until && compact.frequency !== "once" ? { endDate: compact.until } : {} };
+  const base = { hour, minute, weekday: compact.weekday, timezone: compact.timezone, ...days };
+  if (compact.frequency === "once" || compact.frequency === "monthly" || compact.frequency === "weekly") return { frequency: compact.frequency, ...base };
+  if (compact.frequency === "hourly") return { frequency: "hourly", intervalHours: 1, startHour: hour, days: every, ...base };
+  return { frequency: "daily", days: every, ...base };
 }
 
 async function mustSeeProject(session: AuthSession, projectId: string): Promise<string> {

@@ -438,3 +438,55 @@ console.log(JSON.stringify({ type: "result", is_error: false }));
   assert.equal(await page.locator("#messages .empty-state").count(), 0, "the report replaces the working row, not an empty state");
   assert.deepEqual(errors, []);
 });
+
+test("a scheduled task runs once on a date, or every month on a date from a first day until a last one, like a calendar meeting", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.locator('#loginDialog[open]').waitFor();
+  await page.locator("#loginUsernameInput").fill(environment.username);
+  await page.locator("#loginPasswordInput").fill(environment.password);
+  await page.locator("#loginSubmitButton").click();
+  await page.waitForFunction(() => document.querySelectorAll("#projectList .list-row").length === 3);
+  await page.locator('[aria-label="Actions for Internal Assistant"]').click();
+  await page.locator('[data-testid="project-cron-button"]').click();
+  await page.waitForFunction(() => document.querySelector("#cronDialog").open && document.querySelector("#cronForm").elements.ownerNodeId.options.length > 0);
+  const form = <T>(script: string) => page.evaluate(`(() => { const form = document.querySelector("#cronForm"), f = form.elements; ${script} })()`) as Promise<T>;
+  const shown = (selector: string) => page.evaluate((query) => !(document.querySelector(query) as HTMLElement).hidden, selector);
+  const choose = (frequency: string) => form(`f.frequency.value = "${frequency}"; f.frequency.dispatchEvent(new Event("change", { bubbles: true }));`);
+
+  // Once: the day it runs on, starting from today; no last day, days of the week or quiet hours.
+  await page.locator("#cronNew").click();
+  await form(`f.name.value = "Quarterly review"; f.prompt.value = "Write the quarterly review";`);
+  await choose("once");
+  assert.equal(await page.locator("#cronStartDateText").textContent(), "On");
+  assert.equal(await shown("#cronStartDateLabel"), true);
+  assert.equal(await shown("#cronEndDateLabel"), false, "a one-time task has no last day");
+  assert.equal(await shown("#cronDays"), false);
+  assert.match(await form<string>("return f.startDate.value;"), /^\d{4}-\d{2}-\d{2}$/, "it starts from today");
+  await form(`f.startDate.value = "2099-03-14"; f.time.value = "08:05";`);
+  // Save waits for the machine's models to load.
+  await page.getByTestId("cron-save").click();
+  const once = page.getByTestId("cron-task").filter({ hasText: "Quarterly review" });
+  await once.waitFor();
+  assert.match(await once.innerText(), /Once, on 2099-03-14/);
+  assert.match(await once.innerText(), /08:05/);
+
+  // Monthly: on the first day's date each month, until the last day.
+  await page.locator("#cronNew").click();
+  await form(`f.name.value = "Rent reminder"; f.prompt.value = "Remind me to pay the rent";`);
+  await choose("monthly");
+  assert.equal(await page.locator("#cronStartDateText").textContent(), "From (repeats on this date)");
+  assert.equal(await shown("#cronEndDateLabel"), true);
+  await form(`f.startDate.value = "2099-01-22"; f.endDate.value = "2099-06-30"; f.time.value = "09:30";`);
+  await page.getByTestId("cron-save").click();
+  const monthly = page.getByTestId("cron-task").filter({ hasText: "Rent reminder" });
+  await monthly.waitFor();
+  const listed = await monthly.innerText();
+  assert.match(listed, /Monthly, on day 22/);
+  assert.match(listed, /From\s+2099-01-22/i);
+  assert.match(listed, /Until\s+2099-06-30/i);
+  assert.doesNotMatch(listed, /Run on days|Quiet hours/i, "a dated run has no days of the week or quiet hours");
+  // Edit brings the dates back.
+  await monthly.getByTestId("cron-edit").click();
+  assert.deepEqual(await form("return [f.frequency.value, f.startDate.value, f.endDate.value, document.querySelector('#cronEndDateLabel').hidden];"), ["monthly", "2099-01-22", "2099-06-30", false]);
+});

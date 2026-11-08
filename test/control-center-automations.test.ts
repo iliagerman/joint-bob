@@ -40,6 +40,11 @@ test("a schedule reads the way the table shows it", () => {
   assert.equal(describeSchedule({ ...base, frequency: "hourly", intervalHours: 3 }), "Every 3 hours at :05");
   assert.equal(describeSchedule({ ...base, frequency: "minutely", intervalMinutes: 15 }), "Every 15 minutes");
   assert.equal(describeSchedule({ ...base, frequency: "minutely", intervalMinutes: 1 }), "Every minute");
+  // Like a meeting in a calendar.
+  assert.equal(describeSchedule({ ...base, frequency: "once", startDate: "2026-11-12" }), "Once 2026-11-12 08:05");
+  assert.equal(describeSchedule({ ...base, frequency: "monthly", startDate: "2026-11-22" }), "Monthly on the 22nd 08:05");
+  assert.equal(describeSchedule({ ...base, frequency: "monthly", startDate: "2026-11-11", endDate: "2027-03-11" }), "Monthly on the 11th 08:05 · until 2027-03-11");
+  assert.equal(describeSchedule({ ...base, frequency: "daily", startDate: "2026-11-12", endDate: "2026-11-30" }), "Daily 08:05 · from 2026-11-12 · until 2026-11-30");
 });
 
 test("only schedules the compact editor can rewrite without loss are editable there", () => {
@@ -58,7 +63,7 @@ test("a scheduled task becomes a row with its last result, and is the creator's 
   const never = scheduleRow(task(), context);
   assert.deepEqual([never.kind, never.name, never.projectName, never.nodeName, never.when, never.last.state, never.editable], ["schedule", "Nightly release check", "Joint Bob", "Homeserver", "Daily 02:00", "never", true]);
   assert.equal(never.detail, "Run the release gate, report only", "the second line is one line");
-  assert.deepEqual(never.edit, { kind: "schedule", prompt: "Run the release gate,\n  report only", frequency: "daily", time: "02:00", weekday: 1, timezone: "UTC", simple: true });
+  assert.deepEqual(never.edit, { kind: "schedule", prompt: "Run the release gate,\n  report only", frequency: "daily", time: "02:00", weekday: 1, timezone: "UTC", date: null, until: null, simple: true });
 
   const run = { id: "r", taskId: "t1", dueAt: Date.UTC(2026, 10, 5, 2), sessionId: "s", tags: [] };
   assert.deepEqual(scheduleRow(task({ lastRun: { ...run, status: "succeeded", error: null, finishedAt: Date.UTC(2026, 10, 5, 2, 3) } }), context).last, { state: "ok", at: "2026-11-05T02:03:00.000Z", detail: null });

@@ -37,7 +37,12 @@ export interface AutomationRow {
 }
 
 export type AutomationEdit =
-  | { kind: "schedule"; prompt: string; frequency: "hourly" | "daily" | "weekly"; time: string; weekday: number; timezone: string; /** False for a schedule the compact editor cannot express (every few minutes, quiet hours). */ simple: boolean }
+  | {
+    kind: "schedule"; prompt: string; frequency: "once" | "hourly" | "daily" | "weekly" | "monthly"; time: string; weekday: number; timezone: string;
+    /** The day it runs (once), repeats on (monthly) or starts on, and the last day it may run. */
+    date: string | null; until: string | null;
+    /** False for a schedule the compact editor cannot express (every few minutes, quiet hours). */ simple: boolean;
+  }
   | { kind: "webhook"; context: string }
   | { kind: "bob"; report: "morning" | "evening"; time: string; timezone: string };
 
@@ -52,9 +57,20 @@ function daysText(days: number[] | undefined): string {
   return ` · ${[...days].sort((a, b) => a - b).map((day) => DAY_NAMES[day]).join(", ")}`;
 }
 
-/** "Daily 08:00", "Mon 08:00", "Every hour at :15", "Every 15 minutes". */
+const ordinal = (day: number): string => `${day}${day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th"}`;
+
+/** "Once 2026-11-12 14:30", "Daily 08:00 · from 2026-11-12 · until 2026-12-31", "Monthly on the 15th 09:00", "Mon 08:00". */
 export function describeSchedule(schedule: CronInput["schedule"]): string {
+  if (schedule.frequency === "once") return `Once ${schedule.startDate} ${clock(schedule.hour, schedule.minute)}`;
+  const from = schedule.startDate && schedule.frequency !== "monthly" ? ` · from ${schedule.startDate}` : "";
+  const until = schedule.endDate ? ` · until ${schedule.endDate}` : "";
+  return `${repeatText(schedule)}${from}${until}`;
+}
+
+function repeatText(schedule: CronInput["schedule"]): string {
   switch (schedule.frequency) {
+    case "once": return "Once";
+    case "monthly": return `Monthly on the ${ordinal(Number(schedule.startDate!.slice(8)))} ${clock(schedule.hour, schedule.minute)}`;
     case "minutely": return `${schedule.intervalMinutes === 1 ? "Every minute" : `Every ${schedule.intervalMinutes} minutes`}${daysText(schedule.days)}`;
     case "hourly": {
       const every = schedule.intervalHours ?? 1;
@@ -95,8 +111,9 @@ export function scheduleRow(task: CronTask, context: RowContext): AutomationRow 
     nodeId: task.ownerNodeId, nodeName: context.nodeName(task.ownerNodeId), when: describeSchedule(task.schedule), last: lastOfTask(task),
     editable: !task.creatorAccountId || task.creatorAccountId === context.accountId,
     edit: {
-      kind: "schedule", prompt: task.prompt, frequency: task.schedule.frequency === "weekly" || task.schedule.frequency === "hourly" ? task.schedule.frequency : "daily",
-      time: clock(task.schedule.startHour ?? task.schedule.hour, task.schedule.minute), weekday: task.schedule.weekday, timezone: task.schedule.timezone, simple: isSimpleSchedule(task.schedule),
+      kind: "schedule", prompt: task.prompt, frequency: task.schedule.frequency === "minutely" ? "daily" : task.schedule.frequency,
+      time: clock(task.schedule.startHour ?? task.schedule.hour, task.schedule.minute), weekday: task.schedule.weekday, timezone: task.schedule.timezone,
+      date: task.schedule.startDate ?? null, until: task.schedule.endDate ?? null, simple: isSimpleSchedule(task.schedule),
     },
   };
 }

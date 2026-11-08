@@ -108,8 +108,20 @@ test("the automations list, toggle, edit and delete run through the existing sch
     assert.deepEqual(afterEdits.map((row) => [row.name, row.when]), [["Evening report", "Daily 20:15 · Bob's chat"], ["Weekly release check", "Mon 08:30"], ["GitHub PRs", "Starts a conversation · anyone with the address"]]);
     assert.deepEqual(afterEdits[0].projectIds, [project.id], "a report for chosen projects is tied to them");
 
+    // A task can run once on a day, or repeat from a first day until a last one, as a meeting in a calendar does.
+    const once = await api<{ task: CronTask }>(node, auth, "POST", `${BASE}/schedule`, { projectId: project.id, name: "Launch check", prompt: "Check the launch", schedule: { frequency: "once", time: "14:30", date: "2099-11-12", timezone: "UTC" } });
+    assert.equal(once.status, 201, JSON.stringify(once.body));
+    assert.deepEqual([once.body.task.schedule.frequency, once.body.task.schedule.startDate, once.body.task.nextRun], ["once", "2099-11-12", Date.parse("2099-11-12T14:30:00Z")]);
+    const monthly = await api<{ task: CronTask }>(node, auth, "PUT", `${BASE}/schedule/${once.body.task.id}`, { schedule: { frequency: "monthly", time: "09:00", date: "2099-11-15", until: "2100-02-15", timezone: "UTC" } });
+    assert.equal(monthly.status, 200, JSON.stringify(monthly.body));
+    const row = (await list()).rows.find((entry) => entry.id === once.body.task.id)!;
+    assert.equal(row.when, "Monthly on the 15th 09:00 · until 2100-02-15");
+    assert.deepEqual([row.edit.kind === "schedule" && row.edit.date, row.edit.kind === "schedule" && row.edit.until], ["2099-11-15", "2100-02-15"], "the quick editor starts from its days");
+    assert.equal((await api(node, auth, "DELETE", `${BASE}/schedule/${once.body.task.id}`)).status, 200);
+
     // Everything is checked at the boundary.
     for (const [method, url, body, status] of [
+      ["POST", `${BASE}/schedule`, { projectId: project.id, name: "x", prompt: "y", schedule: { frequency: "once", time: "09:00", timezone: "UTC" } }, 400],
       ["PUT", `${BASE}/gadget/${schedule.id}/enabled`, { enabled: true }, 400],
       ["PUT", `${BASE}/schedule/${schedule.id}/enabled`, { enabled: "yes" }, 400],
       ["PUT", `${BASE}/schedule/${schedule.id}/enabled`, { enabled: true, extra: 1 }, 400],
@@ -229,6 +241,17 @@ test("Bob lists, pauses and resumes at once, and asks before he changes, deletes
     assert.equal((await list()).length, 1);
     await api(node, auth, "POST", "/control-center/bob/action", { messageId: createTask.id, actionId: "automations.create" });
     assert.deepEqual((await list()).map((row) => [row.kind, row.name, row.when]), [["bob", "Morning report", "Daily 07:15 · Bob's chat"], ["schedule", "Log check", "Daily 07:00"]]);
+
+    // A one-time task, or one that repeats from a day until another, as a meeting in a calendar does.
+    const createOnce = await say(node, auth, directory, "add a scheduled task on November 12th 2099 at 2:30pm to check the launch", { intent: "create", create: { kind: "schedule", projectId: project.id, name: "Launch check", prompt: "Check the launch", frequency: "once", time: "14:30", date: "2099-11-12" } });
+    assert.match(createOnce.text, /run an agent once, on 2099-11-12 at 14:30/);
+    const createMonthly = await say(node, auth, directory, "add a scheduled task every month on the 15th at 9 until February to send the invoices", { intent: "create", create: { kind: "schedule", projectId: project.id, name: "Invoices", prompt: "Send the invoices", frequency: "monthly", time: "09:00", date: "2099-11-15", until: "2100-02-15" } });
+    assert.match(createMonthly.text, /run an agent every month on day 15 at 09:00, from 2099-11-15 until 2100-02-15/);
+    await api(node, auth, "POST", "/control-center/bob/action", { messageId: createOnce.id, actionId: "automations.create" });
+    const launch = (await list()).find((row) => row.name === "Launch check");
+    assert.equal(launch?.when, "Once 2099-11-12 14:30", "made once pressed");
+    assert.equal((await api(node, auth, "DELETE", `${BASE}/schedule/${launch!.id}`)).status, 200);
+    await api(node, auth, "POST", "/control-center/bob/action", { messageId: createMonthly.id, actionId: "automations.cancel" });
 
     const createReport = await say(node, auth, directory, "also send me an evening report at 7pm", { intent: "create", create: { kind: "report", report: "evening" } });
     assert.match(createReport.text, /Create the evening report\? .* every day at 19:00/);

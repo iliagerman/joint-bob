@@ -262,3 +262,41 @@ test("owner migration keeps task identity and settled history and refuses active
     assert.equal(destination.claim(task.id, moved.ownerNodeId, task.nextRun + 86400000), null);
   } finally { a.close(); b.close(); }
 });
+
+test("like a meeting in a calendar: once on a day, monthly on a date, from a first day until a last one", async () => {
+  const { nextCronRun, NO_MORE_RUNS, cronInputSchema, CronStore } = await import("../src/cron.js");
+  const base = { ...input().schedule, hour: 14, minute: 30, timezone: "Asia/Jerusalem" };
+  const once = { ...base, frequency: "once" as const, startDate: "2026-11-12" };
+  // 14:30 in Jerusalem (UTC+2 in November) is 12:30 UTC.
+  assert.equal(nextCronRun(once, Date.parse("2026-11-08T09:00:00Z")), Date.parse("2026-11-12T12:30:00Z"));
+  assert.equal(nextCronRun(once, Date.parse("2026-11-12T12:30:00Z")), NO_MORE_RUNS, "it has run");
+  // Monthly on the 31st skips months without one, as a calendar does.
+  const monthly = { ...base, frequency: "monthly" as const, startDate: "2026-10-31", timezone: "UTC" };
+  assert.equal(nextCronRun(monthly, Date.parse("2026-10-01T00:00:00Z")), Date.parse("2026-10-31T14:30:00Z"));
+  assert.equal(nextCronRun(monthly, Date.parse("2026-10-31T14:30:00Z")), Date.parse("2026-12-31T14:30:00Z"));
+  assert.equal(nextCronRun({ ...monthly, startDate: "2026-01-15" }, Date.parse("2028-03-20T00:00:00Z")), Date.parse("2028-04-15T14:30:00Z"), "years later");
+  // A first day holds a repeating task back; a last day ends it.
+  const daily = { ...base, frequency: "daily" as const, timezone: "UTC", startDate: "2026-11-20", endDate: "2026-11-21" };
+  assert.equal(nextCronRun(daily, Date.parse("2026-11-08T09:00:00Z")), Date.parse("2026-11-20T14:30:00Z"));
+  assert.equal(nextCronRun(daily, Date.parse("2026-11-20T14:30:00Z")), Date.parse("2026-11-21T14:30:00Z"));
+  assert.equal(nextCronRun(daily, Date.parse("2026-11-21T14:30:00Z")), NO_MORE_RUNS, "past its last day");
+  assert.equal(nextCronRun({ ...daily, hour: 0, minute: 0 }, Date.parse("2026-11-08T09:00:00Z")), Date.parse("2026-11-20T00:00:00Z"), "midnight on the first day counts");
+  assert.equal(nextCronRun({ ...base, frequency: "weekly" as const, weekday: 1, timezone: "UTC", startDate: "2026-12-01" }, Date.parse("2026-11-08T09:00:00Z")), Date.parse("2026-12-07T14:30:00Z"), "the first Monday on or after its first day");
+  // What the form must say.
+  const valid = (schedule: Record<string, unknown>) => cronInputSchema.safeParse({ ...input(), schedule: { ...base, ...schedule } }).success;
+  assert.equal(valid({ frequency: "once", startDate: "2026-11-12" }), true);
+  assert.equal(valid({ frequency: "once" }), false, "a one-time task needs its day");
+  assert.equal(valid({ frequency: "monthly" }), false, "a monthly one needs its date");
+  assert.equal(valid({ frequency: "once", startDate: "2026-11-12", endDate: "2026-11-13" }), false, "a one-time task has no last day");
+  assert.equal(valid({ frequency: "daily", startDate: "2026-11-12", endDate: "2026-11-11" }), false, "the last day is not before the first");
+  assert.equal(valid({ frequency: "daily", startDate: "2026-02-30" }), false, "not a calendar date");
+  // A one-time task runs once and is then left with no run.
+  const db = new DatabaseSync(":memory:");
+  try {
+    const store = new CronStore(db);
+    const task = store.create({ ...input(), schedule: once }, Date.parse("2026-11-08T09:00:00Z"));
+    assert.equal(task.nextRun, Date.parse("2026-11-12T12:30:00Z"));
+    assert.ok(store.claim(task.id, task.ownerNodeId, task.nextRun));
+    assert.equal(store.get(task.id)?.nextRun, NO_MORE_RUNS);
+  } finally { db.close(); }
+});

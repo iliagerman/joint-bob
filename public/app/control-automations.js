@@ -291,16 +291,28 @@ function openForm(kind, row) {
     controls.prompt.required = true;
     body.append(field("What should the agent do each time?", controls.prompt, "automation-form-prompt", true));
     const simple = !editing || row.edit.simple;
-    controls.frequency = select([["hourly", "Every hour"], ["daily", "Every day"], ["weekly", "Every week"]], row?.edit.frequency ?? "daily");
+    // Like a meeting in a calendar: once on a day, or repeating from a first day until an optional last one.
+    controls.frequency = select([["once", "Once"], ["hourly", "Every hour"], ["daily", "Every day"], ["weekly", "Every week"], ["monthly", "Every month"]], row?.edit.frequency ?? "daily");
     controls.weekday = select(WEEKDAYS.map((day, index) => [String(index), day]), String(row?.edit.weekday ?? 1));
     controls.time = input("time", row?.edit.time ?? "09:00", { required: true });
+    controls.date = input("date", row?.edit.date ?? "");
+    controls.until = input("date", row?.edit.until ?? "");
     const weekdayLabel = field("On", controls.weekday, "automation-form-weekday");
-    const syncWeekday = () => { weekdayLabel.hidden = controls.frequency.value !== "weekly"; };
-    controls.frequency.addEventListener("change", syncWeekday);
-    syncWeekday();
-    body.append(field("Repeat", controls.frequency, "automation-form-frequency"), weekdayLabel, field("At", controls.time, "automation-form-time"));
+    const dateLabel = field("Date", controls.date, "automation-form-date");
+    const untilLabel = field("Until (optional)", controls.until, "automation-form-until");
+    const syncFrequency = () => {
+      const frequency = controls.frequency.value;
+      weekdayLabel.hidden = frequency !== "weekly";
+      untilLabel.hidden = frequency === "once";
+      controls.date.required = frequency === "once" || frequency === "monthly";
+      dateLabel.firstChild.textContent = { once: "On", monthly: "From (repeats on this date each month)" }[frequency] ?? "From (optional)";
+      if (controls.date.required && !controls.date.value) controls.date.value = today();
+    };
+    controls.frequency.addEventListener("change", syncFrequency);
+    syncFrequency();
+    body.append(field("Repeat", controls.frequency, "automation-form-frequency"), weekdayLabel, dateLabel, field("At", controls.time, "automation-form-time"), untilLabel);
     if (!simple) {
-      for (const control of [controls.frequency, controls.weekday, controls.time]) control.disabled = true;
+      for (const control of [controls.frequency, controls.weekday, controls.time, controls.date, controls.until]) control.disabled = true;
       body.append(makeNode("p", "automations-hint full", "This schedule has options the quick editor cannot show (every few minutes, quiet hours or chosen days). Change it with More options."));
     } else body.append(makeNode("p", "automations-hint full", `Times are in ${zone}. Hourly tasks use the minutes of the time.`));
     controls.simple = simple;
@@ -354,11 +366,21 @@ function openForm(kind, row) {
   controls.name.focus();
 }
 
+/** Today on this device's calendar, as a date field takes it. */
+function today() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 async function submit(kind, row, controls, zone) {
   const enabled = controls.enabled.checked;
   const json = (value) => JSON.stringify(value);
   if (kind === "schedule") {
-    const schedule = { frequency: controls.frequency.value, time: controls.time.value, weekday: Number(controls.weekday.value), timezone: zone };
+    const once = controls.frequency.value === "once";
+    const schedule = {
+      frequency: controls.frequency.value, time: controls.time.value, weekday: Number(controls.weekday.value), timezone: zone,
+      date: controls.date.value || null, until: once ? null : controls.until.value || null,
+    };
     if (row) await api(`${BASE}/schedule/${row.id}`, { method: "PUT", body: json({ name: controls.name.value, prompt: controls.prompt.value, enabled, ...(controls.simple ? { schedule } : {}) }) });
     else await api(`${BASE}/schedule`, { method: "POST", body: json({ projectId: controls.project.value, name: controls.name.value, prompt: controls.prompt.value, schedule, enabled }) });
   } else if (kind === "webhook") {

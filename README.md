@@ -381,7 +381,7 @@ Notes follow the same project-sharing permissions as conversations, including tw
 
 ## Scheduled tasks
 
-Open **Scheduled tasks** from a project menu, conversation row menu, or the conversation's More menu. Choose a name, prompt, hourly/daily/weekly schedule, timezone, and execution node. Project tasks choose Pi, Claude, or Kiro and create a fresh conversation each run with that agent's normal project settings and inherited workspace/project credentials. Conversation tasks queue the prompt in the existing conversation, retaining its settings and credentials.
+Open **Scheduled tasks** from a project menu, conversation row menu, or the conversation's More menu. Choose a name, prompt, schedule, timezone, and execution node. A schedule works like a meeting in a calendar: **Once** on a date and time, or repeating every few minutes, hourly, daily, weekly or monthly (on the first day's date), from an optional first day **Until** an optional last day. A one-time task, or one past its last day, shows that it has no run left. Project tasks choose Pi, Claude, or Kiro and create a fresh conversation each run with that agent's normal project settings and inherited workspace/project credentials. Conversation tasks queue the prompt in the existing conversation, retaining its settings and credentials.
 
 Only the execution owner stores and dispatches the schedule. Management requests route there; changing owner pauses the source before moving the task and its recent history. Conversation ownership transfers through the normal ownership protocol after active work finishes. Transfer requires reachable peers and a conversation available on the destination. Ticket conversations must use the ticket ownership workflow instead.
 
