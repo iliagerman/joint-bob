@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.238.2 — 2026-11-08
+
+- Settings shows the **Background agent** choice again. 2.238.0 removed it from the page by mistake, along with the checks that rely on it.
+
 ## 2.238.1 — 2026-11-08
 
 - A release pushed from your homeserver is now deployed to both machines when an earlier deployment from the Mac is still waiting for a busy machine. Before, that deployment stopped and both machines stayed on the old release until the next push from the Mac.
