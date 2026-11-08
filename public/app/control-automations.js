@@ -56,7 +56,7 @@ const headButtons = makeNode("div", "automations-head-buttons");
 const newWebhook = makeButton("+ Webhook", "automations-new-webhook", () => openForm("webhook", null));
 const newSchedule = makeButton("+ Scheduled task", "automations-new-schedule", () => openForm("schedule", null), "primary compact");
 const newBob = makeButton("+ Bob report", "automations-new-bob", () => openForm("bob", null));
-const refresh = makeButton("Refresh", "automations-refresh", () => load().catch((error) => toast(error.message)));
+const refresh = makeButton("Refresh", "automations-refresh", () => load().catch((error) => toast.error(error.message)));
 headButtons.append(refresh, newBob, newWebhook, newSchedule);
 head.append(heading, headButtons);
 
@@ -148,11 +148,11 @@ function renderRow(row) {
 
 async function change(button, work) {
   button.disabled = true;
-  try { await work(); await load(); } catch (error) { toast(error.message); button.disabled = false; }
+  try { await work(); await load(); } catch (error) { toast.error(error.message); button.disabled = false; }
 }
 
 async function remove(row) {
-  try { await api(`${BASE}/${row.kind}/${row.id}`, { method: "DELETE" }); await load(); } catch (error) { toast(error.message); }
+  try { await api(`${BASE}/${row.kind}/${row.id}`, { method: "DELETE" }); await load(); } catch (error) { toast.error(error.message); }
 }
 
 async function sendNow(button, row) {
@@ -161,7 +161,7 @@ async function sendNow(button, row) {
     await api(`${BASE}/bob/${row.id}/send`, { method: "POST", body: "{}" });
     toast(`${row.name} is in Bob's chat`);
     await load();
-  } catch (error) { toast(error.message); } finally { button.disabled = false; }
+  } catch (error) { toast.error(error.message); } finally { button.disabled = false; }
 }
 
 function renderFilters() {
@@ -405,7 +405,7 @@ async function submit(kind, row, controls, zone) {
 function openFull(kind, row) {
   closeForm();
   const done = kind === "schedule" ? openScheduledTasks(row.projectId) : openProjectWebhooks({ id: row.projectId, name: row.projectName });
-  Promise.resolve(done).catch((error) => toast(error.message));
+  Promise.resolve(done).catch((error) => toast.error(error.message));
 }
 
 // ── The tab ───────────────────────────────────────────────────────────────────────────────────────────
@@ -414,7 +414,7 @@ const handle = registerControlView({
   id: "automations", title: "Automations", order: 10, element: root,
   onShow() {
     closeForm();
-    load().catch((error) => toast(error.message));
+    load().catch((error) => toast.error(error.message));
   },
 });
 

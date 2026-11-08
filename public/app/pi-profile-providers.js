@@ -12,7 +12,7 @@ function button(text, testid, work) {
   const node = element("button", testid, text); node.type = "button"; node.className = "ghost profile-action";
   node.addEventListener("click", async () => {
     node.disabled = true;
-    try { await work(); } catch (error) { toast(error.message); } finally { node.disabled = false; }
+    try { await work(); } catch (error) { toast.error(error.message); } finally { node.disabled = false; }
   });
   return node;
 }
@@ -71,6 +71,6 @@ export function createPiProfileProviderEditor(profile, loginBox, showLogin, chan
     form.hidden = signingIn();
     content.replaceChildren(list, form);
   }
-  details.addEventListener("toggle", () => { if (details.open) void refresh().catch((error) => toast(error.message)); });
+  details.addEventListener("toggle", () => { if (details.open) void refresh().catch((error) => toast.error(error.message)); });
   return { root, refresh };
 }

@@ -64,7 +64,7 @@ modelPicker.onChange(key => {
   const sent = key === BOB_AUTO.value
     ? sendSocket({ type: "setModel", modelId: "bob-auto" })
     : sendSocket({ type: "setModel", ...modelIdentity(key) });
-  if (!sent) toast("Not connected");
+  if (!sent) toast.error("Not connected");
 });
 
 function currentView() {
@@ -169,7 +169,7 @@ function dashboardAction(target) {
   button.dataset.testid = "focus-dashboard";
   button.addEventListener("click", () => {
     showMenu(false);
-    openDashboardMode(target()).catch((error) => toast(error.message));
+    openDashboardMode(target()).catch((error) => toast.error(error.message));
   });
   context.append(button);
 }
@@ -279,20 +279,20 @@ function toggleFab() {
   if (!hide) resize();
 }
 export function initializeFocusUi({ openSettings, startConversation, createNote, inspectReviews, inspectRunning }) {
-  const settings = () => { showMenu(false); openSettings().catch(error => toast(error.message)); };
-  const start = () => { showMenu(false); startConversation().catch(error => toast(error.message)); };
+  const settings = () => { showMenu(false); openSettings().catch(error => toast.error(error.message)); };
+  const start = () => { showMenu(false); startConversation().catch(error => toast.error(error.message)); };
   document.querySelector("#focusSettings").onclick = settings;
   document.querySelector("#focusNewConversation").onclick = start;
   document.querySelector("#conversationSearchCreateButton").onclick = start;
   decorateControls();
   actionButtons.focusMarkDone.onclick = () => { showMenu(false); elements.chatDoneButton.click(); };
-  actionButtons.focusAddSecret.onclick = () => { showMenu(false); openConversationSecretPicker().catch(error => toast(error.message)); };
+  actionButtons.focusAddSecret.onclick = () => { showMenu(false); openConversationSecretPicker().catch(error => toast.error(error.message)); };
   actionButtons.focusAutoRespond.onclick = () => { showMenu(false); elements.autoRespondButton.click(); };
   actionButtons.focusActivity.onclick = () => { showMenu(false); elements.activityToggleButton.click(); };
   actionButtons.focusTools.onclick = (event) => { event.stopPropagation(); syncMenuLayout("tools"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusBack").onclick = backToControls;
   for (const [id, action] of [["focusNewNote", createNote], ["focusRecents", openRecentSessions], ["focusReviews", inspectReviews], ["focusRunning", inspectRunning]]) {
-    document.getElementById(id).onclick = () => { showMenu(false); Promise.resolve().then(action).catch(error => toast(error.message)); };
+    document.getElementById(id).onclick = () => { showMenu(false); Promise.resolve().then(action).catch(error => toast.error(error.message)); };
   }
   document.querySelector("#focusProjects").onclick = () => setMobileView("projects");
   controlCenterTile.onclick = () => { showMenu(false); setMobileView("control"); };

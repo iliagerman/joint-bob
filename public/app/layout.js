@@ -104,7 +104,7 @@ export function setMobileView(view, updateHistory = true) {
   ]) {
     navButton.classList.toggle("active", name === view);
   }
-  if (view === "control") activateControlCenter().catch((error) => toast(error.message, 8000));
+  if (view === "control") activateControlCenter().catch((error) => toast.error(error.message));
   if (updateHistory) recordView(view);
   window.dispatchEvent(new CustomEvent("app-view-changed"));
 }

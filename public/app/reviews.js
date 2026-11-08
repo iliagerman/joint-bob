@@ -31,7 +31,7 @@ function markSessionReviewed(session) {
   void changeSessionOptimistically(session, { patch: { reviewState: "reviewed" } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/reviewed`, {
     method: "PUT",
     body: JSON.stringify({ sessionPath: session.path, updatedAt: session.updatedAt }),
-  }), renderReviewCounts).catch((error) => toast(error.message)).finally(async () => {
+  }), renderReviewCounts).catch((error) => toast.error(error.message)).finally(async () => {
     pendingReviewsVersion += 1;
     refreshPendingReviews().catch((error) => console.warn("Could not refresh pending reviews", error));
     await refreshSessionsQuietly();
@@ -62,7 +62,7 @@ async function markAllSessionsReviewed() {
   // Every row shows reviewed at once and stays so through refreshes until the one request answers.
   const results = await Promise.allSettled(targets.map((session) => changeSessionOptimistically(session, { patch: { reviewState: "reviewed" } }, () => request, renderReviewCounts)));
   const failure = results.find((result) => result.status === "rejected");
-  if (failure) toast(failure.reason.message);
+  if (failure) toast.error(failure.reason.message);
   await refreshSessionsQuietly();
   renderReviewCounts();
 }
@@ -195,7 +195,7 @@ function renderPendingReviewsDialog() {
       const meta = document.createElement("span");
       meta.append(agentIcon(sessionAgentId(entry)), document.createTextNode(`${entry.agentLabel} · ${formatDate(entry.updatedAt)}`));
       button.append(title, meta);
-      button.addEventListener("click", () => openPendingReview(group, entry).catch((error) => toast(error.message)));
+      button.addEventListener("click", () => openPendingReview(group, entry).catch((error) => toast.error(error.message)));
       elements.pendingReviewsList.append(button);
     }
   }
@@ -248,7 +248,8 @@ async function markAllPendingReviewed() {
   renderReviewCounts();
   renderPendingReviewsDialog();
   const failure = results.find((result) => result.status === "rejected");
-  toast(failure ? failure.reason.message : "All conversations marked as read");
+  if (failure) toast.error(failure.reason.message);
+  else toast("All conversations marked as read");
 }
 
 export function openPendingReviews() {
@@ -267,7 +268,7 @@ function openPendingReviewsDialog() {
   // The badge may be up to a minute stale, and mark-all sends these exact watermarks.
   refreshPendingReviews()
     .then(renderPendingReviewsDialog)
-    .catch((error) => toast(error.message));
+    .catch((error) => toast.error(error.message));
 }
 
 export async function openListedSession(session) {
@@ -275,7 +276,7 @@ export async function openListedSession(session) {
   // it. A row tapped in that window threw here, so the tap did nothing at all.
   if (!state.harnesses.length) {
     try { await loadHarnesses(); }
-    catch (error) { toast(error.message, 8000); return; }
+    catch (error) { toast.error(error.message); return; }
   }
   const reviewHighlightAfter = session.reviewState === "needs_review" ? session.reviewedAt : null;
   markSessionReviewed(session);
@@ -286,7 +287,7 @@ export async function openListedSession(session) {
   const listedOwner = state.sessionNodes.find((node) => node.id === session.executionNodeId);
   if (session.executionNodeId && !listedOwner?.local) {
     try { await loadSessionNodes(projectId, session.executionNodeId); }
-    catch (error) { toast(error.message, 8000); }
+    catch (error) { toast.error(error.message); }
     if (state.activeProjectId !== projectId || state.activeSessionId !== session.id) return;
   }
   const owner = state.sessionNodes.find((node) => node.id === session.executionNodeId);
@@ -311,7 +312,7 @@ export async function openListedSession(session) {
     toast(result.pendingPeerIds?.length ? "Switched to this node; offline nodes will update when they return" : "Switched to this node");
   } catch (error) {
     if (state.activeProjectId === projectId && state.activeSessionId === session.id
-      && !await reconcileTranscriptConflict(error, { projectId, engine: session.harnessId, sessionId: session.id })) toast(error.message, 8000);
+      && !await reconcileTranscriptConflict(error, { projectId, engine: session.harnessId, sessionId: session.id })) toast.error(error.message);
   }
 }
 elements.markAllReviewedButton.addEventListener("click", () => { void markAllSessionsReviewed(); });
@@ -320,8 +321,8 @@ for (const trigger of document.querySelectorAll("[data-pending-reviews-open]")) 
   trigger.addEventListener("click", openPendingReviewsDialog);
 }
 elements.markAllPendingReviewedButton.addEventListener("click", () => {
-  markAllPendingReviewed().catch((error) => toast(error.message));
+  markAllPendingReviewed().catch((error) => toast.error(error.message));
 });
 elements.closePendingReviewsButton.addEventListener("click", () => elements.pendingReviewsDialog.close());
 /** A digit opens that row, exactly as it does in the recent conversations list. */
-attachDigitShortcuts(elements.pendingReviewsDialog, () => pendingReviewShortcuts, (row) => openPendingReview(row.group, row.entry).catch((error) => toast(error.message)));
+attachDigitShortcuts(elements.pendingReviewsDialog, () => pendingReviewShortcuts, (row) => openPendingReview(row.group, row.entry).catch((error) => toast.error(error.message)));

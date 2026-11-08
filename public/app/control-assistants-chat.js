@@ -223,13 +223,13 @@ async function send(event) {
     current.unsent = null;
   } catch (error) {
     parts.input.value = parts.input.value.trim() ? `${message}\n\n${parts.input.value}` : message;
-    toast(error.message, 6000);
+    toast.error(error.message);
   } finally {
     clearInterval(current.timer);
     current.pending = null;
     parts.send.disabled = false;
   }
-  if (open === current) await load().catch((error) => toast(error.message));
+  if (open === current) await load().catch((error) => toast.error(error.message));
 }
 
 parts.form.addEventListener("submit", (event) => { void send(event); });
@@ -238,7 +238,7 @@ parts.input.addEventListener("keydown", (event) => {
 });
 parts.toggle.addEventListener("click", () => {
   const { card: assistant, handlers } = open;
-  handlers.setMayAsk(assistant, !assistant.askable).catch((error) => toast(error.message, 6000));
+  handlers.setMayAsk(assistant, !assistant.askable).catch((error) => toast.error(error.message));
 });
 
 function renderComposer() {

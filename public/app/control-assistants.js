@@ -32,7 +32,7 @@ function button(label, testid, onClick, className = "ghost compact") {
   const node = el("button", className, label);
   node.type = "button";
   node.dataset.testid = testid;
-  node.addEventListener("click", () => Promise.resolve(onClick()).catch((error) => toast(error.message)));
+  node.addEventListener("click", () => Promise.resolve(onClick()).catch((error) => toast.error(error.message)));
   return node;
 }
 
@@ -101,7 +101,7 @@ function renderCard(card) {
   toggle.dataset.testid = "control-assistant-switch";
   toggle.addEventListener("click", (event) => {
     event.stopPropagation();
-    setMayAsk(card, !card.askable).catch((error) => toast(error.message, 6000));
+    setMayAsk(card, !card.askable).catch((error) => toast.error(error.message));
   });
   head.append(el("span", "control-asst-face", card.name.trim().slice(0, 1).toUpperCase() || "?"), name, el("span", "control-spacer"), toggle);
 
@@ -117,7 +117,7 @@ function renderCard(card) {
   line.title = last.text;
   node.append(head, has, line);
 
-  const open = () => openAssistantChat(card, handlers).catch((error) => toast(error.message, 6000));
+  const open = () => openAssistantChat(card, handlers).catch((error) => toast.error(error.message));
   node.addEventListener("click", open);
   node.addEventListener("keydown", (event) => {
     if (event.target === node && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); open(); }
@@ -183,7 +183,7 @@ manage.rel = "noopener";
 manage.dataset.testid = "control-assistants-manage";
 heading.append(intro, manage);
 root.append(heading, tabList, tabPager);
-const tab = registerControlView({ id: "assistants", title: "Assistants", order: 50, element: root, onShow: () => { void load().catch((error) => toast(error.message)); } });
+const tab = registerControlView({ id: "assistants", title: "Assistants", order: 50, element: root, onShow: () => { void load().catch((error) => toast.error(error.message)); } });
 const tabSurface = makeSurface(tabList, tabPager, { single: false });
 
 // The column.

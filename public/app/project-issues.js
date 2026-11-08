@@ -282,7 +282,7 @@ async function openIssue(listed) {
       button.type = "button";
       button.disabled = !loaded;
       button.dataset.testid = testid;
-      button.addEventListener("click", () => { startFromIssue(issue, comments, newWorktree).catch((error) => toast(error.message)); });
+      button.addEventListener("click", () => { startFromIssue(issue, comments, newWorktree).catch((error) => toast.error(error.message)); });
     }
     const edit = text("button", "ghost compact", "Edit issue");
     edit.type = "button";
@@ -332,7 +332,7 @@ async function openIssue(listed) {
     paint();
     status.textContent = `#${issue.number} · ${comments.length} comments loaded`;
   } catch (error) {
-    if (!signal.aborted) { status.textContent = ""; toast(`Could not load the issue thread: ${error.message}`); }
+    if (!signal.aborted) { status.textContent = ""; toast.error(`Could not load the issue thread: ${error.message}`); }
   }
 }
 

@@ -236,12 +236,12 @@ function headerActions(cluster) {
   if (cluster.managerNodeId === data.localNodeId && cluster.members.length > 1) {
     leave.disabled = true; leave.title = "You manage this cluster. Hand management to another member before leaving.";
   }
-  leave.addEventListener("click", () => leaveCluster().catch((error) => toast(error.message)));
+  leave.addEventListener("click", () => leaveCluster().catch((error) => toast.error(error.message)));
   actions.append(inviteButton, leave);
   if (cluster.originalNodeId === data.localNodeId && cluster.members.length > 1) {
     const close = text("button", "Delete cluster", "ghost compact danger"); close.type = "button";
     close.dataset.testid = "cluster-delete-button";
-    close.addEventListener("click", () => closeCluster().catch((error) => toast(error.message)));
+    close.addEventListener("click", () => closeCluster().catch((error) => toast.error(error.message)));
     actions.append(close);
   }
   return actions;
@@ -309,7 +309,7 @@ function renderNodeView(nodeId) {
       const control = text("button", label, className); control.type = "button"; control.dataset.testid = testid;
       control.addEventListener("click", async () => {
         control.disabled = true;
-        try { await action(relationship, name, onTwinChange); } catch (error) { toast(error.message); } finally { control.disabled = false; }
+        try { await action(relationship, name, onTwinChange); } catch (error) { toast.error(error.message); } finally { control.disabled = false; }
       });
       actions.append(control);
     }
@@ -403,7 +403,7 @@ export async function loadClusterPanel(preferredClusterId = selectedClusterId, {
     ]);
     if (requestId !== panelRequestId) return;
     twins.localNodeId = node.id;
-    try { twinSignature = await refreshTwins(); } catch (error) { toast(`Could not load twins: ${error.message}`); }
+    try { twinSignature = await refreshTwins(); } catch (error) { toast.error(`Could not load twins: ${error.message}`); }
     if (requestId !== panelRequestId) return;
     data = { clusters: clusterData.clusters, projects: projectData.projects, localNodeId: node.id, localNode: { name: node.name, url: node.url } };
     const nextClusterId = data.clusters.some((cluster) => cluster.id === preferredClusterId) ? preferredClusterId : data.clusters[0]?.id || null;
@@ -422,7 +422,7 @@ export async function loadClusterPanel(preferredClusterId = selectedClusterId, {
     content.inert = false;
     loading.hidden = true;
     refreshTwinInventory().then(() => { if (requestId === panelRequestId) render({ sharing: false }); })
-      .catch((error) => toast(error.message));
+      .catch((error) => toast.error(error.message));
     schedulePoll();
   } catch (error) {
     if (requestId !== panelRequestId) return;
@@ -437,7 +437,7 @@ export async function loadClusterPanel(preferredClusterId = selectedClusterId, {
   }
 }
 
-retry.addEventListener("click", () => { void loadClusterPanel().catch((error) => toast(error.message)); });
+retry.addEventListener("click", () => { void loadClusterPanel().catch((error) => toast.error(error.message)); });
 
 /** Twin requests and sync state change on other machines, so they are polled while Settings is open. */
 function schedulePoll() {
@@ -536,7 +536,7 @@ async function leaveCluster() {
   toast(last ? "Cluster closed" : `Left ${cluster.name}`);
 }
 
-function mutation(button, action) { button.addEventListener("click", () => action().catch((error) => toast(error.message))); }
+function mutation(button, action) { button.addEventListener("click", () => action().catch((error) => toast.error(error.message))); }
 mutation(elements.clusterSaveButton, saveClusterNode); mutation(elements.clusterCreateButton, createCluster);
 mutation(elements.clusterGenerateInviteButton, generateInvitation); mutation(elements.clusterJoinButton, joinCluster);
 
@@ -574,7 +574,7 @@ search.addEventListener("keydown", (event) => {
 elements.clusterJoinLinkInput.addEventListener("input", () => { if (elements.clusterJoinLinkInput.value.trim() !== pendingJoin.link) pendingJoin = { link: "", requestId: "" }; });
 elements.copyClusterInviteButton.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(elements.clusterInviteLink.value); toast("One-time join link copied"); }
-  catch (error) { toast(error.message || "Could not copy join link"); }
+  catch (error) { toast.error(error.message || "Could not copy join link"); }
 });
 mapPager.addEventListener("click", (event) => {
   const step = Number(event.target.closest("[data-page-step]")?.dataset.pageStep || 0);

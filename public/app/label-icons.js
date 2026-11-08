@@ -38,7 +38,7 @@ async function renderHarnessOptions() {
       runnableHarnesses = harnessBody.harnesses.filter((harness) => harness.runtimeConfigured && harness.ready);
       models = modelBody.models;
     } catch (error) {
-      toast(error.message);
+      toast.error(error.message);
     }
   }
   harnessSelect.replaceChildren(new Option("Automatic (default agent)", ""), ...runnableHarnesses.map(harnessOption));
@@ -83,7 +83,7 @@ function row(label) {
       draft[label] = body.icon;
       input.value = body.icon;
     } catch (error) {
-      toast(error.message, 8000);
+      toast.error(error.message);
     } finally {
       generate.disabled = false;
       generate.textContent = "Generate";

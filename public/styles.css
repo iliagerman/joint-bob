@@ -2874,13 +2874,24 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .handoff-progress-card progress { width: 100%; accent-color: var(--accent); }
 #handoffProgressStatus { min-height: 2.8em; white-space: pre-line; }
 
-.toast {
+.toast-stack {
   position: fixed;
-  left: 50%;
-  top: calc(12px + env(safe-area-inset-top, 0px));
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: min(560px, calc(100vw - 32px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  width: min(420px, calc(100vw - 32px - env(safe-area-inset-right, 0px) - env(safe-area-inset-left, 0px)));
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  pointer-events: none;
+  z-index: 100;
+}
+.toast-stack:empty { display: none; }
+.toast {
+  flex: none;
+  width: 100%;
+  pointer-events: auto;
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -2896,7 +2907,14 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   text-align: left;
   z-index: 100;
 }
-.toast-message { min-width: 0; }
+.toast-error {
+  background: #b91c1c;
+  color: #fff;
+  border: 2px solid #f87171;
+  font-weight: 600;
+}
+.toast-error::before { content: "!"; font-size: 20px; font-weight: 800; line-height: 1; }
+.toast-message { min-width: 0; flex: 1; }
 .toast-close {
   flex: 0 0 auto;
   min-height: 0;

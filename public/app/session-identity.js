@@ -46,7 +46,7 @@ elements.conversationClassificationForm.addEventListener("submit", async (event)
     if (pendingClassification === target) elements.conversationClassificationDialog.close();
     toast("Conversation classification saved");
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   } finally {
     submit.disabled = false;
   }
@@ -188,7 +188,7 @@ elements.projectRenameForm.addEventListener("submit", async (event) => {
     elements.projectRenameDialog.close();
     toast("Project updated");
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   }
 });
 
@@ -207,7 +207,7 @@ elements.conversationColorForm.addEventListener("submit", async (event) => {
     void refreshSessionsQuietly();
     toast(color ? "Conversation colour saved" : "Conversation colour cleared");
   } catch (error) {
-    toast(`Could not save the colour: ${error.message}`, 8000);
+    toast.error(`Could not save the colour: ${error.message}`);
   }
 });
 elements.renameForm.addEventListener("submit", async (event) => {
@@ -218,6 +218,6 @@ elements.renameForm.addEventListener("submit", async (event) => {
     await renameSession(state.renameSessionId, state.renameSessionEngine, title);
     toast(title ? "Conversation renamed" : "Original title restored");
   } catch (error) {
-    toast(`Could not rename the conversation: ${error.message}`, 8000);
+    toast.error(`Could not rename the conversation: ${error.message}`);
   }
 });

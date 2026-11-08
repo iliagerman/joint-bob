@@ -63,7 +63,7 @@ export async function openBudgetDialog(target) {
     try {
       await api(`/api/budgets/limits?${query(target)}`, { method: "PUT", body: JSON.stringify({ limits: next, utcOffsetMinutes: -new Date().getTimezoneOffset() }) });
       box.close(); toast(next.length ? "Budget saved" : "Budget removed"); refreshBudgetNotice();
-    } catch (error) { toast(error.message); save.disabled = false; }
+    } catch (error) { toast.error(error.message); save.disabled = false; }
   });
   actions.append(save, close);
   box.replaceChildren(heading, intro, grid, ...(list.children.length ? [list] : []), actions);

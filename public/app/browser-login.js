@@ -142,7 +142,7 @@ async function discover() {
       toast(`Sign-in needed for ${row.profileLabel || "the browser"} in project ${row.projectId}, conversation ${row.conversationId}. Open that conversation’s Browser panel to continue.`, 8000);
     }
   } catch {
-    if (!discoveryOutage) toast("Could not check for browser sign-in requests. Check your connection.", 8000);
+    if (!discoveryOutage) toast.error("Could not check for browser sign-in requests. Check your connection.");
     discoveryOutage = true;
   }
   finally { discovering = false; }

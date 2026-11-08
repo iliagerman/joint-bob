@@ -58,7 +58,7 @@ export async function loadProjects() {
   } finally {
     setListLoading("projects", false);
   }
-  void loadHarnesses().catch((error) => toast(error.message, 8000));
+  void loadHarnesses().catch((error) => toast.error(error.message));
   void loadClusterDirectory().catch((error) => console.warn("Could not load clusters for the list filters", error));
   void api("/api/settings").then((settings) => {
     state.conversationLabels = settings.conversationLabels;
@@ -161,19 +161,19 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   renderSessions();
   renderQuickNotes();
   setMobileView("sessions");
-  void loadSessionNodes(projectId).catch((error) => toast(error.message, 8000));
+  void loadSessionNodes(projectId).catch((error) => toast.error(error.message));
   // The board does not need the conversation list, so it loads beside it instead of after it.
   // Worktrees wait: their listing starts a scan of every project's finished worktrees, which
   // competes with the list on a busy machine, and the rows already carry their worktree badges.
   loadTasks().catch((error) => console.warn(error));
   // Shared notes can wait on an offline peer. They must not block local conversations.
   void refreshQuickNotes(projectId).catch((error) => {
-    if (state.activeProjectId === projectId) toast(error.message, 8000);
+    if (state.activeProjectId === projectId) toast.error(error.message);
   });
   // Rows already carry agent labels; model discovery is needed by controls, not the list.
   if (!state.harnesses.length) void loadHarnesses().then(() => {
     if (state.activeProjectId === projectId) renderSessions();
-  }).catch((error) => toast(error.message, 8000));
+  }).catch((error) => toast.error(error.message));
   const requestStarted = performance.now();
   let body;
   try {

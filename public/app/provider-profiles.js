@@ -64,7 +64,7 @@ function actionButton(text, testid, action, { icon, className = "ghost profile-a
   const item = el("button", { testid, className }); item.type = "button";
   if (icon) item.append(menuIcon(icon));
   item.append(text);
-  item.addEventListener("click", () => { item.disabled = true; Promise.resolve().then(action).catch((error) => toast(error.message)).finally(() => { item.disabled = false; }); });
+  item.addEventListener("click", () => { item.disabled = true; Promise.resolve().then(action).catch((error) => toast.error(error.message)).finally(() => { item.disabled = false; }); });
   return item;
 }
 /** Without a value the first option stays selected. */
@@ -532,7 +532,7 @@ function showLogin(profile, container, state, settled) {
     answer.addEventListener("keydown", (event) => { if (event.key === "Enter" && answer.tagName === "INPUT") { event.preventDefault(); proceed.click(); } });
     container.append(labeled(state.prompt.message, answer)); actions.append(proceed);
   }
-  if (state.state !== "waiting") { void settled().catch((error) => toast(error.message)); return; }
+  if (state.state !== "waiting") { void settled().catch((error) => toast.error(error.message)); return; }
   actions.append(actionButton("Cancel sign-in", "provider-profile-login-cancel", async () => {
     await api(`/api/provider-profiles/${profile.id}/login`, { method: "DELETE" }); clearTimeout(loginTimer); await refreshLogin(profile, container, settled);
   }));
@@ -549,7 +549,7 @@ async function refreshLogin(profile, container, settled) {
   // Do not rebuild a focused authorization-code input while the user is typing.
   const input = container.querySelector('[data-testid="provider-profile-login-answer"]');
   if (login.state === "waiting" && login.prompt && input === document.activeElement) {
-    loginTimer = setTimeout(() => void refreshLogin(profile, container, settled).catch((error) => toast(error.message)), 2000); return;
+    loginTimer = setTimeout(() => void refreshLogin(profile, container, settled).catch((error) => toast.error(error.message)), 2000); return;
   }
   showLogin(profile, container, login, settled);
 }
@@ -615,7 +615,7 @@ function defaultChoice(provider) {
   const picker = createSearchableSelect({ id: `providerDefault${provider}`, testid: "provider-assignment-default-select", label: `Default for ${name} conversations`, prompt: none.label, placeholder: "Search profiles and pools", emptyText: "No profiles or pools found" });
   picker.setOptions(options); picker.setValue(current ?? ""); picker.trigger.classList.toggle("invalid", !usable);
   picker.onChange((value) => void changeChoice(() => saveChoice(provider, "default", "", value || null), `Use ${value ? choiceLabel(value) : automatic ? none.label.toLowerCase() : "no profile"} for ${name} conversations?`)
-    .catch((error) => { toast(error.message); rerender("assignments"); }));
+    .catch((error) => { toast.error(error.message); rerender("assignments"); }));
   const hint = automatic?.hint ?? "With none chosen, only the node administrator falls back to this node's own sign-in.";
   block.append(sectionHeader(`Every ${name} conversation uses`, `Unless an exception below matches. ${hint}`), picker.root);
   return block;
@@ -637,7 +637,7 @@ function exceptionsBlock(provider) {
   if (!exceptions.length) list.append(el("li", { className: "profile-empty", text: `No exceptions. Every ${name} conversation uses the profile above.` }));
   const add = exceptionDraft && !exceptionDraft.pool ? exceptionForm(provider) : actionButton("Add exception", "provider-exception-new", () => { exceptionDraft = { scope: "workspace" }; rerender("assignments"); }, { icon: "plus" });
   block.append(sectionHeader("Exceptions", "Use a different profile or pool in one workspace, in the projects shared through one cluster, in one project, or in one conversation. A pool applies to every provider its profiles use. These are your choices: they apply on this machine and your twins, never to other members. When several match, the most specific wins: a conversation over its project, a project over its cluster, a cluster over its workspace."), list, ...pagination, add);
-  void loadConversationTitles(visible).catch((error) => toast(error.message));
+  void loadConversationTitles(visible).catch((error) => toast.error(error.message));
   return block;
 }
 function exceptionRow(entry) {
@@ -675,8 +675,8 @@ function exceptionForm(provider) {
     conversation.replaceChildren(...body.sessions.map((item) => new Option(item.title, item.conversationId || item.id)));
   };
   if (exceptionDraft.scope === "conversation" && project.value) {
-    project.addEventListener("change", () => void fillConversations().catch((error) => toast(error.message)));
-    void fillConversations().catch((error) => toast(error.message));
+    project.addEventListener("change", () => void fillConversations().catch((error) => toast.error(error.message)));
+    void fillConversations().catch((error) => toast.error(error.message));
   }
   const account = pool
     ? createSearchableSelect({ id: "poolAssignmentChoice", testid: "pool-assignment-choice-select", label: "Pool", prompt: "Choose a pool", placeholder: "Search pools", emptyText: "No pools found" })
@@ -731,7 +731,7 @@ function poolAssignmentsBlock() {
   if (!entries.length) list.append(el("li", { className: "profile-empty", text: "No pool assigned. Each provider uses its own choices below." }));
   const add = exceptionDraft?.pool ? exceptionForm(null) : actionButton("Add pool assignment", "pool-assignment-new", () => { exceptionDraft = { scope: "default", pool: true }; rerender("assignments"); }, { icon: "plus" });
   block.append(sectionHeader("Pool assignments", "A pool already holds the profiles to use, so no provider is chosen here: every provider those profiles cover follows the pool. Assign it to everything, a workspace, the projects shared through one cluster, one project, or one conversation. The most specific one wins, as with exceptions. These are your choices: they apply on this machine and your twins."), list, add);
-  void loadConversationTitles(entries).catch((error) => toast(error.message));
+  void loadConversationTitles(entries).catch((error) => toast.error(error.message));
   return block;
 }
 /** One entry per pool assignment: a pool at one scope, however many providers it covers. */

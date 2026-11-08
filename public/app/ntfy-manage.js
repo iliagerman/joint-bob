@@ -103,7 +103,7 @@ async function attempt(action) {
     await action();
     return true;
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
     return false;
   }
 }
@@ -124,7 +124,7 @@ async function loadInto(kind, request) {
   } catch (error) {
     if (manager !== current) return;
     slot.error = error.message;
-    toast(error.message, 8000);
+    toast.error(error.message);
   }
   slot.loading = false;
   render();

@@ -97,7 +97,7 @@ saveButton.addEventListener("click", async () => {
     fill(await api("/api/story-settings", { method: "PUT", body: JSON.stringify(collect()) }));
     saveStatus.textContent = "Saved on this node";
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   } finally {
     saveButton.disabled = false;
   }
@@ -109,7 +109,7 @@ installButton.addEventListener("click", async () => {
   try {
     showVoice((await api("/api/story-settings/local-voice/install", { method: "POST" })).voice);
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
     installButton.disabled = false;
   }
 });
@@ -125,7 +125,7 @@ testButton.addEventListener("click", async () => {
       URL.revokeObjectURL(url);
     }
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   } finally {
     testButton.disabled = !(localVoice.allowed && localVoice.installed);
   }

@@ -72,7 +72,7 @@ function render(section, view, nodeNames) {
       try {
         const saved = await api(`/api/budgets/clusters/${view.id}`, { method: "PUT", body: JSON.stringify(readPolicy(grid, -new Date().getTimezoneOffset())) });
         render(section, saved, nodeNames); toast("Budget saved");
-      } catch (error) { toast(error.message); save.disabled = false; }
+      } catch (error) { toast.error(error.message); save.disabled = false; }
     });
     footer.append(save);
     if (view.pendingNodeIds.length) {

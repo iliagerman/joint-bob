@@ -240,7 +240,7 @@ function renderConversationNotice(message, about) {
   if (about.open) {
     name.type = "button";
     name.title = "Open this conversation";
-    name.addEventListener("click", () => { openFrom(message, about.open).catch((error) => toast(error.message)); });
+    name.addEventListener("click", () => { openFrom(message, about.open).catch((error) => toast.error(error.message)); });
   }
   source.append(element("span", "control-entry-project", message.projectName ?? "General"), name);
   const { label, detail } = sourceOf(message);
@@ -385,7 +385,7 @@ function loadMessages() {
 
 async function runAction(message, action, button) {
   // Opening a conversation and undoing a display change happen in the page; every other button is answered by the server.
-  if (action.data?.open) { openFrom(message, action.data.open).catch((error) => toast(error.message)); return; }
+  if (action.data?.open) { openFrom(message, action.data.open).catch((error) => toast.error(error.message)); return; }
   if (action.data?.appearance) { applyAppearance(action.data.appearance); toast("Display settings put back"); return; }
   button.disabled = true;
   try {
@@ -400,7 +400,7 @@ async function runAction(message, action, button) {
     if (message.resolvedAt && entryOf(message.id)) await vanish(entryOf(message.id), settledWord(message), { collapse: true });
     renderMessages();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     button.disabled = false;
   }
 }
@@ -419,7 +419,7 @@ async function settle(message, conversation, how, button) {
     if (entryOf(message.id)) await vanish(entryOf(message.id), how === "done" ? "Done" : "Dismissed", { collapse: true });
     renderMessages();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     button.disabled = false;
   }
 }
@@ -445,7 +445,7 @@ async function sendReply(message, about, text, button) {
       void send(`About “${asked.length > 120 ? `${asked.slice(0, 117)}…` : asked}”: ${text}`, [], false);
     }
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     button.disabled = false;
   }
 }
@@ -463,7 +463,7 @@ async function addChatAttachments(files) {
     attachments = await attachmentsFromFiles(files, attachments);
     renderChatAttachments();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     elements.controlChatFiles.value = "";
   }
@@ -527,7 +527,7 @@ async function saveSettings(change) {
     settings = await api("/api/control-center/bob/settings", { method: "PUT", body: JSON.stringify(change) });
     renderMonitoring();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -545,11 +545,11 @@ async function showGuard() {
 }
 
 elements.controlBobGuardButton.addEventListener("click", () => {
-  api("/api/control-center/guardian/protect", { method: "POST", body: "{}" }).then(showGuard).catch((error) => toast(error.message));
+  api("/api/control-center/guardian/protect", { method: "POST", body: "{}" }).then(showGuard).catch((error) => toast.error(error.message));
 });
 
 async function openSettings() {
-  showGuard().catch((error) => toast(error.message));
+  showGuard().catch((error) => toast.error(error.message));
   if (!settingsLoaded) {
     const [harnessBody, modelBody] = await Promise.all([api("/api/harnesses"), api("/api/models")]);
     catalog = { harnesses: harnessBody.harnesses.filter((harness) => harness.runtimeConfigured), models: modelBody.models };
@@ -569,7 +569,7 @@ function chosenAgent() {
   return { harnessId: harness.id, provider, modelId, thinkingLevel: elements.controlBobThinking.value };
 }
 
-elements.controlChatSettingsButton.addEventListener("click", () => { void openSettings().catch((error) => toast(error.message)); });
+elements.controlChatSettingsButton.addEventListener("click", () => { void openSettings().catch((error) => toast.error(error.message)); });
 elements.controlBobHarness.addEventListener("change", () => {
   const harness = catalog.harnesses.find((candidate) => candidate.id === elements.controlBobHarness.value);
   elements.controlBobModel.parentElement.hidden = !harness;
@@ -604,13 +604,13 @@ elements.controlChatFilterProject.addEventListener("change", () => {
   boardFocus = project;
   elements.controlChatProject.value = project;
   focusProject(project || null);
-  void loadMessages().catch((error) => toast(error.message));
+  void loadMessages().catch((error) => toast.error(error.message));
 });
 for (const chip of elements.controlChatFilters.querySelectorAll("[data-importance]")) {
   chip.addEventListener("click", () => {
     filter.importance = chip.dataset.importance;
     for (const other of elements.controlChatFilters.querySelectorAll("[data-importance]")) other.classList.toggle("active", other === chip);
-    void loadMessages().catch((error) => toast(error.message));
+    void loadMessages().catch((error) => toast.error(error.message));
   });
 }
 
@@ -690,7 +690,7 @@ window.addEventListener("control-center-rendered", (event) => {
   filter.project = focus;
   elements.controlChatFilterProject.value = focus;
   elements.controlChatProject.value = focus;
-  void loadMessages().catch((error) => toast(error.message));
+  void loadMessages().catch((error) => toast.error(error.message));
 });
 
 // A new message from Bob (a question for you, a report) appears while the chat is open.
@@ -703,7 +703,7 @@ window.addEventListener("control-center-activated", () => {
     settings = await api("/api/control-center/bob/settings");
     renderMonitoring();
     await loadMessages();
-  })().catch((error) => toast(error.message));
+  })().catch((error) => toast.error(error.message));
 });
 
 elements.controlChatSide.addEventListener("click", () => {

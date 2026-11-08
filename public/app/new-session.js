@@ -177,7 +177,7 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   const draft = state.newSessionDraft;
   loadSecretAccounts().then(() => {
     if (state.newSessionDraft === draft && elements.newSessionNameDialog.open) renderNewSessionSecrets();
-  }).catch((error) => toast(error.message));
+  }).catch((error) => toast.error(error.message));
   elements.newSessionNameDialog.showModal();
   showWizardStep(1);
   try {
@@ -225,7 +225,7 @@ projectPicker.onChange((projectId) => {
   if (!state.newSessionDraft || state.newSessionDraft.projectId === projectId) return;
   state.newSessionDraft.projectId = projectId;
   renderNewSessionWorktrees(worktreeChosen ? elements.newSessionWorktreeSelect.value : null);
-  loadNewSessionNodes().catch(error => toast(error.message));
+  loadNewSessionNodes().catch(error => toast.error(error.message));
 });
 harnessSelect.addEventListener("change", () => {
   const harness = state.harnesses.find(item => item.id === harnessSelect.value);
@@ -269,7 +269,7 @@ export function renderNewSessionHarnesses() {
     button.setAttribute("aria-label", `New ${harness.label} conversation`);
     button.title = harness.ready ? `New ${harness.label} conversation` : harness.unavailableReason;
     button.append(brandIcon(harness.id, `new-chat-harness-icon ${harness.id}`));
-    button.addEventListener("click", () => startNewHarnessConversation(harness.id).catch((error) => toast(error.message)));
+    button.addEventListener("click", () => startNewHarnessConversation(harness.id).catch((error) => toast.error(error.message)));
     return button;
   }));
   window.dispatchEvent(new CustomEvent("shortcut-targets-changed"));
@@ -302,13 +302,13 @@ elements.handoffProgressDialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   cancelHandoffWait();
 });
-elements.newSessionButton.addEventListener("click", () => chooseNewSessionHarness().catch((error) => toast(error.message)));
+elements.newSessionButton.addEventListener("click", () => chooseNewSessionHarness().catch((error) => toast.error(error.message)));
 elements.doneConversationContinueButton.addEventListener("click", () => {
   const task = conversationTask();
   if (!task || task.status !== "done") throw new Error("Done ticket was not found");
   const harness = state.harnesses.find((candidate) => candidate.id === state.engine);
   if (!harness) throw new Error(`Harness ${state.engine} was not found`);
-  openNewSessionNameDialog(harness.newSessionPath, `Follow-up: ${task.title}`, task.id).catch((error) => toast(error.message));
+  openNewSessionNameDialog(harness.newSessionPath, `Follow-up: ${task.title}`, task.id).catch((error) => toast.error(error.message));
 });
 elements.cancelNewSessionNameButton.addEventListener("click", () => {
   state.newSessionDraft = null;
@@ -387,7 +387,7 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
     state.pendingSessionTitle = title || null;
     state.pendingSessionColor = color;
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     submit.disabled = false;
     submit.textContent = submitLabel;

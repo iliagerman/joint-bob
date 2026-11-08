@@ -102,6 +102,6 @@ elements.contextReferencesForm.addEventListener("submit", async (event) => {
     const { startConversationWithReferences } = await import("./new-session.js");
     await startConversationWithReferences(referenceDraft(references), references.worktrees.length + references.conversations.length);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });

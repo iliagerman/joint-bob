@@ -78,7 +78,7 @@ export async function reconcileTranscriptConflict(error, { projectId, engine, se
     toast(`History reconciled. Backup: ${saved}. Reopen the conversation and retry the transfer.`, 12000);
     return true;
   } catch (failure) {
-    toast(`Could not reconcile history: ${failure.message}`, 10000);
+    toast.error(`Could not reconcile history: ${failure.message}`);
     return true;
   } finally { showing = false; }
 }

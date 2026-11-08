@@ -170,7 +170,7 @@ async function loadList(append = false) {
   } catch (error) {
     if (!validView(tab, version)) return;
     status(error.message);
-    if (append) { page--; renderList(); toast(error.message, 8000); }
+    if (append) { page--; renderList(); toast.error(error.message); }
     else hosting.replaceChildren(errorState(error.message, () => { void loadList(); }));
   }
 }
@@ -495,7 +495,7 @@ async function submitPullAction(pull, action, event, body) {
   try {
     const response = await api(githubUrl({ op: "pull", id: number }));
     if (validView("pulls", version)) { detail = response; renderDetail(); }
-  } catch (error) { toast(`Submitted on GitHub, but refresh failed: ${error.message}`, 8000); }
+  } catch (error) { toast.error(`Submitted on GitHub, but refresh failed: ${error.message}`); }
 }
 
 function runContext() {

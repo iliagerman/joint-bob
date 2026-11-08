@@ -22,7 +22,7 @@ async function loadFolderPickerDirectory(requestedPath) {
     button.className = "folder-browser-entry";
     button.dataset.testid = "folder-picker-directory-button";
     button.textContent = directory.name;
-    button.addEventListener("click", () => loadFolderPickerDirectory(directory.path).catch((error) => toast(error.message, 8000)));
+    button.addEventListener("click", () => loadFolderPickerDirectory(directory.path).catch((error) => toast.error(error.message)));
     elements.folderPickerDirectoryList.append(button);
   }
 }
@@ -73,7 +73,7 @@ function updateProjectImportControls() {
   elements.projectSaveButton.textContent = importing ? "Import project" : "Create project";
 }
 elements.folderPickerParentButton.addEventListener("click", () => {
-  if (state.folderPickerParentPath) loadFolderPickerDirectory(state.folderPickerParentPath).catch((error) => toast(error.message, 8000));
+  if (state.folderPickerParentPath) loadFolderPickerDirectory(state.folderPickerParentPath).catch((error) => toast.error(error.message));
 });
 elements.folderPickerCancelButton.addEventListener("click", () => elements.folderPickerDialog.close());
 elements.folderPickerUseButton.addEventListener("click", () => {
@@ -95,13 +95,13 @@ function appendResourcePath(textarea, pickedPath) {
   textarea.value = existing.join("\n");
 }
 function browseResourcePaths(textarea, title, browseButton) {
-  browseButton.addEventListener("click", () => openFolderPicker(textarea, title, "/api/filesystem/directories", (picked) => appendResourcePath(textarea, picked)).catch((error) => toast(error.message, 8000)));
+  browseButton.addEventListener("click", () => openFolderPicker(textarea, title, "/api/filesystem/directories", (picked) => appendResourcePath(textarea, picked)).catch((error) => toast.error(error.message)));
 }
 browseResourcePaths(elements.settingsResourceSkillsPaths, "Add a skills folder", elements.settingsResourceSkillsBrowse);
 browseResourcePaths(elements.settingsResourcePromptsPaths, "Add a prompts folder", elements.settingsResourcePromptsBrowse);
 browseResourcePaths(elements.settingsResourceRulesPaths, "Add a rules folder", elements.settingsResourceRulesBrowse);
 browseResourcePaths(elements.settingsResourcePluginsPaths, "Add a plugins folder", elements.settingsResourcePluginsBrowse);
-elements.settingsProjectHomeBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsProjectHome, "Choose Joint Bob home folder").catch((error) => toast(error.message, 8000)));
+elements.settingsProjectHomeBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsProjectHome, "Choose Joint Bob home folder").catch((error) => toast.error(error.message)));
 elements.cancelProjectPathButton.addEventListener("click", () => elements.projectPathDialog.close());
 elements.projectPathForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -116,7 +116,7 @@ elements.projectPathForm.addEventListener("submit", async (event) => {
     await refreshSessionsQuietly();
     toast("Session paths mapped");
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });
 elements.newProjectButton.addEventListener("click", () => {
@@ -126,10 +126,10 @@ elements.newProjectButton.addEventListener("click", () => {
   renderProjectColorSwatches(null, elements.newProjectColorSwatches);
   updateProjectImportControls();
   elements.projectDialog.showModal();
-  loadWorkspaces().then(() => fillProjectBases()).catch((error) => toast(error.message));
+  loadWorkspaces().then(() => fillProjectBases()).catch((error) => toast.error(error.message));
 });
 elements.projectSourcePathInput.addEventListener("input", updateProjectImportControls);
-elements.projectSourceBrowseButton.addEventListener("click", () => openFolderPicker(elements.projectSourcePathInput, "Choose project folder to import").catch((error) => toast(error.message, 8000)));
+elements.projectSourceBrowseButton.addEventListener("click", () => openFolderPicker(elements.projectSourcePathInput, "Choose project folder to import").catch((error) => toast.error(error.message)));
 elements.projectNameInput.addEventListener("input", () => {
   if (!state.projectDefaultBase || elements.projectBasePathInput.value !== state.projectAutofilledPath) return;
   state.projectAutofilledPath = elements.projectNameInput.value.trim()
@@ -162,6 +162,6 @@ elements.projectForm.addEventListener("submit", async (event) => {
     renderProjects();
     await selectProject(response.project.id);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });

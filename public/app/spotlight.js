@@ -119,7 +119,7 @@ async function chooseResult(index) {
     }
     openListedSession(session);
   } catch (error) {
-    toast(error instanceof Error ? error.message : "Could not open that");
+    toast.error(error instanceof Error ? error.message : "Could not open that");
   }
 }
 

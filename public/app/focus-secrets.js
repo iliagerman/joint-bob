@@ -39,7 +39,7 @@ export async function openConversationSecretPicker() {
       dialog.close();
       toast("Secret added to conversation");
     } catch (error) {
-      toast(error.message);
+      toast.error(error.message);
       save.disabled = false;
     }
   });

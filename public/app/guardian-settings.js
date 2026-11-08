@@ -68,7 +68,7 @@ async function save(settings) {
     view = await api("/api/guardian", { method: "PUT", body: JSON.stringify({ settings }) });
     return true;
   } catch (error) {
-    toast(`Could not save Guardian: ${error.message}`, 6000);
+    toast.error(`Could not save Guardian: ${error.message}`);
     return false;
   } finally {
     render();
@@ -204,7 +204,7 @@ function relayControl() {
   const box = el("input"); box.type = "checkbox"; box.checked = view.relay.enforced; box.dataset.testid = "guardian-relay-enforce";
   box.addEventListener("change", async () => {
     try { view = await api("/api/guardian/relay-policy", { method: "PUT", body: JSON.stringify({ enforce: box.checked }) }); }
-    catch (error) { toast(`Could not change the relay's Guardian rules: ${error.message}`, 6000); }
+    catch (error) { toast.error(`Could not change the relay's Guardian rules: ${error.message}`); }
     render();
   });
   label.append(box, " Enforce these rules on every machine of the relay this machine serves");
@@ -248,7 +248,7 @@ function layaDetail(laya) {
 
 async function installLaya() {
   try { view.laya = await api("/api/guardian/laya/install", { method: "POST" }); }
-  catch (error) { toast(`Could not install Laya: ${error.message}`, 6000); }
+  catch (error) { toast.error(`Could not install Laya: ${error.message}`); }
   renderModels();
   // The install runs in the background; check on it until it ends.
   while (view.laya.installing) {

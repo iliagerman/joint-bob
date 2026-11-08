@@ -286,11 +286,11 @@ document.addEventListener("terminalPolicyChanged", () => {
 });
 elements.chatNodeSelect.addEventListener("change", async () => {
   const destination = state.sessionNodes.find((node) => node.id === elements.chatNodeSelect.value);
-  if (!destination) { toast("Destination node was not found"); return; }
+  if (!destination) { toast.error("Destination node was not found"); return; }
   const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
   if (state.activeTaskId) {
     if (!task) {
-      toast("Active ticket was not found");
+      toast.error("Active ticket was not found");
       return;
     }
     const ownerId = task.currentNodeId;
@@ -304,7 +304,7 @@ elements.chatNodeSelect.addEventListener("change", async () => {
       state.activeNodeId = ownerId;
       elements.chatNodeSelect.value = ownerId;
       if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: ownerId });
-      toast(error.message, 8000);
+      toast.error(error.message);
     }
     return;
   }
@@ -325,7 +325,7 @@ elements.chatNodeSelect.addEventListener("change", async () => {
       openSession(result.sessionPath, shortSessionTitle(session), false);
     } catch (error) {
       elements.chatNodeSelect.value = state.activeNodeId;
-      toast(error.message, 8000);
+      toast.error(error.message);
     }
     return;
   }
@@ -340,7 +340,7 @@ elements.chatHarnessSelect.addEventListener("change", () => {
   // the server confirms the new segment; a rejected switch must not become a draft.
   elements.chatHarnessSelect.value = state.engine;
   if (!sendSocket({ type: "setEngine", engine: harness.id })) {
-    toast("Conversation is not connected yet");
+    toast.error("Conversation is not connected yet");
   }
 });
 elements.reasoningLevelSelect.addEventListener("change", changeReasoningLevel);

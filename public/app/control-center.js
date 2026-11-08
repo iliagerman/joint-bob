@@ -112,7 +112,6 @@ function renderCard(card) {
     ribbon.dataset.testid = "control-card-driver";
     top.append(ribbon);
   }
-  if (card.column === "running") top.append(runningBadge(card));
   if (card.column === "review") top.append(element("span", "control-badge review", "To review"));
   top.append(element("span", "control-spacer"), picker);
 
@@ -142,7 +141,7 @@ function renderCard(card) {
       button.dataset.testid = `control-card-action-${action.id}`;
       button.addEventListener("click", (event) => {
         event.stopPropagation();
-        Promise.resolve(action.run(card)).catch((error) => toast(error.message));
+        Promise.resolve(action.run(card)).catch((error) => toast.error(error.message));
       });
       row.append(button);
     }
@@ -152,25 +151,9 @@ function renderCard(card) {
   // A card that waits for the person opens with them in control, ready to answer; any other opens to watch.
   root.addEventListener("click", () => {
     const take = card.column === "needs-you" ? cardActionList(card).find((action) => action.id === "take-control") : null;
-    Promise.resolve(take ? take.run(card) : openCard(card)).catch((error) => toast(error.message));
+    Promise.resolve(take ? take.run(card) : openCard(card)).catch((error) => toast.error(error.message));
   });
   return root;
-}
-
-const SPIN_MS = 1_000;
-
-/**
- * A running card says so on top, with a ring that turns. The board is drawn anew every few seconds while agents run; the ring
- * starts each time where the clock says it is, so it keeps turning smoothly through those redraws.
- */
-function runningBadge(card) {
-  const badge = element("span", "control-badge running");
-  badge.dataset.testid = "control-card-running";
-  badge.title = card.turnRunning ? "Its agent is working now" : "Its background tasks are still running";
-  const ring = element("span", "control-running-ring");
-  ring.style.animationDelay = `-${Date.now() % SPIN_MS}ms`;
-  badge.append(ring, element("span", "", "Running"));
-  return badge;
 }
 
 /**
@@ -211,7 +194,7 @@ function renderNeed(card) {
         event.stopPropagation();
         button.disabled = true;
         api("/api/control-center/guardian/decide", { method: "POST", body: JSON.stringify({ projectId: card.projectId, conversationId: card.conversationId, reviewId: review.id, decision }) })
-          .then(() => refreshControlCenter()).catch((error) => { toast(error.message); button.disabled = false; });
+          .then(() => refreshControlCenter()).catch((error) => { toast.error(error.message); button.disabled = false; });
       });
       buttons.append(button);
     }
@@ -268,7 +251,7 @@ function renderProjectGroup(cards) {
     button.type = "button";
     button.title = action.title;
     button.dataset.testid = `control-project-action-${action.id}`;
-    button.addEventListener("click", () => Promise.resolve(action.run(project)).catch((error) => toast(error.message)));
+    button.addEventListener("click", () => Promise.resolve(action.run(project)).catch((error) => toast.error(error.message)));
     header.append(button);
   }
   const list = element("div", "control-project-cards");
@@ -446,13 +429,13 @@ function renderBoardTools() {
     button.title = tool.title;
     button.dataset.boardTool = tool.id;
     button.dataset.testid = `control-board-tool-${tool.id}`;
-    button.addEventListener("click", () => Promise.resolve(tool.run()).catch((error) => toast(error.message)));
+    button.addEventListener("click", () => Promise.resolve(tool.run()).catch((error) => toast.error(error.message)));
     elements.controlCenterReset.before(button);
   }
 }
 window.addEventListener("control-board-tools-changed", renderBoardTools);
 renderBoardTools();
-elements.controlCenterRefresh.addEventListener("click", () => refreshControlCenter().catch((error) => toast(error.message)));
+elements.controlCenterRefresh.addEventListener("click", () => refreshControlCenter().catch((error) => toast.error(error.message)));
 // What waits for the person shows on the toolbar icon, so they know without opening the control center.
 const badge = element("span", "control-icon-badge");
 badge.hidden = true;

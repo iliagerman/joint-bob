@@ -265,7 +265,7 @@ async function moveTask(task, nextStatus) {
     if (nextStatus === "planning") toast(`Planning started for "${task.title}"`);
     if (nextStatus === "in_progress") toast(`${harnessLabel(state.harnesses, task.engine)} started working on "${task.title}"`);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -369,7 +369,7 @@ async function handoffTask(task) {
     if (!selected.eligible && !selected.waitingForSync) throw new Error(selected.reasons.join("; "));
     await handoffTaskToPeer(task, selected.node);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -388,7 +388,7 @@ async function archiveTask(task) {
     renderBoardView();
     toast(`Archived "${task.title}"`);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -410,7 +410,7 @@ async function mergeTask(task) {
     renderBoardView();
     toast(fsCopWorkspace ? `Merged "${task.title}" into the project` : `Merged "${task.title}" into main`);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -427,7 +427,7 @@ async function openMergeConflictDialog(task) {
     const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/merge-conflicts`);
     conflicts = body.conflicts ?? [];
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     return;
   }
   if (task.mergeWarning) {
@@ -480,7 +480,7 @@ async function openMergeConflictDialog(task) {
           renderBoardView();
           toast(body.task.conflictCount === 0 ? "All conflicts resolved — merge when ready" : `${body.task.conflictCount} conflict(s) left`);
         } catch (error) {
-          toast(error.message);
+          toast.error(error.message);
           button.disabled = false;
         }
       });
@@ -505,7 +505,7 @@ async function resumeTaskMerge(task) {
     renderBoardView();
     toast(`Ticket agent is resolving ${task.conflictCount ?? 0} merge conflict(s)`);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -524,7 +524,7 @@ async function restartTaskMerge(task) {
     renderBoardView();
     toast("Merge restarted");
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -543,7 +543,7 @@ async function discardTaskChanges(task) {
     renderBoardView();
     toast(`Discarded "${task.title}" changes`);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -611,21 +611,21 @@ async function deleteTaskFromCard(task) {
   try {
     await deleteTask(task.id);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 elements.newTaskButton.addEventListener("click", () => openNewTaskDialog());
 elements.taskAttachButton.addEventListener("click", () => elements.taskAttachmentInput.click());
 elements.taskAttachmentInput.addEventListener("change", async (event) => {
   try { await addTaskAttachments(event.target.files || []); }
-  catch (error) { toast(error.message); elements.taskAttachmentInput.value = ""; }
+  catch (error) { toast.error(error.message); elements.taskAttachmentInput.value = ""; }
 });
 elements.taskDescriptionInput.addEventListener("paste", async (event) => {
   const images = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
   if (!images.length) return;
   if (!event.clipboardData.getData("text/plain")) event.preventDefault();
   try { await addTaskAttachments(images); }
-  catch (error) { toast(error.message); }
+  catch (error) { toast.error(error.message); }
 });
 elements.taskDescriptionField.addEventListener("dragover", (event) => {
   if (!event.dataTransfer.types.includes("Files")) return;
@@ -641,7 +641,7 @@ elements.taskDescriptionField.addEventListener("drop", async (event) => {
   event.preventDefault();
   elements.taskDescriptionField.classList.remove("dragging");
   try { await addTaskAttachments(event.dataTransfer.files); }
-  catch (error) { toast(error.message); }
+  catch (error) { toast.error(error.message); }
 });
 elements.taskEngineInput.addEventListener("change", () => populatePhaseModelInputs());
 elements.taskPlanModeInput.addEventListener("change", () => {
@@ -674,7 +674,7 @@ elements.taskForm.addEventListener("submit", async (event) => {
     await saveTaskFromDialog();
     closeTaskDialog();
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   } finally {
     elements.taskSaveButton.disabled = false;
     elements.taskSaveButton.textContent = "Save task";
@@ -694,6 +694,6 @@ elements.deleteTaskButton.addEventListener("click", async () => {
     await deleteEditingTask();
     closeTaskDialog();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });

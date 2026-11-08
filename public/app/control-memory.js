@@ -48,7 +48,7 @@ function tagged(node, testid) {
 function button(label, testid, className, onClick) {
   const node = tagged(element("button", className, label), testid);
   node.type = "button";
-  node.addEventListener("click", () => Promise.resolve(onClick()).catch((error) => toast(error.message)));
+  node.addEventListener("click", () => Promise.resolve(onClick()).catch((error) => toast.error(error.message)));
   return node;
 }
 
@@ -77,7 +77,7 @@ changesTab.append(pill);
 for (const [tab, id] of [[topicsTab, "topics"], [changesTab, "changes"]]) {
   tab.type = "button";
   tab.setAttribute("role", "tab");
-  tab.addEventListener("click", () => showSub(id).catch((error) => toast(error.message)));
+  tab.addEventListener("click", () => showSub(id).catch((error) => toast.error(error.message)));
 }
 const seg = element("div", "memory-seg");
 seg.setAttribute("role", "tablist");
@@ -157,7 +157,7 @@ function renderTopicRow(topic) {
   if (topic.project) title.append(element("span", "memory-tag", projectName(topic.project)));
   if (lastRead?.topics.includes(topic.name)) title.append(tagged(element("span", "memory-read", "read for your last message"), "memory-read"));
   row.append(title, element("small", "", topic.description || "No description"));
-  row.addEventListener("click", () => openTopic(topic.name).catch((error) => toast(error.message)));
+  row.addEventListener("click", () => openTopic(topic.name).catch((error) => toast.error(error.message)));
   return row;
 }
 
@@ -213,7 +213,7 @@ function openNew(name) {
   selected = null;
   mode = "new";
   draft = { name, description: "", body: "", project: "" };
-  if (sub !== "topics") showSub("topics").catch((error) => toast(error.message));
+  if (sub !== "topics") showSub("topics").catch((error) => toast.error(error.message));
   renderTopics();
   renderDoc();
 }
@@ -279,7 +279,7 @@ function renderDocForm() {
     event.preventDefault();
     save.disabled = true;
     saveTopic({ name: slug(name.value), description: description.value, body: body.value, project: project.value || null }, creating)
-      .catch((error) => toast(error.message)).finally(() => { save.disabled = false; });
+      .catch((error) => toast.error(error.message)).finally(() => { save.disabled = false; });
   });
   return form;
 }
@@ -386,7 +386,7 @@ function renderChangeForm(change) {
     event.preventDefault();
     save.disabled = true;
     settle(change, "edit", { description: description.value, body: body.value, project: change.after.project })
-      .catch((error) => toast(error.message)).finally(() => { save.disabled = false; });
+      .catch((error) => toast.error(error.message)).finally(() => { save.disabled = false; });
   });
   return form;
 }
@@ -454,7 +454,7 @@ async function loadAsk() {
 
 ask.addEventListener("change", () => {
   const wanted = ask.checked;
-  api(SETTINGS, { method: "PUT", body: JSON.stringify({ askBeforeSaving: wanted }) }).catch((error) => { ask.checked = !wanted; toast(error.message); });
+  api(SETTINGS, { method: "PUT", body: JSON.stringify({ askBeforeSaving: wanted }) }).catch((error) => { ask.checked = !wanted; toast.error(error.message); });
 });
 
 let searching = null;
@@ -463,15 +463,15 @@ search.addEventListener("input", () => {
   searching = setTimeout(() => {
     query = search.value.trim();
     resetPage(topicsPage);
-    loadTopics().catch((error) => toast(error.message));
+    loadTopics().catch((error) => toast.error(error.message));
   }, 250);
 });
 
 handle = registerControlView({
   id: "memory", title: "Bob's memory", order: 10, element: view,
   onShow() {
-    loadAsk().catch((error) => toast(error.message));
-    showSub(sub).catch((error) => toast(error.message));
+    loadAsk().catch((error) => toast.error(error.message));
+    showSub(sub).catch((error) => toast.error(error.message));
   },
 });
 applySub("topics");

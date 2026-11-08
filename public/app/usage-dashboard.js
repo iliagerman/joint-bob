@@ -812,7 +812,7 @@ function openEditor(plan, harness) {
   }
   planForm.elements.harnessId.focus();
 }
-function planCard(plan,label){const card=element("article",undefined,"subscription-card");card.dataset.testid="subscription-card";card.append(element("h4",`${plan.planName} · ${plan.accountLabel}`),element("strong",formatPlanPrice(plan.price),"subscription-price"),element("p",`${label}${plan.provider?` · ${plan.provider}`:""} · Price override`));if(!plan.quotaWindows.length)card.append(element("p","No manual quota snapshot. Automatic quota reporting unavailable."));for(const q of plan.quotaWindows){const stale=Date.now()-new Date(q.capturedAt).getTime()>3600000||(q.resetsAt&&new Date(q.resetsAt)<new Date());card.append(element("p",`${q.label}: ${q.used??"unknown"} of ${q.limit??"unknown"} ${q.unit}; ${q.remaining??"unknown"} remaining · Manual snapshot ${new Date(q.capturedAt).toLocaleString()}${q.resetsAt?` · resets ${new Date(q.resetsAt).toLocaleString()}`:""}${stale?" · stale":""}`));}const edit=element("button","Edit","ghost");edit.type="button";edit.dataset.testid="subscription-edit";edit.addEventListener("click",()=>openEditor(plan));const remove=element("button","Delete","ghost danger");remove.type="button";remove.dataset.testid="subscription-delete";remove.addEventListener("click",()=>void deletePlan(plan).catch(e=>toast(e.message)));card.append(edit,remove);return card;}
+function planCard(plan,label){const card=element("article",undefined,"subscription-card");card.dataset.testid="subscription-card";card.append(element("h4",`${plan.planName} · ${plan.accountLabel}`),element("strong",formatPlanPrice(plan.price),"subscription-price"),element("p",`${label}${plan.provider?` · ${plan.provider}`:""} · Price override`));if(!plan.quotaWindows.length)card.append(element("p","No manual quota snapshot. Automatic quota reporting unavailable."));for(const q of plan.quotaWindows){const stale=Date.now()-new Date(q.capturedAt).getTime()>3600000||(q.resetsAt&&new Date(q.resetsAt)<new Date());card.append(element("p",`${q.label}: ${q.used??"unknown"} of ${q.limit??"unknown"} ${q.unit}; ${q.remaining??"unknown"} remaining · Manual snapshot ${new Date(q.capturedAt).toLocaleString()}${q.resetsAt?` · resets ${new Date(q.resetsAt).toLocaleString()}`:""}${stale?" · stale":""}`));}const edit=element("button","Edit","ghost");edit.type="button";edit.dataset.testid="subscription-edit";edit.addEventListener("click",()=>openEditor(plan));const remove=element("button","Delete","ghost danger");remove.type="button";remove.dataset.testid="subscription-delete";remove.addEventListener("click",()=>void deletePlan(plan).catch(e=>toast.error(e.message)));card.append(edit,remove);return card;}
 function renderPlans() {
   subscriptionList.replaceChildren();
   const groups = harnesses.map((harness) => ({ id: harnessId(harness), label: harnessLabel(harness) }));
@@ -998,7 +998,7 @@ refreshButton.addEventListener("click", async () => {
     if (activeTab === "insights") insights.load();
     await loadUsage({polling:true});
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     refreshButton.disabled = false;
   }

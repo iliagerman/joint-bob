@@ -320,7 +320,7 @@ async function answerRule(proposal, verb, edits = {}) {
     const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/knowledge/proposals/${encodeURIComponent(proposal.id)}/${verb}`, { method: "POST", body: JSON.stringify(edits) });
     rules.proposals = body.proposals;
   } catch (error) {
-    toast(error.message || "Could not update the rule suggestion");
+    toast.error(error.message || "Could not update the rule suggestion");
   }
   renderRules();
 }

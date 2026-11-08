@@ -39,7 +39,7 @@ function el(tag, className, text) {
 
 /** Every action reports its own failure; none fails silently. */
 function guarded(work) {
-  return (...args) => Promise.resolve().then(() => work(...args)).catch((error) => toast(error.message, 6000));
+  return (...args) => Promise.resolve().then(() => work(...args)).catch((error) => toast.error(error.message));
 }
 
 function button(label, testid, onClick, { primary = false, disabled = false, icon } = {}) {
@@ -118,7 +118,7 @@ function render() {
   renderStatus();
   renderActions();
   const renderers = { empty: renderEmpty, view: renderView, creator: renderCreator, review: renderReview, share: renderShare };
-  Promise.resolve(renderers[view.mode]()).catch((error) => toast(error.message, 6000));
+  Promise.resolve(renderers[view.mode]()).catch((error) => toast.error(error.message));
 }
 
 function renderPicker() {
@@ -130,7 +130,7 @@ function renderPicker() {
     option.selected = entry.id === view.currentId;
     return option;
   }));
-  picker.onchange = () => { if (picker.value) void selectDashboard(picker.value).catch((error) => toast(error.message)); };
+  picker.onchange = () => { if (picker.value) void selectDashboard(picker.value).catch((error) => toast.error(error.message)); };
 }
 
 async function selectDashboard(id) {
@@ -302,7 +302,7 @@ function renderCreator() {
   if (!view.creator || view.creator.id !== view.currentId || !body.contains(view.creator.view.root)) {
     const creatorView = createCreatorView({
       // The message box empties only once the message is sent.
-      onSend: (text) => sendMessage(text).catch((error) => { toast(error.message, 6000); throw error; }),
+      onSend: (text) => sendMessage(text).catch((error) => { toast.error(error.message); throw error; }),
       onTestRefresh: guarded(() => startRefresh("draft")),
       onDiscard: guarded(discardDraft),
       onSave: guarded(saveDraft),
@@ -460,7 +460,7 @@ async function pollCurrent() {
 function schedulePoll() {
   clearTimeout(view.pollTimer);
   if (!dialog.open || !view.detail?.dashboard.running) return;
-  view.pollTimer = setTimeout(() => { pollCurrent().catch((error) => toast(error.message)); }, 1000);
+  view.pollTimer = setTimeout(() => { pollCurrent().catch((error) => toast.error(error.message)); }, 1000);
 }
 
 /** A job left running keeps going on the node; this page says when it ends and offers to open it. */
@@ -473,11 +473,11 @@ function watchAfterClose(target, id, label) {
     if (detail?.dashboard.running) { watching.set(id, setTimeout(check, 3000)); return; }
     watching.delete(id);
     const failed = detail?.dashboard.draftRefresh && !detail.dashboard.draftRefresh.ok;
-    const note = toast(`${label}: the dashboard agent finished${failed ? ", but the test refresh failed" : ""}.`, 15_000);
+    const note = failed ? toast.error(`${label}: the dashboard agent finished, but the test refresh failed.`) : toast(`${label}: the dashboard agent finished.`, 15_000);
     const open = el("button", "toast-action", "Open");
     open.type = "button";
     open.dataset.testid = "dashboard-ready-open";
-    open.addEventListener("click", () => { note.remove(); openDashboardMode(target).catch((error) => toast(error.message)); });
+    open.addEventListener("click", () => { note.remove(); openDashboardMode(target).catch((error) => toast.error(error.message)); });
     note.insertBefore(open, note.querySelector(".toast-close"));
   };
   watching.set(id, setTimeout(check, 3000));
@@ -497,7 +497,7 @@ dialog.addEventListener("close", () => {
 function openConversationDashboard() {
   const conversationId = state.activeConversationId || state.activeSessionId;
   if (!conversationId || !state.activeProjectId) { toast("Open a conversation first"); return; }
-  openDashboardMode({ kind: "conversation", id: conversationId, projectId: state.activeProjectId }).catch((error) => toast(error.message));
+  openDashboardMode({ kind: "conversation", id: conversationId, projectId: state.activeProjectId }).catch((error) => toast.error(error.message));
 }
 document.querySelector("#chatDashboardButton").addEventListener("click", openConversationDashboard);
 document.querySelector("#chatMoreDashboardButton").addEventListener("click", () => {

@@ -83,7 +83,7 @@ export async function openFileAction(path, taskId) {
     elements.fileActionStatus.textContent = "";
   } catch (error) {
     if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
-    toast(error.message, 8000);
+    toast.error(error.message);
     elements.fileActionStatus.textContent = error.message;
   }
 }
@@ -161,7 +161,7 @@ async function openProjectFile(readOnly) {
     elements.fileEditorView.hidden = false;
     elements.fileEditorStatus.textContent = "";
     requestAnimationFrame(() => { fileEditor.refresh(); fileEditor.focus(); });
-  } catch (error) { toast(error.message, 8000); elements.fileEditorStatus.textContent = error.message; }
+  } catch (error) { toast.error(error.message); elements.fileEditorStatus.textContent = error.message; }
   finally { state.fileEditor.loading = false; elements.fileActionViewButton.disabled = false; elements.fileActionEditButton.disabled = false; }
 }
 
@@ -201,7 +201,7 @@ async function saveProjectFile(closeAfterSave = true) {
       resetFileEditor();
       toast("File saved");
     } else elements.fileEditorStatus.textContent = "Saved";
-  } catch (error) { toast(error.message, 8000); }
+  } catch (error) { toast.error(error.message); }
   finally { state.fileEditor.saving = false; elements.fileEditorSaveButton.disabled = false; }
 }
 

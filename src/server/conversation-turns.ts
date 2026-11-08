@@ -71,10 +71,11 @@ export function buildTurns(messages: ChatMessage[]): ConversationTurn[] {
 /** Every recorded message of a conversation, across harness switches, oldest first. */
 export async function loadConversationMessages(project: ProjectRecord, conversationId: string, options?: { contextOnly?: boolean }): Promise<{ messages: ChatMessage[]; lastHarness: string }> {
   const transcriptProject = { ...project, additionalPaths: await projectAdditionalPaths(project.id) };
-  const sessions = await listHarnessSessions(transcriptProject);
+  const records = await listConversationSegments(project.id, conversationId);
+  // Done conversations sink below the list cap; a direct lookup must keep its segments pinned.
+  const sessions = await listHarnessSessions(transcriptProject, [], records.map((record) => `${record.engine}:${record.sessionId}`));
   const session = sessions.find((item) => (item.conversationId ?? item.id) === conversationId);
   if (!session) throw new Error("Conversation not found in this project");
-  const records = await listConversationSegments(project.id, conversationId);
   const entries = records.length
     ? records.map((record) => ({ engine: record.engine, path: session.segments?.find((segment) => segment.engine === record.engine && segment.sessionId === record.sessionId)?.path ?? (session.harnessId === record.engine && session.id === record.sessionId ? session.path : "") }))
     : [{ engine: session.harnessId, path: session.path }];

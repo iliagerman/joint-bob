@@ -78,7 +78,7 @@ function render() {
     const label = STATE_LABELS[entry.state] || (entry.updatedAt ? formatDate(entry.updatedAt) : "");
     row.append(node("span", "control-meta", label));
     if (entry.summary) row.title = entry.summary;
-    row.addEventListener("click", () => openConversation({ projectId, conversationId: entry.conversationId, path: entry.path }).catch((error) => toast(error.message)));
+    row.addEventListener("click", () => openConversation({ projectId, conversationId: entry.conversationId, path: entry.path }).catch((error) => toast.error(error.message)));
     conversations.append(row);
   }
   if (!data.conversations.length) conversations.append(node("p", "control-empty", "No conversations yet."));
@@ -111,7 +111,7 @@ async function load() {
   try {
     loaded = await api(`/api/control-center/overview?project=${encodeURIComponent(asked)}`);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
   // Another project was picked while this one loaded: its answer must not be shown, or its rows would open under the new one.
   if (asked !== projectId) return;

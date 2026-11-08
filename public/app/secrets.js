@@ -161,7 +161,7 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
     if (!file) return;
     if (file.size > 100000) throw new Error("Secret file must be at most 100000 bytes");
     row.querySelector("[data-secret-value]").value = await file.text();
-  })().catch((error) => toast(error.message)));
+  })().catch((error) => toast.error(error.message)));
 
   name.addEventListener("input", () => refreshSecretValueControl(row));
   kind.addEventListener("change", () => { refreshSecretValueControl(row, variable.configured); upload.hidden = kind.value !== "file"; });
@@ -293,7 +293,7 @@ function renderSecretAccounts() {
     row.append(providerBadge(account.provider, "secret-account-provider-badge"), meta);
     if (!account.readOnly) {
       const share = document.createElement("button"); share.type = "button"; share.className = "ghost compact"; share.textContent = "Share"; share.dataset.testid = "secret-account-share-button";
-      share.addEventListener("click", () => void openSecretSharing(account).catch((error) => toast(error.message)));
+      share.addEventListener("click", () => void openSecretSharing(account).catch((error) => toast.error(error.message)));
       row.append(share, edit, remove);
     }
     elements.secretAccountList.append(row);
@@ -333,7 +333,7 @@ async function openSecretSharing(account) {
     if (!confirmed) return;
     save.disabled = true;
     try { await api(`/api/secrets/accounts/${encodeURIComponent(account.id)}/sharing`, { method: "PUT", body: JSON.stringify({ grants: selected }) }); dialog.close(); await loadSecretAccounts(); toast("Secret sharing saved"); }
-    catch (error) { toast(error.message); } finally { save.disabled = false; }
+    catch (error) { toast.error(error.message); } finally { save.disabled = false; }
   })(); });
   dialog.showModal(); cancel.focus();
 }
@@ -582,15 +582,15 @@ elements.secretGithubSshKeyFileInput.addEventListener("change", () => void (asyn
   elements.secretGithubSshKeyInput.value = await file.text();
   showGithubPublicKey(null);
   githubKeyEntered();
-})().catch((error) => toast(error.message)));
+})().catch((error) => toast.error(error.message)));
 elements.secretGithubSshKeyGenerateButton.addEventListener("click", () => void (async () => {
   const pair = await api("/api/secrets/github-ssh-key", { method: "POST", body: "{}" });
   elements.secretGithubSshKeyInput.value = pair.privateKey;
   showGithubPublicKey(pair.publicKey, pair.fingerprint, true);
   githubKeyEntered();
-})().catch((error) => toast(error.message)));
+})().catch((error) => toast.error(error.message)));
 elements.secretGithubPublicKeyCopyButton.addEventListener("click", () => void navigator.clipboard.writeText(elements.secretGithubPublicKeyText.textContent)
-  .then(() => toast("Public key copied"), () => toast("Copy failed. Select the key and copy it manually")));
+  .then(() => toast("Public key copied"), () => toast.error("Copy failed. Select the key and copy it manually")));
 const sshInputs = {
   SSH_HOST: document.querySelector("#secretSshHost"), SSH_PORT: document.querySelector("#secretSshPort"),
   SSH_USERNAME: document.querySelector("#secretSshUsername"), SSH_PRIVATE_KEY: document.querySelector("#secretSshKey"),
@@ -615,7 +615,7 @@ document.querySelector("#secretSshSessionFile").addEventListener("change", (even
   sshInputs.SSH_HOST.value = session.host;
   sshInputs.SSH_PORT.value = session.port;
   if (session.username) sshInputs.SSH_USERNAME.value = session.username;
-})().catch((error) => toast(error.message)));
+})().catch((error) => toast.error(error.message)));
 document.querySelector("#secretSshUpload").addEventListener("click", () => document.querySelector("#secretSshFile").click());
 document.querySelector("#secretSshFile").addEventListener("change", (event) => void (async () => {
   const [file] = event.target.files;
@@ -623,7 +623,7 @@ document.querySelector("#secretSshFile").addEventListener("change", (event) => v
   if (!file) return;
   if (file.size > 100000) throw new Error("That file is too large to be an SSH private key");
   sshInputs.SSH_PRIVATE_KEY.value = await file.text();
-})().catch((error) => toast(error.message)));
+})().catch((error) => toast.error(error.message)));
 
 function sshVariables() {
   const saved = editingSecretAccount?.provider === "ssh" ? editingSecretAccount.variables : [];

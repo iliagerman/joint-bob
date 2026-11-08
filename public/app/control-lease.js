@@ -63,7 +63,7 @@ export async function takeControl(card) {
   await send("take", target);
   held = target;
   clearInterval(timer);
-  timer = setInterval(() => renew().catch((error) => toast(error.message)), RENEW_MS);
+  timer = setInterval(() => renew().catch((error) => toast.error(error.message)), RENEW_MS);
   if (!sameConversation(popupCard, target) || !document.body.classList.contains("control-popup")) await openConversation(card);
   banner.hidden = false;
   renderPopup();
@@ -77,14 +77,14 @@ async function giveBack(card) {
   void refreshControlCenter().catch(() => undefined);
 }
 
-giveBackButton.addEventListener("click", () => giveBack(null).catch((error) => toast(error.message)));
-popupTake.addEventListener("click", () => takeControl(popupCard).catch((error) => toast(error.message)));
+giveBackButton.addEventListener("click", () => giveBack(null).catch((error) => toast.error(error.message)));
+popupTake.addEventListener("click", () => takeControl(popupCard).catch((error) => toast.error(error.message)));
 popupClose.addEventListener("click", closeConversationPopup);
 window.addEventListener("control-popup-opened", (event) => { popupCard = event.detail; renderPopup(); });
 // Closing the conversation hands it back to Bob.
 window.addEventListener("control-popup-closed", () => {
   popupCard = null;
-  if (held) void giveBack(null).catch((error) => toast(error.message));
+  if (held) void giveBack(null).catch((error) => toast.error(error.message));
 });
 
 registerCardAction({

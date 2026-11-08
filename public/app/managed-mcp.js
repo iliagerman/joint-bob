@@ -21,7 +21,7 @@ async function perform(action, changed) {
   try { await action(); }
   catch (error) {
     if (flow && flow.scopeKey === scopeKey) statuses.set(flow.serverName, { status: "failed", error: error.message });
-    toast(error.message);
+    toast.error(error.message);
   }
   finally { busy = false; await changed(); }
 }

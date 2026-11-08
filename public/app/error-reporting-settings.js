@@ -56,7 +56,7 @@ export function syncErrorReportingServices(list) {
 }
 
 export async function loadErrorReportingSettings() {
-  try { fill(await api("/api/error-reporting")); } catch (error) { toast(error.message, 8000); }
+  try { fill(await api("/api/error-reporting")); } catch (error) { toast.error(error.message); }
 }
 
 for (const input of [enabledInput, sameInput, channels.client.enabled, channels.backend.enabled]) input.addEventListener("change", syncVisibility);
@@ -71,7 +71,7 @@ saveButton.addEventListener("click", async () => {
     }));
     toast(enabledInput.checked ? "Errors will be sent to ntfy" : "Error reporting is off");
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   } finally {
     saveButton.disabled = false;
   }

@@ -42,7 +42,7 @@ function button(label, testid, onClick, className = "ghost compact") {
   const node = el("button", className, label);
   node.type = "button";
   node.dataset.testid = testid;
-  node.addEventListener("click", () => Promise.resolve(onClick()).catch((error) => toast(error.message, 6000)));
+  node.addEventListener("click", () => Promise.resolve(onClick()).catch((error) => toast.error(error.message)));
   return node;
 }
 
@@ -77,7 +77,7 @@ const intro = el("div");
 intro.append(el("h2", "", "Dashboards"), el("p", "control-hint", "For projects and for you. Click a card to see it."));
 heading.append(intro, button("Ask Bob for a dashboard", "control-dashboards-new", () => askBob("Create a dashboard for ")));
 root.append(heading, list, pager);
-const tab = registerControlView({ id: "dashboards", title: "Dashboards", order: 40, element: root, onShow: () => { void load().catch((error) => toast(error.message)); } });
+const tab = registerControlView({ id: "dashboards", title: "Dashboards", order: 40, element: root, onShow: () => { void load().catch((error) => toast.error(error.message)); } });
 
 /** What the board's project filter leaves: a project's dashboards, and a personal one whose workspace holds a chosen project. */
 function filtered() {
@@ -131,7 +131,7 @@ function renderCard(card) {
   line.append(el("span", "", status.text));
   const method = card.refreshMethod === "ai" ? "AI refresh · costs AI" : card.refreshMethod === "script" ? "script · no AI" : "";
   node.append(top, el("h3", "control-title", card.title), line, el("div", "control-meta", method));
-  const open = () => openCard(card).catch((error) => toast(error.message, 6000));
+  const open = () => openCard(card).catch((error) => toast.error(error.message));
   node.addEventListener("click", open);
   node.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
   return node;
@@ -389,6 +389,6 @@ parts.ask.addEventListener("submit", (event) => {
       window.dispatchEvent(new CustomEvent("control-center-changed"));
       return load();
     })
-    .catch((error) => toast(error.message, 6000))
+    .catch((error) => toast.error(error.message))
     .finally(() => { askSend.disabled = false; });
 });

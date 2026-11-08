@@ -86,13 +86,25 @@ export function chooseOption({ title, message = "", eyebrow = "Choose", confirmL
   });
 }
 
-export function toast(message, duration = 3200) {
-  const existing = [...document.querySelectorAll(".toast")].find((node) => node.getClientRects().length > 0 && node.querySelector(".toast-message")?.textContent === message);
+const toastStack = document.createElement("div");
+toastStack.className = "toast-stack";
+function placeToasts() {
+  if (!toastStack.childElementCount) return;
+  const parent = topmostOpenDialog() || document.body;
+  if (toastStack.parentElement !== parent) parent.append(toastStack);
+}
+// Keep unread errors visible when a dialog opens or closes, including nested dialogs.
+document.addEventListener("focusin", placeToasts);
+document.addEventListener("close", placeToasts, true);
+
+export function toast(message, duration = 3200, severity = "info") {
+  const existing = [...toastStack.children].find((node) => node.dataset.severity === severity && node.querySelector(".toast-message")?.textContent === message);
   if (existing) return existing;
   const node = document.createElement("div");
-  node.className = "toast";
-  node.setAttribute("role", "alert");
-  node.setAttribute("aria-live", "assertive");
+  node.className = severity === "error" ? "toast toast-error" : "toast";
+  node.dataset.severity = severity;
+  node.setAttribute("role", severity === "error" ? "alert" : "status");
+  node.setAttribute("aria-live", severity === "error" ? "assertive" : "polite");
   const text = document.createElement("span");
   text.className = "toast-message";
   text.textContent = message;
@@ -102,17 +114,18 @@ export function toast(message, duration = 3200) {
   close.textContent = "×";
   close.setAttribute("aria-label", "Dismiss");
   close.setAttribute("data-testid", "toast-close-button");
-  const timer = setTimeout(() => node.remove(), duration);
+  const timer = severity === "error" ? undefined : setTimeout(() => node.remove(), duration);
   close.addEventListener("click", () => {
     clearTimeout(timer);
     node.remove();
   });
   node.append(text, close);
-  // Into the dialog on top: the first open one in the document is often Settings, under
-  // a secret account dialog's blurred backdrop, which hid that dialog's save errors.
-  (topmostOpenDialog() || document.body).append(node);
+  toastStack.append(node);
+  placeToasts();
   return node;
 }
+
+toast.error = (message) => toast(message, 0, "error");
 
 export function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -150,17 +163,17 @@ export function syncNotifyButton() {
 
 export async function enableNotifications() {
   if (!notificationsSupported()) {
-    toast("Push notifications are not supported on this browser");
+    toast.error("Push notifications are not supported on this browser");
     return false;
   }
   if (Notification.permission !== "granted") {
     if (Notification.permission === "denied") {
-      toast("Notifications are blocked. Enable them in your browser settings.");
+      toast.error("Notifications are blocked. Enable them in your browser settings.");
       return false;
     }
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
-      toast("Notification permission was not granted");
+      toast.error("Notification permission was not granted");
       return false;
     }
   }
@@ -286,18 +299,18 @@ document.addEventListener("click", (event) => {
   if (event.target instanceof Node && !elements.chatMoreMenu.contains(event.target)) elements.chatMoreMenu.removeAttribute("open");
 });
 elements.appMenu.addEventListener("toggle", () => {
-  if (elements.appMenu.open) loadAppMenuDetails().catch((error) => toast(error.message));
+  if (elements.appMenu.open) loadAppMenuDetails().catch((error) => toast.error(error.message));
 });
 elements.appMenuSettingsButton.addEventListener("click", () => {
   elements.appMenu.removeAttribute("open");
-  openSettings().catch((error) => toast(error.message));
+  openSettings().catch((error) => toast.error(error.message));
 });
 document.addEventListener("click", (event) => {
   if (event.target instanceof Node && !elements.appMenu.contains(event.target)) elements.appMenu.removeAttribute("open");
 });
 function toggleNotifications() {
-  if (state.notificationsEnabled && notificationPermissionGranted()) disableNotifications().catch((error) => toast(error.message));
-  else enableNotifications().catch((error) => toast(error.message));
+  if (state.notificationsEnabled && notificationPermissionGranted()) disableNotifications().catch((error) => toast.error(error.message));
+  else enableNotifications().catch((error) => toast.error(error.message));
 }
 
 elements.notifyButton.addEventListener("click", toggleNotifications);
@@ -307,7 +320,7 @@ elements.completionSoundSelect.addEventListener("change", () => {
   if (state.preferencesLoaded) savePreferencesInBackground({ completionSound: state.completionSound });
 });
 elements.previewSoundButton.addEventListener("click", () => {
-  playCompletionSound(elements.completionSoundSelect.value).catch((error) => toast(error.message));
+  playCompletionSound(elements.completionSoundSelect.value).catch((error) => toast.error(error.message));
 });
 elements.abortButton.addEventListener("click", () => sendSocket({ type: "abort" }));
 async function promptInstall() {

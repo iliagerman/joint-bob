@@ -92,7 +92,7 @@ function messageActions(message) {
   copy.dataset.testid = "conversation-chat-copy";
   copy.addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(message.text); copy.textContent = "Copied"; }
-    catch (error) { toast(`Could not copy message: ${error.message}`); }
+    catch (error) { toast.error(`Could not copy message: ${error.message}`); }
   });
   const quote = document.createElement("button");
   quote.type = "button";
@@ -252,7 +252,7 @@ secrets.addEventListener("click", async () => {
         if (current === generation && url === loadedUrl) { acceptSnapshot(body); renderChat(); }
       },
     });
-  } catch (error) { toast(`Could not load Activity Chat secrets: ${error.message}`); }
+  } catch (error) { toast.error(`Could not load Activity Chat secrets: ${error.message}`); }
 });
 harnessSelect.addEventListener("change", () => fillModels(harnessSelect, modelSelect, {}));
 modelSelect.addEventListener("change", () => {
@@ -268,7 +268,7 @@ readOnly.addEventListener("change", async () => {
   try {
     const body = await api(url, { method: "PATCH", body: JSON.stringify({ readOnly: checked }) });
     if (current === generation && url === conversationUrl()) acceptSnapshot({ ...body, busy: false });
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
   finally {
     savingMode = false;
     if (current === generation) renderChat();
@@ -389,7 +389,7 @@ async function saveDefaults() {
     }) });
     byId("conversationChatSelectors").hidden = !defaults.showSelectors;
     if (!panel.hidden && !busy) await loadChat();
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
 }
 settingsHarness.addEventListener("change", () => {
   fillModels(settingsHarness, settingsModel, {});

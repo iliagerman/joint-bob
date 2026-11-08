@@ -54,7 +54,7 @@ export function initializeMobileProjectControls() {
   });
   document.querySelector("#focusCopyProjectPath").onclick = async () => {
     try { await navigator.clipboard.writeText(document.querySelector("#focusProjectPath").value); toast("Project path copied"); }
-    catch (error) { toast(`Could not copy path: ${error.message}`); }
+    catch (error) { toast.error(`Could not copy path: ${error.message}`); }
   };
   mobileFocusViewport.addEventListener("change", syncMobileProjectControls);
 }

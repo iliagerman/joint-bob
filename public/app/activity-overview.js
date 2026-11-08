@@ -86,17 +86,17 @@ async function openActivityOverview(conversationId, audio) {
     progress.stage("Checking the voice");
     voice = await readyVoice(() => api(url("story-voice", { voiceProvider: settings.voiceProvider })), progress.stage);
   } catch (error) {
-    toast(`Could not write the Activity overview. ${error.message}`, 12000);
+    toast.error(`Could not write the Activity overview. ${error.message}`);
     return;
   } finally {
     progress.done();
   }
   const narrates = settings.narrate && voice.available;
   // The movie is written for sound, so a silent one says why instead of playing as if nothing was wrong.
-  if (settings.narrate && !voice.available) toast(`The Activity overview plays without sound. ${voice.reason}`, 14000);
+  if (settings.narrate && !voice.available) toast.error(`The Activity overview plays without sound. ${voice.reason}`);
   const write = (extra, onProgress) => requestMovie(url("story-podcast"), { threadId: thread.id, settings, ...extra }, onProgress).then((line) => line.script);
   const movie = playStoryPodcast({
-    script, settings, host: document.body, notify: toast, audio,
+    script, settings, host: document.body, notify: toast.error, audio,
     onEnd: () => { if (live?.movie === movie) live = null; },
     narrate: narrates ? (text, who) => apiBlob(url("story-voice"), { method: "POST", body: JSON.stringify({ text, who, settings }) }) : null,
     ask: settings.ask ? (question, onProgress) => write({ question }, onProgress) : null,
@@ -113,6 +113,6 @@ for (const button of buttons) {
     // Played inside this click, so Safari lets the same element speak once the movie is written minutes later.
     const audio = new Audio();
     audio.play().catch(() => {});
-    openActivityOverview(session.conversationId ?? session.id, audio).catch((error) => toast(error.message));
+    openActivityOverview(session.conversationId ?? session.id, audio).catch((error) => toast.error(error.message));
   });
 }

@@ -260,7 +260,10 @@ async function saveConfig(notify = true) {
   editorDirty = false;
   const failed = (result.results ?? []).filter((entry) => !entry.delivered);
   await loadRoutingConfigs(result.config.id);
-  if (notify) toast(failed.length ? `Saved; sharing to ${failed[0].name} failed: ${failed[0].error}` : result.results?.length ? "Saved and redistributed to eligible nodes" : "Routing configuration saved");
+  if (notify) {
+    if (failed.length) toast.error(`Saved; sharing to ${failed[0].name} failed: ${failed[0].error}`);
+    else toast(result.results?.length ? "Saved and redistributed to eligible nodes" : "Routing configuration saved");
+  }
 }
 
 /** The dialog-wide Save action commits classifier edits before closing Settings. */
@@ -279,7 +282,8 @@ async function shareConfig() {
   await loadRoutingConfigs(editingId);
   if (!results.length) { toast("No eligible nodes to share with yet"); return; }
   const failed = results.filter((entry) => !entry.delivered);
-  toast(failed.length ? `Shared with ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}` : `Shared with ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
+  if (failed.length) toast.error(`Shared with ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}`);
+  else toast(`Shared with ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
 }
 
 async function deleteConfig() {
@@ -297,13 +301,13 @@ async function selectActiveConfig() {
   toast(elements.routingActiveConfigSelect.value ? "Active routing configuration updated" : "Automatic routing off");
 }
 
-function mutation(button, action) { button.addEventListener("click", () => action().catch(async (error) => { toast(error.message); try { await loadRoutingConfigs(); } catch { /* the panel refreshes on the next open */ } })); }
+function mutation(button, action) { button.addEventListener("click", () => action().catch(async (error) => { toast.error(error.message); try { await loadRoutingConfigs(); } catch { /* the panel refreshes on the next open */ } })); }
 mutation(elements.routingConfigCreateButton, createConfig);
 mutation(elements.routingConfigSaveButton, saveConfig);
 mutation(elements.routingConfigCloneButton, cloneConfig);
 mutation(elements.routingConfigShareButton, shareConfig);
 mutation(elements.routingConfigDeleteButton, deleteConfig);
-elements.routingActiveConfigSelect.addEventListener("change", () => { selectActiveConfig().catch((error) => toast(error.message)); });
+elements.routingActiveConfigSelect.addEventListener("change", () => { selectActiveConfig().catch((error) => toast.error(error.message)); });
 elements.routingHarnessSelect.addEventListener("change", () => selectHarness(elements.routingHarnessSelect.value));
 for (const control of [elements.routingConfigEditorNameInput, elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingContextMessages, elements.routingConfidence]) {
   control.addEventListener("input", markEditorDirty);

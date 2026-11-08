@@ -47,10 +47,10 @@ function sendPendingQuickNotePrompt() {
   if (!conversion || conversion.waitingForSettings) return;
   state.pendingQuickNoteConversion = null;
   if (!sendSocket({ type: "prompt", message: conversion.message, images: [], files: [] })) {
-    toast("Conversation connected, but the note could not be sent", 8000);
+    toast.error("Conversation connected, but the note could not be sent");
     return;
   }
-  Promise.resolve(conversion.onStarted?.()).catch((error) => toast(error.message, 8000));
+  Promise.resolve(conversion.onStarted?.()).catch((error) => toast.error(error.message));
 }
 
 export function closeSocket() {
@@ -178,7 +178,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   // The list renders before harness metadata arrives, and the engine is resolved from it below.
   // Opening without it threw after "Connecting…" was already on screen, with nothing left to retry.
   if (!state.harnesses.length) {
-    loadHarnesses().then(() => openSession(sessionPath, title, preserveChat, preserveTask, reviewHighlightAfter)).catch((error) => toast(error.message, 8000));
+    loadHarnesses().then(() => openSession(sessionPath, title, preserveChat, preserveTask, reviewHighlightAfter)).catch((error) => toast.error(error.message));
     return;
   }
   rememberDraft();
@@ -354,14 +354,14 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       state.pendingSessionTitle = null;
       saveSessionTitle(state.activeConversationId || payload.sessionId, state.engine, pendingTitle)
         .then(() => refreshSessionsQuietly())
-        .catch((error) => toast(error.message, 8000));
+        .catch((error) => toast.error(error.message));
     }
     const pendingColor = state.pendingSessionColor;
     if (pendingColor && payload.sessionId) {
       state.pendingSessionColor = null;
       saveSessionColor(state.activeConversationId || payload.sessionId, state.engine, pendingColor)
         .then(() => refreshSessionsQuietly())
-        .catch((error) => toast(error.message, 8000));
+        .catch((error) => toast.error(error.message));
     }
     // Match the conversations list by id first: a conversation reopened from the
     // board or a task carries an id before its file path is known here, and
@@ -411,13 +411,13 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       conversion.waitingForSettings = true;
       if (!sendSocket({ type: "setModel", provider: conversion.provider, modelId: conversion.modelId, ...(conversion.thinkingLevel ? { level: conversion.thinkingLevel } : {}) })) {
         state.pendingQuickNoteConversion = null;
-        toast("Conversation connected, but its saved model could not be selected", 8000);
+        toast.error("Conversation connected, but its saved model could not be selected");
       }
     } else if (conversion?.thinkingLevel) {
       conversion.waitingForSettings = true;
       if (!sendSocket({ type: "setThinking", level: conversion.thinkingLevel })) {
         state.pendingQuickNoteConversion = null;
-        toast("Conversation connected, but its saved thinking level could not be selected", 8000);
+        toast.error("Conversation connected, but its saved thinking level could not be selected");
       }
     } else {
       sendPendingQuickNotePrompt();
@@ -707,7 +707,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     }
     void reconcileTranscriptConflict(payload.error, {
       projectId: state.activeProjectId, engine: state.engine, sessionId: state.activeSessionId,
-    }).then((handled) => { if (!handled) toast(payload.error, 6000); });
+    }).then((handled) => { if (!handled) toast.error(payload.error); });
   }
 }
 

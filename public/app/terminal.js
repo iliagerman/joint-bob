@@ -249,7 +249,7 @@ export async function continueTaskOnNode(task, destination) {
 }
 elements.openTerminalButton.addEventListener("click", async () => {
   try { await openProjectTerminal(); }
-  catch (error) { toast(error.message, 8000); }
+  catch (error) { toast.error(error.message); }
 });
 elements.clearTerminalButton.addEventListener("click", () => { state.terminalEmulator?.clear(); });
 elements.closeTerminalButton.addEventListener("click", closeTerminalPanel);

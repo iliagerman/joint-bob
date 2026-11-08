@@ -27,7 +27,7 @@ function sendPrompt(message, attachments = state.attachments, clearComposer = tr
   else route = dispatchComposerInput(message, attachments.length > 0, composerCommandHandlers(), submit);
   if (route === "command") return;
   if (!sent) {
-    toast("Conversation is not connected yet");
+    toast.error("Conversation is not connected yet");
     return;
   }
   if (message) rememberPrompt(message);
@@ -261,7 +261,7 @@ elements.messageInput.addEventListener("paste", async (event) => {
   try {
     await addAttachments(images);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });
 
@@ -285,7 +285,7 @@ elements.composer.addEventListener("drop", async (event) => {
   try {
     await addAttachments(event.dataTransfer.files);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });
 

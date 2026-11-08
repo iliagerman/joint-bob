@@ -147,16 +147,16 @@ function save(event) {
   event.preventDefault();
   if (!elements.autoRespondEnabled.checked) {
     if (sendSocket({ type: "autoRespond", autoRespond: { enabled: false } })) elements.autoRespondDialog.close();
-    else toast("Not connected");
+    else toast.error("Not connected");
     return;
   }
   const harness = pickedHarness();
-  if (!harness) { toast("Choose a harness"); return; }
+  if (!harness) { toast.error("Choose a harness"); return; }
   const { provider, modelId } = selectedModel(elements.autoRespondModel);
   const limit = elements.autoRespondLimit.value.trim();
   let providerProfileId;
   try { providerProfileId = profilePicker.value(); }
-  catch (error) { toast(error.message); return; }
+  catch (error) { toast.error(error.message); return; }
   const config = {
     providerProfileId,
     harnessId: harness.id,
@@ -168,13 +168,13 @@ function save(event) {
     maxResponses: limit ? Number(limit) : null,
     useTools: elements.autoRespondUseTools.checked,
   };
-  if (!config.instructions) { toast("Write the instructions for the responder"); return; }
+  if (!config.instructions) { toast.error("Write the instructions for the responder"); return; }
   if (sendSocket({ type: "autoRespond", autoRespond: { enabled: true, config } })) elements.autoRespondDialog.close();
-  else toast("Not connected");
+  else toast.error("Not connected");
 }
 
 for (const button of [elements.autoRespondButton, elements.autoRespondPill]) {
-  button.addEventListener("click", () => void openAutoRespond().catch((error) => toast(error.message)));
+  button.addEventListener("click", () => void openAutoRespond().catch((error) => toast.error(error.message)));
 }
 elements.cancelAutoRespondButton.addEventListener("click", () => elements.autoRespondDialog.close());
 elements.autoRespondForm.addEventListener("submit", save);

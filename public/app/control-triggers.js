@@ -90,7 +90,7 @@ function closePanel() {
 function openPanel() {
   panel.hidden = false;
   bell.setAttribute("aria-expanded", "true");
-  fitted.first().catch((error) => toast(error.message));
+  fitted.first().catch((error) => toast.error(error.message));
 }
 
 bell.addEventListener("click", (event) => {
@@ -155,7 +155,7 @@ function renderTrigger(trigger) {
 /** The webhook lives in its project's Webhooks screen, which is also where the Automations tab sends the person. */
 function openWebhook(trigger) {
   closePanel();
-  openProjectWebhooks({ id: trigger.projectId, name: trigger.projectName }).catch((error) => toast(error.message));
+  openProjectWebhooks({ id: trigger.projectId, name: trigger.projectName }).catch((error) => toast.error(error.message));
 }
 
 /**
@@ -184,7 +184,7 @@ async function triage(trigger, button) {
     closePanel();
     sayToBob(message, projectId);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     button.disabled = false;
   }
 }
@@ -196,7 +196,7 @@ async function dismiss(trigger, button) {
     shownNew.delete(trigger.id);
     await fitted.reload();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     button.disabled = false;
   }
 }
@@ -208,7 +208,7 @@ async function dismissEvery() {
     shownNew.clear();
     await fitted.first();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     dismissAll.disabled = false;
   }
 }
@@ -242,5 +242,5 @@ window.addEventListener("control-center-changed", () => {
 window.addEventListener("control-bob-action", (event) => {
   if (event.detail.actionId !== "trigger.open") return;
   const { projectId, projectName } = event.detail.data;
-  openProjectWebhooks({ id: projectId, name: projectName }).catch((error) => toast(error.message));
+  openProjectWebhooks({ id: projectId, name: projectName }).catch((error) => toast.error(error.message));
 });

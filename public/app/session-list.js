@@ -380,7 +380,7 @@ function sessionMenuItems(session, sessionActive) {
       icon: "sliders",
       testid: "session-budget-button",
       title: "Limit what this conversation may spend",
-      onSelect: () => openBudgetDialog(conversationBudgetTarget(state.activeProjectId, session.conversationId || session.id, name)).catch((error) => toast(error.message)),
+      onSelect: () => openBudgetDialog(conversationBudgetTarget(state.activeProjectId, session.conversationId || session.id, name)).catch((error) => toast.error(error.message)),
     },
     // A fork is made where its source runs: a refusing machine would hold one this machine can't write in either.
     ...(runnerRefused ? [] : [{
@@ -388,48 +388,48 @@ function sessionMenuItems(session, sessionActive) {
       icon: "copy",
       testid: "session-fork-button",
       title: "Copy history and settings into an independent conversation",
-      onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
+      onSelect: () => forkSessionFromRow(session).catch((error) => toast.error(error.message)),
     }]),
     {
       label: "Move or copy to project…",
       icon: "copy",
       testid: "session-transfer-button",
       title: "Move this conversation to another project, or copy it there",
-      onSelect: () => transferSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
+      onSelect: () => transferSessionFromRow(session, sessionActive).catch((error) => toast.error(error.message)),
     },
     {
       label: session.doneAt ? "Mark not done" : "Mark done",
       icon: "check",
       testid: "session-done-button",
       title: session.doneAt ? "Put it back in the active list" : "Hide it from the list until you ask for done conversations",
-      onSelect: () => toggleSessionDone(session).catch((error) => toast(error.message)),
+      onSelect: () => toggleSessionDone(session).catch((error) => toast.error(error.message)),
     },
     ...(readOnly ? [] : [
       {
         label: session.reviewNotificationsEnabled ? "Stop review notifications" : "Notify when ready for review",
         icon: "sliders",
         testid: "session-review-notifications-button",
-        onSelect: () => toggleSessionReviewNotifications(session).catch((error) => toast(error.message)),
+        onSelect: () => toggleSessionReviewNotifications(session).catch((error) => toast.error(error.message)),
       },
       {
         label: session.ntfyEnabled ? "Stop ntfy publishing" : "Publish reviews to ntfy",
         icon: "sliders",
         testid: "session-ntfy-button",
-        onSelect: () => toggleSessionNtfy(session).catch((error) => toast(error.message)),
+        onSelect: () => toggleSessionNtfy(session).catch((error) => toast.error(error.message)),
       },
-      { label: "Scheduled tasks", icon: "refresh", testid: "session-cron-button", onSelect: () => openScheduledTasks(state.activeProjectId, session).catch(error => toast(error.message)) },
+      { label: "Scheduled tasks", icon: "refresh", testid: "session-cron-button", onSelect: () => openScheduledTasks(state.activeProjectId, session).catch(error => toast.error(error.message)) },
       {
         label: "Secret accounts",
         icon: "key",
         testid: "session-secrets-button",
         title: "Accounts this conversation gets on top of its project's and workspace's",
-        onSelect: () => openSecretScope("conversation", `${sessionEngine(session)}:${session.id}`, name).catch((error) => toast(error.message)),
+        onSelect: () => openSecretScope("conversation", `${sessionEngine(session)}:${session.id}`, name).catch((error) => toast.error(error.message)),
       },
       {
         label: "Classification",
         icon: "sliders",
         testid: "session-classification-button",
-        onSelect: () => openConversationClassificationDialog(session).catch((error) => toast(error.message)),
+        onSelect: () => openConversationClassificationDialog(session).catch((error) => toast.error(error.message)),
       },
       {
         label: "Colour",
@@ -448,7 +448,7 @@ function sessionMenuItems(session, sessionActive) {
         icon: "trash",
         testid: "session-remove-button",
         danger: true,
-        onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
+        onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast.error(error.message)),
       },
     ]),
   ];
@@ -476,7 +476,7 @@ elements.chatDoneButton.addEventListener("click", () => {
   const session = activeChatSession();
   if (!session) { toast("Open a conversation first"); return; }
   elements.chatMoreMenu.open = false;
-  toggleSessionDone(session).catch((error) => toast(error.message));
+  toggleSessionDone(session).catch((error) => toast.error(error.message));
 });
 
 /** The one label has to say what the click will do, on whichever conversation is open. */
@@ -554,7 +554,7 @@ async function toggleSessionDone(session) {
   } catch (error) {
     throw new Error(`${done ? "Could not mark the conversation done" : "Could not reopen the conversation"}: ${error.message}`);
   }
-  if (result.feedbackError) toast(`Conversation is done, but learning failed: ${result.feedbackError}`, 10000);
+  if (result.feedbackError) toast.error(`Conversation is done, but learning failed: ${result.feedbackError}`);
   else if (done && feedback.rating !== "unimportant") toast("Feedback reviewed. Any new rule proposals are in Project knowledge.");
   if (state.activeProjectId !== projectId) return;
   void refreshSessionsQuietly();

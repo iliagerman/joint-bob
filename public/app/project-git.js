@@ -50,7 +50,7 @@ export async function openProjectGit(project, { nodeId = "", repository, tab = "
       return false;
     }
     return true;
-  } }).catch((error) => toast(error.message, 8000));
+  } }).catch((error) => toast.error(error.message));
 }
 
 function activeTab() {

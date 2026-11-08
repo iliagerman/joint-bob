@@ -77,7 +77,7 @@ async function shareNtfyService(service) {
         ? `Sharing is on. Delivered to ${delivered} node${delivered === 1 ? "" : "s"}; ${pending} offline node${pending === 1 ? "" : "s"} will get it when back online`
         : `Sharing is on${results.length ? `; delivered to ${results.length} node${results.length === 1 ? "" : "s"}` : ""}`, pending ? 8000 : 3000);
       await loadNtfyServicesPanel();
-    } catch (error) { toast(error.message, 8000); }
+    } catch (error) { toast.error(error.message); }
     finally { busy(false); }
   });
   dialog.append(card); document.body.append(dialog);
@@ -107,19 +107,19 @@ function renderNtfyService(service) {
       await api(`/api/ntfy/services/${encodeURIComponent(service.id)}/default`, { method: "PUT" });
       await loadNtfyServicesPanel();
       toast(`${service.name} is the default ntfy service`);
-    } catch (error) { toast(error.message, 8000); }
+    } catch (error) { toast.error(error.message); }
   }));
   actions.append(serviceButton("Manage", "ntfy-service-manage-button", "ghost compact", () => openNtfyManager(service, loadNtfyServicesPanel)));
   actions.lastChild.setAttribute("aria-label", `Manage ntfy service ${service.name}`);
   actions.append(serviceButton("Share", "ntfy-service-share-button", "ghost compact", async () => {
-    try { await shareNtfyService(service); } catch (error) { toast(error.message, 8000); }
+    try { await shareNtfyService(service); } catch (error) { toast.error(error.message); }
   }));
   const remove = serviceButton("Remove", "ntfy-service-remove-button", "ghost compact danger", async () => {
     try {
       await api(`/api/ntfy/services/${encodeURIComponent(service.id)}`, { method: "DELETE" });
       await loadNtfyServicesPanel();
       toast("ntfy service removed");
-    } catch (error) { toast(error.message, 8000); }
+    } catch (error) { toast.error(error.message); }
   });
   remove.setAttribute("aria-label", `Remove ntfy service ${service.name}`);
   actions.append(remove);
@@ -137,7 +137,7 @@ export async function loadNtfyServicesPanel() {
     elements.ntfyServiceList.replaceChildren(...services.map(renderNtfyService));
     syncNtfyManager(services);
     syncErrorReportingServices(services);
-  } catch (error) { toast(error.message, 8000); }
+  } catch (error) { toast.error(error.message); }
 }
 
 elements.ntfyServiceAddButton.addEventListener("click", async () => {
@@ -156,7 +156,7 @@ elements.ntfyServiceAddButton.addEventListener("click", async () => {
     await loadNtfyServicesPanel();
     toast("ntfy service added");
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   }
 });
 
@@ -209,7 +209,7 @@ elements.ntfyForm.addEventListener("submit", async (event) => {
     if (state.activeProjectId === pending.projectId) await refreshSessionsQuietly();
     toast("Review notifications will publish to ntfy");
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
   } finally {
     submit.disabled = false;
   }

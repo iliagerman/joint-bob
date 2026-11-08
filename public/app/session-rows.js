@@ -137,7 +137,7 @@ export function togglePinnedProject(projectId) {
   state.pinnedProjectIds = state.pinnedProjectIds.filter((id) => id !== projectId);
   if (state.preferencesLoaded) {
     savePreferencesInBackground({ pinnedProjectIds: state.pinnedProjectIds });
-    void savePin({ kind: "project", projectId }, pinned).catch((error) => toast(error.message));
+    void savePin({ kind: "project", projectId }, pinned).catch((error) => toast.error(error.message));
   }
   renderProjects();
 }
@@ -154,7 +154,7 @@ export function togglePinnedSession(session) {
   if (state.preferencesLoaded) {
     savePreferencesInBackground({ pinnedSessionPaths: state.pinnedSessionPaths });
     for (const target of pinned ? [identity] : [identity, ...legacy]) {
-      void savePin({ kind: "conversation", ...target }, pinned).catch((error) => toast(error.message));
+      void savePin({ kind: "conversation", ...target }, pinned).catch((error) => toast.error(error.message));
     }
   }
   renderSessions();

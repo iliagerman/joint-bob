@@ -30,7 +30,7 @@ export async function copyConversationLink(successMessage = "Conversation link c
     await navigator.clipboard.writeText(link);
     toast(successMessage);
   } catch (error) {
-    toast(`Failed to copy link: ${error.message}`);
+    toast.error(`Failed to copy link: ${error.message}`);
   }
 }
 
@@ -41,7 +41,7 @@ export async function shareConversation() {
   try {
     await navigator.share({ title: getCurrentConversationTitle(), url: link });
   } catch (error) {
-    if (error.name !== "AbortError") toast(`Failed to share link: ${error.message}`);
+    if (error.name !== "AbortError") toast.error(`Failed to share link: ${error.message}`);
   }
 }
 
@@ -100,7 +100,7 @@ document.addEventListener("activeConversationChanged", async () => {
     personalButton.title = label;
     personalButton.setAttribute("aria-label", label);
     personalLabel.textContent = label;
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
 });
 personalButton.addEventListener("click", async () => {
   const projectId = state.activeConversationProjectId || state.activeProjectId;
@@ -113,7 +113,7 @@ personalButton.addEventListener("click", async () => {
     personalConversation = { projectId, engine: state.engine, sessionId };
     document.querySelector("#personalAssistantName").value = getCurrentConversationTitle();
     personalDialog.showModal();
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
 });
 document.querySelector("#personalAssistantCancel").addEventListener("click", () => personalDialog.close());
 personalForm.addEventListener("submit", async event => {
@@ -126,6 +126,6 @@ personalForm.addEventListener("submit", async event => {
     const { assistant } = await api("/api/personal-assistants", { method: "POST", body: JSON.stringify({ ...personalConversation, name, instructions: "" }) });
     personalDialog.close();
     location.href = `/assistant.html?id=${encodeURIComponent(assistant.id)}`;
-  } catch (error) { toast(error.message); } finally { button.disabled = false; }
+  } catch (error) { toast.error(error.message); } finally { button.disabled = false; }
 });
 elements.chatMoreMenu.querySelector(".chat-more-actions").append(shareButton, pinButton, personalButton);

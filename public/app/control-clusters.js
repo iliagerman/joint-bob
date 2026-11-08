@@ -41,7 +41,7 @@ const head = makeNode("div", "clusters-head");
 const heading = makeNode("div");
 const hint = testid(makeNode("p", "clusters-hint"), "clusters-hint");
 heading.append(makeNode("h2", "", "Clusters"), hint);
-const refreshButton = makeButton("Refresh", "clusters-refresh", () => load().catch((error) => toast(error.message)));
+const refreshButton = makeButton("Refresh", "clusters-refresh", () => load().catch((error) => toast.error(error.message)));
 head.append(heading, refreshButton);
 
 const bar = makeNode("div", "control-bar clusters-bar");
@@ -132,7 +132,7 @@ function renderCard({ agent, machine }) {
   live.append(makeNode("span", `control-pulse ${agent.state === "running" ? "running" : "review"}`), makeNode("span", "control-live-text", briefStatus(agent.summary) ?? (agent.state === "running" ? "Working…" : "Background work is still running")));
   const meta = [agent.agentLabel, agent.agentModel, agent.state === "background" ? "background work" : null, ago(agent.updatedAt)].filter(Boolean).join(" · ");
   card.append(top, makeNode("h3", "control-title", agent.title), live, makeNode("div", "control-meta", meta), testid(makeNode("div", "cluster-card-foot", "Read-only · click to open"), "cluster-card-open"));
-  const open = () => diveIn(agent, machine).catch((error) => toast(error.message));
+  const open = () => diveIn(agent, machine).catch((error) => toast.error(error.message));
   card.addEventListener("click", open);
   card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
   return card;
@@ -228,7 +228,7 @@ window.addEventListener("app-view-changed", syncDive);
 async function diveIn(agent, machine) {
   const { nodes } = await api(`/api/projects/${encodeURIComponent(agent.projectId)}/session-nodes?nodeId=${encodeURIComponent(agent.nodeId)}`);
   if (!nodes.find((node) => node.id === agent.nodeId)?.online) {
-    toast(`${machine.name} is not answering, so ${agent.title} cannot be opened right now`, 8000);
+    toast.error(`${machine.name} is not answering, so ${agent.title} cannot be opened right now`);
     return;
   }
   if (state.activeProjectId !== agent.projectId) await selectProject(agent.projectId);
@@ -266,7 +266,7 @@ export function load() {
   return loading;
 }
 
-const tab = registerControlView({ id: "clusters", title: "Clusters", order: 3, element: root, onShow: () => { load().catch((error) => toast(error.message)); } });
+const tab = registerControlView({ id: "clusters", title: "Clusters", order: 3, element: root, onShow: () => { load().catch((error) => toast.error(error.message)); } });
 
 // The badge shows as soon as the control center opens, and follows the same signals as the board.
 window.addEventListener("control-center-activated", () => { load().catch((error) => console.warn("Could not load the clusters", error)); });

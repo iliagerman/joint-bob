@@ -436,7 +436,7 @@ async function copyStoryError() {
     await navigator.clipboard.writeText(story.errorDetails);
     toast("Error details copied");
   } catch (error) {
-    toast(`Could not copy error details: ${error.message}. Select the text under Error details to copy it manually.`, 6000);
+    toast.error(`Could not copy error details: ${error.message}. Select the text under Error details to copy it manually.`);
   }
 }
 
@@ -515,8 +515,8 @@ function videoSuggestion() {
   }
   const { saved } = shown();
   const narrate = story.voice.narrates ? (text) => speakLine(text, "host") : null;
-  const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
-  const save = async () => { try { await exportStoryHtml(saved.story, saved.facts); } catch (error) { toast(`Could not save the HTML file: ${error.message}`); } };
+  const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast.error, voice });
+  const save = async () => { try { await exportStoryHtml(saved.story, saved.facts); } catch (error) { toast.error(`Could not save the HTML file: ${error.message}`); } };
   return h("div", { class: "gsv-suggest", "data-testid": "git-story-video-suggestion" },
     h("p", {}, h("b", {}, "Walk through this story as a video. "), "The video covers the animated flow, worked examples, files, design decisions and the review checklist."),
     h("div", { class: "gsv-suggest-row" },
@@ -1082,6 +1082,6 @@ async function copyMarkdown() {
     await navigator.clipboard.writeText(storyMarkdown(story.latest.saved));
     toast("Copied the story as Markdown. The flow diagram is a Mermaid block, so GitHub draws it.");
   } catch {
-    toast("The browser blocked the clipboard.", 6000);
+    toast.error("The browser blocked the clipboard.");
   }
 }

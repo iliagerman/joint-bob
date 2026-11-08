@@ -65,7 +65,7 @@ function renderRunningEntry(group, entry) {
     meta.append(document.createTextNode(" · "), indicator);
   }
   button.append(title, meta);
-  button.addEventListener("click", () => openRunningConversation(group, entry).catch((error) => toast(error.message)));
+  button.addEventListener("click", () => openRunningConversation(group, entry).catch((error) => toast.error(error.message)));
   elements.runningConversationsList.append(button);
 }
 
@@ -142,7 +142,7 @@ export async function openRunningConversationsDialog() {
     await refreshRunningConversations();
   } catch (error) {
     elements.runningConversationsDialog.close();
-    toast(error.message);
+    toast.error(error.message);
   }
 }
 
@@ -151,4 +151,4 @@ for (const trigger of document.querySelectorAll("[data-running-conversations-ope
 }
 elements.closeRunningConversationsButton.addEventListener("click", () => elements.runningConversationsDialog.close());
 elements.runningConversationsDialog.addEventListener("close", () => clearInterval(refreshInterval));
-attachDigitShortcuts(elements.runningConversationsDialog, () => runningShortcuts, (row) => openRunningConversation(row.group, row.entry).catch((error) => toast(error.message)));
+attachDigitShortcuts(elements.runningConversationsDialog, () => runningShortcuts, (row) => openRunningConversation(row.group, row.entry).catch((error) => toast.error(error.message)));

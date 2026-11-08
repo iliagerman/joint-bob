@@ -186,7 +186,7 @@ function renderStrip() {
     item.dataset.node = candidate.id;
     const all = button("Move all…", "control-moves-all", "control-moves-link");
     all.title = `Select every unfinished agent on ${candidate.name} and choose where to move them`;
-    all.addEventListener("click", () => startSelecting(candidate.id).catch((error) => toast(error.message)));
+    all.addEventListener("click", () => startSelecting(candidate.id).catch((error) => toast.error(error.message)));
     item.append(node("i", `control-moves-dot${candidate.online ? "" : " offline"}`), document.createTextNode(`${candidate.name} · ${running} running `), all);
     strip.append(item);
   }
@@ -266,7 +266,7 @@ function renderJob() {
   const stopWaiting = button("Stop waiting", "control-moves-job-cancel");
   stopWaiting.hidden = finished || !job.entries.some((entry) => entry.status === "waiting");
   stopWaiting.title = "Conversations still waiting for a turn to end stay where they are";
-  stopWaiting.addEventListener("click", () => api(`/api/control-center/moves/${encodeURIComponent(job.id)}/cancel`, { method: "POST" }).then(() => poll(job.id)).catch((error) => toast(error.message)));
+  stopWaiting.addEventListener("click", () => api(`/api/control-center/moves/${encodeURIComponent(job.id)}/cancel`, { method: "POST" }).then(() => poll(job.id)).catch((error) => toast.error(error.message)));
   heading.append(node("span", "control-spacer"), stopWaiting, close);
   const pages = Math.max(1, Math.ceil(job.entries.length / PAGE));
   jobPage = Math.min(jobPage, pages - 1);
@@ -309,7 +309,7 @@ async function poll(id) {
       return;
     }
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     return;
   }
   pollTimer = setTimeout(() => poll(id), POLL_MS);
@@ -334,8 +334,8 @@ async function start(mode) {
   void poll(job.id);
 }
 
-stopAndMove.addEventListener("click", () => start("now").catch((error) => toast(error.message)));
-moveLater.addEventListener("click", () => start("after-turn").catch((error) => toast(error.message)));
+stopAndMove.addEventListener("click", () => start("now").catch((error) => toast.error(error.message)));
+moveLater.addEventListener("click", () => start("after-turn").catch((error) => toast.error(error.message)));
 
 // A batch that is already going (started from Bob's chat, or before the page was reloaded) is followed too.
 let lastLookedAt = 0;

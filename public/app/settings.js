@@ -123,19 +123,19 @@ function selectSettingsTab(requested) {
   if (name === "automation-tags") void loadAutomationTags();
   if (name === "notifications") { void loadNtfyServicesPanel(); void loadErrorReportingSettings(); }
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
-  if (name === "guardian" || name === "classifiers") void loadGuardianSettings().catch((error) => toast(error.message));
+  if (name === "guardian" || name === "classifiers") void loadGuardianSettings().catch((error) => toast.error(error.message));
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "file-sync") void loadFileSyncSettings(); // settings-page (P4)
-  if (name === "connections") void loadProviderProfiles().catch((error) => toast(error.message));
-  if (name === "story") void loadStorySettings().catch((error) => toast(error.message));
-  if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
-  if (name === "conversations") void loadSummaryModelSettings().catch((error) => toast(error.message));
-  if (name === "users") void loadUsers().catch((error) => toast(error.message));
-  if (name === "account") void loadMyNodes().catch((error) => toast(error.message));
+  if (name === "connections") void loadProviderProfiles().catch((error) => toast.error(error.message));
+  if (name === "story") void loadStorySettings().catch((error) => toast.error(error.message));
+  if (name === "git") void loadGitReviewerSettings().catch((error) => toast.error(error.message));
+  if (name === "conversations") void loadSummaryModelSettings().catch((error) => toast.error(error.message));
+  if (name === "users") void loadUsers().catch((error) => toast.error(error.message));
+  if (name === "account") void loadMyNodes().catch((error) => toast.error(error.message));
   if (name === "node") {
-    void loadNodeBlocks().catch((error) => toast(error.message));
-    void loadTerminalPolicy().catch((error) => toast(error.message));
+    void loadNodeBlocks().catch((error) => toast.error(error.message));
+    void loadTerminalPolicy().catch((error) => toast.error(error.message));
   }
 }
 
@@ -424,7 +424,7 @@ function renderRuntimeReadiness(readiness) {
   })));
 }
 async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
-function useHarnessDefaults(id) { clearedHarnessesOnSave.add(id); for (const input of Object.values(runtimeFields[id])) input.value = ""; checkRuntimePaths().catch((error) => toast(error.message)); }
+function useHarnessDefaults(id) { clearedHarnessesOnSave.add(id); for (const input of Object.values(runtimeFields[id])) input.value = ""; checkRuntimePaths().catch((error) => toast.error(error.message)); }
 function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).filter(([id]) => id !== "kiro" || kiroEnabledValue()).flatMap(([id, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[id][field] !== runtimeDefaults[id][field]).map(([field]) => runtimeLabels[id][field])); }
 export const projectResourceFields = { skills: elements.projectResourceSkillsPaths, prompts: elements.projectResourcePromptsPaths, rules: elements.projectResourceRulesPaths, plugins: elements.projectResourcePluginsPaths };
 export function fillResourceFields(fields, resources) { for (const [type, field] of Object.entries(fields)) field.value = (resources[type] || []).join("\n"); }
@@ -451,7 +451,7 @@ export async function openSettings(tab = "account") {
   // do not depend on local harness/model discovery or Save settings.
   for (const panel of elements.settingsPanels) panel.inert = !ownLoading(panel);
   for (const load of [loadSecretAccounts, loadChangelogPanel, loadMfaSettings, loadClusterPanel, ...(isNodeAdmin() ? [loadUpdatesPanel] : []), loadWorkspaces]) {
-    void load().catch((error) => toast(error.message));
+    void load().catch((error) => toast.error(error.message));
   }
   try {
     await loadSettings();
@@ -577,7 +577,7 @@ function addSavedCommandRow(command = { name: "", prompt: "" }) {
       }
       const { openCommandSharing } = await import("./command-sharing.js");
       await openCommandSharing(row.dataset.commandId);
-    } catch (error) { toast(error.message); }
+    } catch (error) { toast.error(error.message); }
   });
   row.append(name, prompt, remove, share);
   savedCommandsList.append(row);
@@ -687,12 +687,12 @@ async function saveSettings(event) {
   toast("Settings saved");
 }
 
-elements.settingsButton.addEventListener("click", () => openSettings().catch((error) => toast(error.message)));
+elements.settingsButton.addEventListener("click", () => openSettings().catch((error) => toast.error(error.message)));
 async function runSkillOperation(operation) {
   const buttons = [elements.settingsSyncSkillsButton, elements.settingsReloadSkillsButton];
   for (const item of buttons) item.disabled = true;
   try { await operation(); await loadSkills(true); }
-  catch (error) { elements.settingsSkillsStatus.textContent = error.message; toast(error.message); }
+  catch (error) { elements.settingsSkillsStatus.textContent = error.message; toast.error(error.message); }
   finally { for (const item of buttons) item.disabled = false; }
 }
 
@@ -717,7 +717,7 @@ async function reloadSkills() {
 
 elements.settingsSyncSkillsButton.addEventListener("click", () => runSkillOperation(syncLocalSkills));
 elements.settingsReloadSkillsButton.addEventListener("click", () => runSkillOperation(reloadSkills));
-elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast(error.message)));
+elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast.error(error.message)));
 elements.settingsAutoCompactEnabled.addEventListener("change", () => { elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked; });
 elements.settingsShellTimeoutEnabled.addEventListener("change", () => { elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked; });
 elements.settingsConversationCpuLimitEnabled.addEventListener("change", () => { elements.settingsConversationCpuLimitCores.disabled = !elements.settingsConversationCpuLimitEnabled.checked; });
@@ -776,7 +776,7 @@ elements.settingsClientLogsCopyButton.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(window.jointBobClientLogs?.entries().join("\n") || "");
     toast("Client logs copied");
-  } catch (error) { toast(error.message || "Could not copy client logs"); }
+  } catch (error) { toast.error(error.message || "Could not copy client logs"); }
 });
 elements.settingsClientLogsClearButton.addEventListener("click", () => window.jointBobClientLogs?.clear());
 window.addEventListener("joint-bob-client-logs-changed", () => {
@@ -787,7 +787,7 @@ elements.settingsLogoutButton.addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });
     showSignedOut();
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });
 document.querySelector("#settingsChangeEmailButton").addEventListener("click", async (event) => {
@@ -811,7 +811,7 @@ document.querySelector("#settingsChangeEmailButton").addEventListener("click", a
 elements.settingsChangePasswordButton.addEventListener("click", async () => {
   const newPassword = elements.settingsNewPassword.value;
   if (newPassword !== elements.settingsNewPasswordRepeat.value) {
-    toast("New passwords do not match");
+    toast.error("New passwords do not match");
     return;
   }
   try {
@@ -822,7 +822,7 @@ elements.settingsChangePasswordButton.addEventListener("click", async () => {
     for (const input of [elements.settingsCurrentPassword, elements.settingsNewPassword, elements.settingsNewPasswordRepeat]) input.value = "";
     toast("Password changed");
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   }
 });
 let settingsSaving = false;
@@ -840,7 +840,7 @@ elements.settingsForm.addEventListener("submit", async (event) => {
     await saveSettings(event);
   } catch (error) {
     elements.settingsRestartMessage.textContent = `Could not save settings: ${error.message}`;
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     settingsSaving = false;
     button.disabled = false;

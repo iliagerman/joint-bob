@@ -151,14 +151,14 @@ function toggleSheet(group) {
 
 function open(card) {
   closeSheet();
-  openConversation(card).catch((error) => toast(error.message));
+  openConversation(card).catch((error) => toast.error(error.message));
 }
 
 function decide({ card, review }, decision, buttons) {
   for (const control of buttons) control.disabled = true;
   api("/api/control-center/guardian/decide", { method: "POST", body: JSON.stringify({ projectId: card.projectId, conversationId: card.conversationId, reviewId: review.id, decision }) })
     .then(() => refreshControlCenter())
-    .catch((error) => { toast(error.message); for (const control of buttons) control.disabled = false; });
+    .catch((error) => { toast.error(error.message); for (const control of buttons) control.disabled = false; });
 }
 
 /** What each kind of row says under its title. */
@@ -193,7 +193,7 @@ function buildRow(entry) {
     for (const action of cardActionList(card).filter((candidate) => LEASE_LABELS[candidate.id])) {
       actions.append(button(LEASE_LABELS[action.id], "phone-action", `control-phone-${action.id}`, () => {
         if (action.id === "take-control") closeSheet();
-        Promise.resolve(action.run(card)).catch((error) => toast(error.message));
+        Promise.resolve(action.run(card)).catch((error) => toast.error(error.message));
       }));
     }
   }

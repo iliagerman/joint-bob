@@ -44,7 +44,7 @@ async function saveSummaryPolicy() {
     document.dispatchEvent(new CustomEvent("summary-policy-changed"));
   } catch (error) {
     console.warn("Could not save the summary settings", error);
-    toast(error.message || "Could not save the summary settings");
+    toast.error(error.message || "Could not save the summary settings");
   }
 }
 
@@ -72,7 +72,7 @@ async function saveInstructions(text) {
     showInstructions(true);
   } catch (error) {
     console.warn("Could not save the summary instructions", error);
-    toast(error.message || "Could not save the summary instructions");
+    toast.error(error.message || "Could not save the summary instructions");
   }
 }
 
@@ -117,7 +117,7 @@ elements.settingsSummaryRelayApply.addEventListener("change", async () => {
     await api("/api/conversation-summary/relay-policy", { method: "PUT", body: JSON.stringify({ policy: elements.settingsSummaryRelayApply.checked ? policyFromForm() : null }) });
   } catch (error) {
     elements.settingsSummaryRelayApply.checked = !elements.settingsSummaryRelayApply.checked;
-    toast(error.message || "Could not update the relay's summary policy");
+    toast.error(error.message || "Could not update the relay's summary policy");
   }
 });
 // Saved when the box loses focus with a change; empty text goes back to the built-in instructions.

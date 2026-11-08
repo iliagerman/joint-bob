@@ -138,7 +138,7 @@ async function saveQueue() {
     const body = await api("/api/quick-notes/queue", { method: "PUT", body: JSON.stringify({ queue: { enabled: queueToggle.checked, maxParallel } }) });
     applyQueueState(body.queue || { enabled: queueToggle.checked, maxParallel });
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
     await loadQueue();
   } finally {
     queueSaving = false;
@@ -170,7 +170,7 @@ export function showQuickNotes() {
   renderProjectFilter();
   setProjectContentTab("notes");
   setMobileView("sessions");
-  void refreshQuickNotes().catch((error) => toast(error.message));
+  void refreshQuickNotes().catch((error) => toast.error(error.message));
   requestAnimationFrame(() => filterSelect.focus());
 }
 
@@ -254,7 +254,7 @@ export function renderQuickNotes() {
       button.append(badge);
     }
     button.addEventListener("click", () => {
-      if (consumed) void openNoteConversation(note).catch((error) => toast(error.message, 8000));
+      if (consumed) void openNoteConversation(note).catch((error) => toast.error(error.message));
       else void openQuickNote(note);
     });
 
@@ -268,7 +268,7 @@ export function renderQuickNotes() {
     start.title = consumed ? "Open conversation without resuming" : "Start as conversation";
     start.textContent = consumed ? "Open conversation" : "▶";
     start.addEventListener("click", () => {
-      void (consumed ? openNoteConversation(note) : startSavedNote(note)).catch((error) => toast(error.message, 8000));
+      void (consumed ? openNoteConversation(note) : startSavedNote(note)).catch((error) => toast.error(error.message));
     });
     const remove = document.createElement("button");
     remove.type = "button";
@@ -277,7 +277,7 @@ export function renderQuickNotes() {
     remove.setAttribute("aria-label", `Delete ${note.title}`);
     remove.title = "Delete note";
     remove.textContent = "×";
-    remove.addEventListener("click", () => { void removeNote(note).catch((error) => toast(error.message)); });
+    remove.addEventListener("click", () => { void removeNote(note).catch((error) => toast.error(error.message)); });
     const queue = state.quickNotes.filter(candidate => !candidate.dispatchedAt && candidate.ownerNodeId === note.ownerNodeId);
     const index = queue.findIndex(candidate => candidate.id === note.id);
     for (const [direction, offset, label] of consumed ? [] : [["up", -1, "↑"], ["down", 1, "↓"]]) {
@@ -295,7 +295,7 @@ export function renderQuickNotes() {
         try {
           await api(`/api/quick-notes/${encodeURIComponent(note.id)}/move`, { method: "POST", body: JSON.stringify({ targetId: target.id }) });
           await refreshQuickNotes();
-        } catch (error) { toast(error.message); renderQuickNotes(); }
+        } catch (error) { toast.error(error.message); renderQuickNotes(); }
       });
       actions.append(move);
     }
@@ -482,7 +482,7 @@ dialog.addEventListener("close", () => { ++dialogGeneration; ++optionsRequestId;
 
 export async function openQuickNote(note = null, { chooseProject = false } = {}) {
   if (note?.dispatchedAt) {
-    await openNoteConversation(note).catch((error) => toast(error.message, 8000));
+    await openNoteConversation(note).catch((error) => toast.error(error.message));
     return;
   }
   const defaultProjectId = state.activeProjectId || (chooseProject ? state.projects[0]?.id : null);
@@ -621,7 +621,7 @@ notesTab.addEventListener("click", showQuickNotes);
 openButtons.forEach((button) => button.addEventListener("click", showQuickNotes));
 filterSelect.addEventListener("change", () => {
   filterProjectId = filterSelect.value;
-  void refreshQuickNotes().catch((error) => toast(error.message));
+  void refreshQuickNotes().catch((error) => toast.error(error.message));
 });
 searchInput.addEventListener("input", renderQuickNotes);
 document.querySelector("#cancelQuickNoteButton").addEventListener("click", () => dialog.close());
@@ -659,7 +659,7 @@ convertButton.addEventListener("click", () => {
       await startSavedNote(saved || note);
       dialog.close();
     } catch (error) {
-      toast(error.message, 8000);
+      toast.error(error.message);
     } finally {
       formSaving = false;
       updateFormControls();

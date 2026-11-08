@@ -421,7 +421,7 @@ async function applySharing(skills, mode, chosen, dialog) {
       : `Shared ${updated} skill${updated === 1 ? "" : "s"} with ${targetNames(chosen).join(", ")}. Receivers update on Refresh or within 30 seconds while online.`;
     setStatus(`${done}${failed.length ? ` Failed: ${failed.join("; ")}.` : ""}`);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     for (const control of dialog.querySelectorAll("button")) control.disabled = false;
   }
 }
@@ -494,7 +494,7 @@ function activationControl(kind, item, local, supported) {
       } catch (error) {
         input.checked = selected;
         for (const control of controls.querySelectorAll("input, button")) control.disabled = false;
-        toast(error.message);
+        toast.error(error.message);
       }
     };
     input.addEventListener("change", () => void saveChoice(input.checked));
@@ -599,7 +599,7 @@ function skillRow(skill, local) {
     summary.dataset.testid = "skill-sharing-summary";
     summary.textContent = policy ? sharingSummary(policy) : "Not managed yet";
     summary.title = policy ? targetNames(grantsOf(policy)).join(", ") || "Only conversations on this node" : "Share imports it into managed skills first.";
-    actions.append(summary, button("Share…", "skill-share-button", () => void openShareDialog([skill]).catch((error) => toast(error.message))));
+    actions.append(summary, button("Share…", "skill-share-button", () => void openShareDialog([skill]).catch((error) => toast.error(error.message))));
     if (policy) actions.append(skillRemoveButton(skill, false));
   }
   head.append(actions);
@@ -688,7 +688,7 @@ async function startMcpSignIn(serverName) {
     setStatus("");
   } catch (error) {
     tab?.close();
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     view.mcpAuth.busy = false;
     render();
@@ -712,7 +712,7 @@ async function finishMcpSignIn(callbackUrl) {
     }
   } catch (error) {
     if (/sign-in has ended/.test(error.message)) view.mcpAuth.flow = null;
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     view.mcpAuth.busy = false;
     render();
@@ -733,7 +733,7 @@ async function signOutMcp(serverName) {
   try {
     await api("/api/resources/mcp/auth/sign-out", { method: "POST", body: JSON.stringify({ serverName, ...(mcpAuthProject() ? { projectId: mcpAuthProject() } : {}) }) });
     toast(`Signed out of ${serverName}`);
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
   finally { view.mcpAuth.busy = false; await loadMcpAuth(true); }
 }
 
@@ -919,7 +919,7 @@ async function bulkActivation(kind, enabled, choices) {
     const result = await api("/api/resources/activation/bulk", { method: "PUT", body: JSON.stringify({ ...nodeTarget(), kind, enabled, items: choices.map(({ name, harness }) => ({ name, harness })), ...(view.scope !== "cluster" && projectId ? { projectId } : {}), ...(view.scope === "conversation" && conversationId ? { conversationId } : {}) }) });
     await loadInventory();
     setStatus(`${result.changed} agent choice${result.changed === 1 ? "" : "s"} ${enabled ? "enabled" : "disabled"}. Start a new conversation to clear instructions already read.`);
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
   finally { view.bulkBusy = false; renderShareBar(); }
 }
 
@@ -955,7 +955,7 @@ function renderShareBar() {
     const clear = button("Clear", "resources-select-clear", () => { view.selected.clear(); renderList(); });
     clear.disabled = view.bulkBusy || !chosen.length;
     const shared = chosen.filter(shareable);
-    const open = button("Share…", "resources-share-open", () => void openShareDialog(shared).catch((error) => toast(error.message)), "primary compact");
+    const open = button("Share…", "resources-share-open", () => void openShareDialog(shared).catch((error) => toast.error(error.message)), "primary compact");
     open.disabled = view.bulkBusy || !shared.length;
     const removableSkills = [...new Map(chosen.filter(removable).map((skill) => [skill.name, skill])).values()];
     const remove = button(`Remove selected (${removableSkills.length})`, "resources-remove-selected", () => void removeSelectedSkills(removableSkills), "ghost compact danger");
@@ -1336,7 +1336,7 @@ async function importSelected() {
     } catch (error) { reload = ` Reload failed: ${error.message}.`; }
     await Promise.all([scan(), loadInventory(), loadSkills(true)]);
     setStatus(`Imported ${result.published.length}; ${result.unchanged.length} already up to date.${result.backupPath ? ` Backups: ${result.backupPath}.` : ""}${reload}`);
-  } catch (error) { setStatus(error.message); toast(error.message); }
+  } catch (error) { setStatus(error.message); toast.error(error.message); }
   finally { syncAddButtons(); }
 }
 
@@ -1360,7 +1360,7 @@ async function shareSelectedServers() {
     view.selectedServers.clear();
     await loadInventory();
     setStatus(`Shared ${added.length} MCP server${added.length === 1 ? "" : "s"}${skipped.length ? `; skipped ${skipped.join(", ")}` : ""}. New Claude and Kiro runs load them.`);
-  } catch (error) { setStatus(error.message); toast(error.message); }
+  } catch (error) { setStatus(error.message); toast.error(error.message); }
 }
 
 /* ---- Git repositories ---- */
@@ -1416,7 +1416,7 @@ function gitResultText(result) {
 async function gitAction(control, action) {
   control.disabled = true;
   try { await action(); }
-  catch (error) { setStatus(error.message); toast(error.message); }
+  catch (error) { setStatus(error.message); toast.error(error.message); }
   finally { control.disabled = false; }
 }
 
@@ -1795,7 +1795,7 @@ document.querySelector("#resourcesAutoActivate").addEventListener("change", asyn
     await loadInventory();
     if (view.ready && nodeId === view.nodeId) setStatus(`Shared resources ${enabled ? "automatically activate" : "arrive disabled"} unless individually overridden. Start a new conversation to clear instructions already read.`);
   } catch (error) {
-    if (request === view.request) { input.checked = !enabled; toast(error.message); }
+    if (request === view.request) { input.checked = !enabled; toast.error(error.message); }
   } finally {
     if (view.activationSaving === request) view.activationSaving = null;
     render();

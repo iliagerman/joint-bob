@@ -595,7 +595,7 @@ function appendCopyButton(bubble, attribution = null) {
         button.replaceChildren(copyGlyph("copy"));
       }, 1500);
     } catch (error) {
-      toast(error.message || "Could not copy message");
+      toast.error(error.message || "Could not copy message");
     }
   });
   actions.append(button);
@@ -786,7 +786,7 @@ export function appendErrorMessage(text, timestamp = true) {
 
 function sendQueuedPromptAction(payload) {
   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
-    toast("Conversation is not connected yet");
+    toast.error("Conversation is not connected yet");
     return false;
   }
   state.socket.send(JSON.stringify(payload));
@@ -960,7 +960,7 @@ function queuedEditor(bubble, queueId, footer, edit) {
   });
   save.addEventListener("click", () => {
     const message = input.value.trim();
-    if (!message) { toast("Queued message cannot be empty"); return; }
+    if (!message) { toast.error("Queued message cannot be empty"); return; }
     sendQueuedPromptAction({ type: "editQueuedPrompt", queueId, message, queueSettings: settings.value(), queueRevision: Number(bubble.dataset.queueRevision) });
   });
   return editor;
@@ -1244,7 +1244,7 @@ function copySelectionFromTranscript() {
       // One toast at a time: a keyboard selection fires this on every keystroke.
       if (!document.querySelector(".toast")) toast("Copied selection", 1200);
     },
-    (error) => toast(error.message || "Could not copy selection"),
+    (error) => toast.error(error.message || "Could not copy selection"),
   );
 }
 document.addEventListener("mouseup", copySelectionFromTranscript);

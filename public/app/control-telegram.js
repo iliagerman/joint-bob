@@ -35,7 +35,7 @@ async function act(work) {
   try {
     const { pairingLink: link, ...next } = await work();
     applyStatus(next, link);
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
 }
 
 function connectForm() {
@@ -102,7 +102,7 @@ function render() {
 
 async function refresh() {
   try { applyStatus(await api(BASE)); }
-  catch (error) { toast(error.message); }
+  catch (error) { toast.error(error.message); }
 }
 
 render();

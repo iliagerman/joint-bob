@@ -169,7 +169,7 @@ function forgetRecentSession(entry) {
   }
   if (state.preferencesLoaded) {
     api("/api/recents", { method: "DELETE", body: JSON.stringify({ projectId: entry.projectId, engine: entry.engine, sessionId: entry.sessionId }) })
-      .catch((error) => { console.warn("Could not remove recent conversation", error); toast("Could not remove recent conversation"); });
+      .catch((error) => { console.warn("Could not remove recent conversation", error); toast.error("Could not remove recent conversation"); });
     // A conversation that is already gone answers 404 here; the row is removed either way.
     if (identity) void savePin({ kind: "conversation", ...identity }, false).catch((error) => console.warn("Could not clear the conversation pin", error));
   }
@@ -236,7 +236,7 @@ export function renderRecentSessionsDialog() {
     const project = state.projects.find((candidate) => candidate.id === entry.projectId);
     meta.textContent = `${project ? project.name : "Unknown project"} · ${formatDate(recentSessionActivityAt(entry))}`;
     button.append(title, meta);
-    button.addEventListener("click", () => openRecentSession(entry).catch((error) => toast(error.message)));
+    button.addEventListener("click", () => openRecentSession(entry).catch((error) => toast.error(error.message)));
 
     const pinToggle = pinButton({
       pinned,
@@ -286,7 +286,7 @@ elements.recentSessionsSearchInput.addEventListener("keydown", (event) => {
   event.preventDefault();
   elements.recentSessionsDialog.close();
 });
-attachDigitShortcuts(elements.recentSessionsDialog, () => recentSessionShortcuts, (entry) => openRecentSession(entry).catch((error) => toast(error.message)));
+attachDigitShortcuts(elements.recentSessionsDialog, () => recentSessionShortcuts, (entry) => openRecentSession(entry).catch((error) => toast.error(error.message)));
 /** The recorded recents chord reaches the list from any view, including
  * mid-conversation. */
 document.addEventListener("keydown", (event) => {

@@ -88,7 +88,7 @@ export async function loadMyNodes() {
           toast(`${node.name} forgets your settings and signs you out there.`);
           await loadMyNodes();
         } catch (error) {
-          toast(error.message);
+          toast.error(error.message);
           forget.disabled = false;
         }
       });

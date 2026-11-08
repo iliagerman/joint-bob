@@ -63,7 +63,7 @@ settingsButton.addEventListener("click", async () => {
     setMode(status.enabled ? "manage" : "setup");
     dialog.showModal();
     password.focus();
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
   finally { settingsButton.disabled = false; }
 });
 

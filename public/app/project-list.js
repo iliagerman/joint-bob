@@ -101,7 +101,7 @@ function workspaceDashboardButton(group) {
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    openDashboardMode({ kind: "workspace", id: group.id, projectId: group.projects[0].id }).catch((error) => toast(error.message));
+    openDashboardMode({ kind: "workspace", id: group.id, projectId: group.projects[0].id }).catch((error) => toast.error(error.message));
   });
   return button;
 }
@@ -285,36 +285,36 @@ function projectPinToggle(project) {
 function projectMenuItems(project) {
   return [
     ...mobileProjectFilterActions(project),
-    { label: "Dashboard", icon: "dashboard", testid: "project-dashboard-button", onSelect: () => openDashboardMode({ kind: "project", id: project.id, projectId: project.id }).catch((error) => toast(error.message)) },
+    { label: "Dashboard", icon: "dashboard", testid: "project-dashboard-button", onSelect: () => openDashboardMode({ kind: "project", id: project.id, projectId: project.id }).catch((error) => toast.error(error.message)) },
     { label: "Git repositories", icon: "folder", testid: "project-git-button", onSelect: () => { void openProjectGit(project); } },
     { label: "GitHub issues", icon: "github", testid: "project-issues-button", onSelect: () => openProjectIssues(project.id) },
-    { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
-    ...(!state.isRemoteLogin ? [{ label: "Webhooks", icon: "refresh", testid: "project-webhooks-button", onSelect: () => openProjectWebhooks(project).catch(error => toast(error.message)) }] : []),
+    { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast.error(error.message)) },
+    ...(!state.isRemoteLogin ? [{ label: "Webhooks", icon: "refresh", testid: "project-webhooks-button", onSelect: () => openProjectWebhooks(project).catch(error => toast.error(error.message)) }] : []),
     { label: "Skills & tools", icon: "sliders", testid: "project-resources-button", onSelect: () => openResources({ scope: "project", projectId: project.id }) },
     ...(project.locallyOwned !== false ? [{
       label: "Budget…", icon: "sliders", testid: "project-budget-button",
       title: "Limit what this project may spend",
-      onSelect: () => openBudgetDialog(projectBudgetTarget(project)).catch(error => toast(error.message)),
+      onSelect: () => openBudgetDialog(projectBudgetTarget(project)).catch(error => toast.error(error.message)),
     }] : []),
     {
       label: "Edit project",
       icon: "pencil",
       testid: "project-rename-button",
-      onSelect: () => openProjectRename(project).catch((error) => toast(error.message)),
+      onSelect: () => openProjectRename(project).catch((error) => toast.error(error.message)),
     },
     {
       label: project.lock ? "Unlock from this node" : "Lock to this node",
       icon: "lock",
       testid: "project-lock-button",
       title: project.lockedElsewhere ? `Locked by ${project.lock.nodeName} — select to unlock` : "",
-      onSelect: () => toggleProjectLock(project).catch((error) => toast(error.message, 6000)),
+      onSelect: () => toggleProjectLock(project).catch((error) => toast.error(error.message)),
     },
     ...(project.locallyOwned !== false && !project.live ? [{
       label: project.hiddenFromOtherNodes ? "Show on other nodes" : "Hide from other nodes",
       icon: "lock",
       testid: "project-other-nodes-button",
       title: "Whether this project shows on the nodes you sign in to, through a live link home",
-      onSelect: () => toggleOtherNodes(project).catch((error) => toast(error.message)),
+      onSelect: () => toggleOtherNodes(project).catch((error) => toast.error(error.message)),
     }] : []),
     {
       label: "Session path mappings",
@@ -326,7 +326,7 @@ function projectMenuItems(project) {
       label: "Secret accounts",
       icon: "key",
       testid: "project-secrets-button",
-      onSelect: () => openSecretScope("project", project.id, project.name).catch((error) => toast(error.message)),
+      onSelect: () => openSecretScope("project", project.id, project.name).catch((error) => toast.error(error.message)),
     },
     {
       label: "Rescan files",
@@ -334,14 +334,14 @@ function projectMenuItems(project) {
       testid: "project-rescan-button",
       disabled: !project.syncFolderId,
       title: project.syncFolderId ? "Look for changed files in this project now" : "This project is not synchronized with other machines",
-      onSelect: () => rescanProject(project).catch((error) => toast(error.message, 8000)),
+      onSelect: () => rescanProject(project).catch((error) => toast.error(error.message)),
     },
     {
       label: "Remove",
       icon: "trash",
       testid: "project-remove-button",
       danger: true,
-      onSelect: () => removeProject(project).catch((error) => toast(error.message)),
+      onSelect: () => removeProject(project).catch((error) => toast.error(error.message)),
     },
   ];
 }

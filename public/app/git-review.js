@@ -113,7 +113,7 @@ export async function openGitReview(conversationId = null, { tab = "changes", ow
   git.storyLoad = loadStory();
   await loadCurrentTab();
   if (version !== git.viewRequest || !elements.gitReviewDialog.open) return;
-  try { await ensurePickers(); elements.gitReviewGenerate.disabled = false; syncStoryChrome(); } catch (error) { toast(error.message, 8000); }
+  try { await ensurePickers(); elements.gitReviewGenerate.disabled = false; syncStoryChrome(); } catch (error) { toast.error(error.message); }
 }
 
 function applyTab(tab) {
@@ -186,7 +186,7 @@ async function loadChanges() {
   } catch (error) {
     if (version !== git.viewRequest) return;
     setStatus(error.message);
-    toast(error.message, 8000);
+    toast.error(error.message);
   }
 }
 
@@ -331,7 +331,7 @@ async function selectWorktreeFile(change, staged) {
     if (version !== git.viewRequest || git.selection?.filePath !== change.path) return;
     renderDiff(diff);
     setStatus("");
-  } catch (error) { setStatus(error.message); toast(error.message, 8000); }
+  } catch (error) { setStatus(error.message); toast.error(error.message); }
 }
 
 function markActiveRow() {
@@ -351,7 +351,7 @@ async function loadHistory() {
     git.commits = body.commits;
     renderCommitList(body.commits);
     setStatus(body.commits.length ? "" : "No commits.");
-  } catch (error) { setStatus(error.message); toast(error.message, 8000); }
+  } catch (error) { setStatus(error.message); toast.error(error.message); }
 }
 
 function renderCommitList(commits) {
@@ -385,7 +385,7 @@ async function selectCommit(commit) {
     if (version !== git.viewRequest || git.selection?.revision !== commit.hash) return;
     renderDiff(detail.diff);
     setStatus(`${detail.files.length} file${detail.files.length === 1 ? "" : "s"} changed`);
-  } catch (error) { setStatus(error.message); toast(error.message, 8000); }
+  } catch (error) { setStatus(error.message); toast.error(error.message); }
 }
 
 async function loadReviews() {
@@ -400,7 +400,7 @@ async function loadReviews() {
     if (version !== git.viewRequest || !elements.gitReviewDialog.open || git.tab !== "reviews") return;
     renderReviewList(body.threads);
     setStatus(body.threads.length ? "Reviews expire 7 days after their last question." : "No saved reviews.");
-  } catch (error) { setStatus(error.message); toast(error.message, 8000); }
+  } catch (error) { setStatus(error.message); toast.error(error.message); }
 }
 
 function reviewTargetLabel(selection) {
@@ -470,7 +470,7 @@ async function openAsk() {
   elements.gitReviewQuestion.placeholder = "Why was this changed?";
   elements.gitReviewAskTarget.textContent = `Ask about ${reviewTargetLabel(git.selection)}`;
   elements.gitReviewAskForm.hidden = false;
-  try { await ensurePickers(); } catch (error) { toast(error.message, 8000); }
+  try { await ensurePickers(); } catch (error) { toast.error(error.message); }
   elements.gitReviewQuestion.focus();
 }
 
@@ -484,7 +484,7 @@ async function askAboutContext({ label, text, placeholder = "What should I look 
   elements.gitReviewQuestion.placeholder = placeholder;
   elements.gitReviewAskTarget.textContent = `Ask about ${label}`;
   elements.gitReviewAskForm.hidden = false;
-  try { await ensurePickers(); } catch (error) { toast(error.message, 8000); }
+  try { await ensurePickers(); } catch (error) { toast.error(error.message); }
   elements.gitReviewAskForm.scrollIntoView({ block: "nearest" });
   elements.gitReviewQuestion.focus();
 }
@@ -523,7 +523,7 @@ async function openThread(threadId) {
     renderThread(body.thread.messages);
     renderDiff({ patch: body.thread.snapshot, binary: false, truncated: false });
     elements.gitReviewDiffPath.textContent = reviewTargetLabel(body.thread.selection);
-  } catch (error) { toast(error.message, 8000); }
+  } catch (error) { toast.error(error.message); }
 }
 
 function renderThread(messages) {
@@ -573,7 +573,7 @@ async function submitAsk(event) {
     renderThread(thread.messages);
     elements.gitReviewQuestion.value = "";
     setStatus("Explanation saved. It expires 7 days after the last question.");
-  } catch (error) { setStatus(error.message); toast(error.message, 10000); }
+  } catch (error) { setStatus(error.message); toast.error(error.message); }
   finally { git.asking = false; elements.gitReviewAskSubmit.disabled = false; }
 }
 
@@ -591,7 +591,7 @@ async function generateGuide() {
   const paths = selectedPaths();
   if (!paths.length) { toast("No pending files in the selected scope"); return; }
   const harness = selectedHarness();
-  if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return; }
+  if (!harness?.ready) { toast.error("Selected reviewer is unavailable on this node"); return; }
   elements.gitReviewGenerate.disabled = true;
   setStatus("Generating ranked review comments…");
   elements.gitReviewGuide.hidden = false;
@@ -612,7 +612,7 @@ async function generateGuide() {
     renderGuide();
     if (git.status) renderChangeList(git.status);
     setStatus("Review saved for 7 days. File scope is agent-claimed, not proven ownership.");
-  } catch (error) { renderGuide(); setStatus(error.message); toast(error.message, 10000); }
+  } catch (error) { renderGuide(); setStatus(error.message); toast.error(error.message); }
   finally { elements.gitReviewGenerate.disabled = false; }
 }
 
@@ -734,7 +734,7 @@ async function openStoryTab() {
 function storyReviewer() {
   if (!git.ready || !git.harnesses.length) { toast("Git review is still loading"); return null; }
   const harness = selectedHarness();
-  if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return null; }
+  if (!harness?.ready) { toast.error("Selected reviewer is unavailable on this node"); return null; }
   const model = selectedModel(elements.gitReviewModel);
   const provider = model.provider || harness.configuration?.fixedProvider;
   return { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: model.modelId, thinkingLevel: elements.gitReviewThinking.value };
@@ -818,7 +818,7 @@ async function generateStoryFromView({ conversation = false } = {}) {
     if (version !== git.viewRequest) return;
     // The server only trusts a conversation file list it handed out in the last few minutes.
     if (git.conversationId && !elements.gitReviewAllChanges.checked) await loadConversationScope();
-  } catch (error) { toast(error.message, 8000); return; }
+  } catch (error) { toast.error(error.message); return; }
   if (version !== git.viewRequest) return;
   const includeCommits = Boolean(git.conversationId) && elements.gitReviewStoryCommits.checked;
   const paths = selectedPaths();
@@ -846,7 +846,7 @@ for (const button of [elements.activityStoryButton, elements.navStoryButton]) {
     if (!session) { toast("Open a conversation first"); return; }
     voiceForThisNode()
       .then((settings) => settings && openConversationStory(session.conversationId ?? session.id))
-      .catch((error) => toast(error.message));
+      .catch((error) => toast.error(error.message));
   });
 }
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());

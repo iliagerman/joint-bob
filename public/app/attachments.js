@@ -104,7 +104,7 @@ elements.attachmentInput.addEventListener("change", async (event) => {
   try {
     await addAttachments(event.target.files || []);
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
     resetAttachmentInput();
   }
 });

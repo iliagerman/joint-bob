@@ -98,7 +98,7 @@ export function worktreesHeading() {
       const { openContextReferencesDialog } = await import("./context-references.js");
       openContextReferencesDialog();
     } catch (error) {
-      toast(error.message);
+      toast.error(error.message);
     }
   });
   const add = document.createElement("button");
@@ -194,10 +194,10 @@ export function worktreeSectionHeader(worktree, count) {
 
 function worktreeMenuItems(worktree) {
   return [
-    { label: "New conversation here", icon: "chat", testid: "worktree-menu-new-conversation", onSelect: () => startConversationInWorktree(worktree).catch((error) => toast(error.message)) },
-    { label: "Merge to project", icon: "merge", testid: "worktree-menu-merge", onSelect: () => mergeWorktree(worktree).catch((error) => toast(error.message)) },
+    { label: "New conversation here", icon: "chat", testid: "worktree-menu-new-conversation", onSelect: () => startConversationInWorktree(worktree).catch((error) => toast.error(error.message)) },
+    { label: "Merge to project", icon: "merge", testid: "worktree-menu-merge", onSelect: () => mergeWorktree(worktree).catch((error) => toast.error(error.message)) },
     { label: "Rename or recolour", icon: "pencil", testid: "worktree-menu-edit", onSelect: () => openWorktreeDialog(worktree) },
-    { label: "Delete worktree", icon: "trash", danger: true, testid: "worktree-menu-delete", onSelect: () => deleteWorktree(worktree).catch((error) => toast(error.message)) },
+    { label: "Delete worktree", icon: "trash", danger: true, testid: "worktree-menu-delete", onSelect: () => deleteWorktree(worktree).catch((error) => toast.error(error.message)) },
   ];
 }
 
@@ -217,7 +217,7 @@ async function mergeWorktree(worktree) {
   const result = await api(worktreesUrl(state.activeProjectId, `/${encodeURIComponent(worktree.id)}/merge`), { method: "POST", body: "{}" });
   if (!result.merged) {
     const files = result.conflicts.map((conflict) => conflict.path);
-    toast(`Not merged: ${files.length} file${files.length === 1 ? "" : "s"} changed in both the worktree and the project (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", …" : ""}). Make them agree, then merge again.`, 8000);
+    toast.error(`Not merged: ${files.length} file${files.length === 1 ? "" : "s"} changed in both the worktree and the project (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", …" : ""}). Make them agree, then merge again.`);
     return;
   }
   const changes = result.applied + result.deleted;
@@ -311,7 +311,7 @@ elements.worktreeForm.addEventListener("submit", async (event) => {
     // An explicitly created empty worktree should be visible immediately.
     if (!editing && state.activeProjectId === projectId) elements.sessionList.querySelector(".other-worktrees")?.setAttribute("open", "");
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     button.disabled = false;
     button.textContent = original;

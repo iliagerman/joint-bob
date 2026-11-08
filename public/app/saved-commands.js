@@ -27,7 +27,7 @@ async function choose(command) {
     setInputValue(command.prompt);
     elements.messageInput.dispatchEvent(new Event("input", { bubbles: true }));
     elements.messageInput.focus();
-  } catch (error) { if (request === generation && sameContext(capture)) toast(error.message); }
+  } catch (error) { if (request === generation && sameContext(capture)) toast.error(error.message); }
 }
 
 function render() {
@@ -74,7 +74,7 @@ export async function openSavedCommands() {
     recentIds = body.recentIds || [];
     render();
   } catch (error) {
-    if (request === generation && dialog.open) { options.textContent = "Could not load commands. Close and try again."; toast(error.message); }
+    if (request === generation && dialog.open) { options.textContent = "Could not load commands. Close and try again."; toast.error(error.message); }
   }
 }
 
@@ -106,7 +106,7 @@ createForm.addEventListener("submit", async (event) => {
       search.focus();
     }
     toast("Command saved");
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
   finally { save.disabled = false; }
 });
 

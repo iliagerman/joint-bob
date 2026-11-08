@@ -40,7 +40,7 @@ async function loadExplorerDirectory(dir) {
     renderExplorerEntries(body.entries);
     elements.projectFilesStatus.textContent = body.entries.length === 1 ? "1 item" : `${body.entries.length} items`;
   } catch (error) {
-    toast(error.message, 8000);
+    toast.error(error.message);
     elements.projectFilesStatus.textContent = error.message;
   } finally {
     state.fileExplorer.loading = false;
@@ -149,7 +149,7 @@ async function deleteExplorerFile(entry) {
     if (state.fileExplorer.clipboard === entry.path) state.fileExplorer.clipboard = null;
     toast("File deleted");
     await loadExplorerDirectory(state.fileExplorer.dir);
-  } catch (error) { toast(error.message, 8000); }
+  } catch (error) { toast.error(error.message); }
 }
 
 async function pasteExplorerFile() {
@@ -159,7 +159,7 @@ async function pasteExplorerFile() {
     const body = await api(explorerApiUrl("file-copy", { path: state.fileExplorer.clipboard }), { method: "POST", body: JSON.stringify({ destinationDir: state.fileExplorer.dir, sessionId }) });
     toast(`Copied to ${body.path}`);
     await loadExplorerDirectory(state.fileExplorer.dir);
-  } catch (error) { toast(error.message, 8000); }
+  } catch (error) { toast.error(error.message); }
 }
 
 elements.chatFilesButton.addEventListener("click", () => { void openProjectExplorer(); });

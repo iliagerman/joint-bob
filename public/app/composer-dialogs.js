@@ -35,7 +35,7 @@ export async function loadRoutingClassifiers() {
   if (routingClassifiersRequest) return routingClassifiersRequest;
   routingClassifiersRequest = api("/api/routing-configs")
     .then((body) => { state.routingClassifiers = Array.isArray(body.classifiers) ? body.classifiers : []; })
-    .catch((error) => { toast(error.message); state.routingClassifiers = []; })
+    .catch((error) => { toast.error(error.message); state.routingClassifiers = []; })
     .then(() => state.routingClassifiers)
     .finally(() => { routingClassifiersRequest = null; });
   return routingClassifiersRequest;
@@ -56,7 +56,7 @@ async function saveRoutingClassifier(classifierId) {
     state.routing = { ...state.routing, classifierId };
     toast("Classifier updated");
   } catch (error) {
-    toast(error.message);
+    toast.error(error.message);
   } finally {
     if (elements.modelDialog.open) renderModelDialog();
   }
@@ -230,7 +230,7 @@ export async function loadSkills(force = false) {
       state.skills = [];
       state.skillsProjectId = null;
       state.skillsConversationId = null;
-      toast(error.message);
+      toast.error(error.message);
     }
   } finally {
     if (request === skillRequestGeneration) {
@@ -267,7 +267,7 @@ function toolOption(tool) {
       .map((candidate) => candidate.name);
     if (!sendSocket({ type: "setTools", toolNames })) {
       checkbox.checked = !checkbox.checked;
-      toast("Conversation is not connected yet");
+      toast.error("Conversation is not connected yet");
       return;
     }
     state.toolsLoading = true;
@@ -316,7 +316,7 @@ function openToolsDialog() {
   if (!sendSocket({ type: "tools" })) {
     state.toolsLoading = false;
     renderToolsDialog();
-    toast("Conversation is not connected yet");
+    toast.error("Conversation is not connected yet");
   }
 }
 
@@ -348,7 +348,7 @@ export function composerCommandHandlers() {
     compact: (instructions) => {
       setInputValue("");
       if (!sendSocket({ type: "compact", message: instructions })) {
-        toast("Conversation is not connected yet");
+        toast.error("Conversation is not connected yet");
         return;
       }
       toast("Compacting conversation…");
@@ -356,7 +356,7 @@ export function composerCommandHandlers() {
     bobRestart: () => {
       setInputValue("");
       if (!sendSocket({ type: "restart" })) {
-        toast("Conversation is not connected yet");
+        toast.error("Conversation is not connected yet");
         return;
       }
       toast("Restarting harness…");
@@ -393,7 +393,7 @@ async function loadCommands() {
     if (request === commandRequestGeneration && commandSourceKey() === key) {
       state.commands = [];
       state.commandsKey = key;
-      toast(error.message);
+      toast.error(error.message);
     }
   } finally {
     if (request === commandRequestGeneration) {
@@ -503,14 +503,14 @@ export function renderReasoningOptions() {
 
 export function changeReasoningLevel(event) {
   const level = event.currentTarget.value;
-  if (!sendSocket({ type: "setThinking", level })) toast("Not connected");
+  if (!sendSocket({ type: "setThinking", level })) toast.error("Not connected");
 }
 
 function appendModel(model) {
   elements.modelDialogList.append(modelOptionButton({
     key: `${model.provider}/${model.id}`, label: model.label,
     active: state.activeModelKey === `${model.provider}/${model.id}`,
-    onSelect: () => { if (!sendSocket({ type: "setModel", provider: model.provider, modelId: model.id })) toast("Not connected"); },
+    onSelect: () => { if (!sendSocket({ type: "setModel", provider: model.provider, modelId: model.id })) toast.error("Not connected"); },
   }));
 }
 
@@ -524,7 +524,7 @@ function renderModelDialog() {
     const autoActive = state.routing.mode === "auto";
     const autoRow = modelOptionButton({
       key: "bob-auto", label: "Bob auto", active: autoActive,
-      onSelect: () => { if (!sendSocket({ type: "setModel", modelId: "bob-auto" })) toast("Not connected"); },
+      onSelect: () => { if (!sendSocket({ type: "setModel", modelId: "bob-auto" })) toast.error("Not connected"); },
     });
     autoRow.dataset.testid = "model-option-bob-auto";
     autoRow.title = "The difficulty classifier picks the model and reasoning for each prompt";

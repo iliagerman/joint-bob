@@ -7,6 +7,8 @@ import path from "node:path";
 import test from "node:test";
 import { claudeProjectsRoot, loadClaudeMessages } from "../src/claude-service.js";
 import { listHarnessSessions } from "../src/harnesses.js";
+import { beginConversationCloseout, finishConversationCloseout } from "../src/server/conversation-closeout.js";
+import { sessionFeedbackOverrides } from "../src/names.js";
 import { ensureConversationRecord } from "../src/conversation-records.js";
 import { claudeProjectDir } from "../src/harnesses/claude/paths.js";
 import { WORKTREE_META_DIR } from "../src/project-worktrees.js";
@@ -49,6 +51,35 @@ test("story sources retain real turns across draft segments without opening plac
     assert.match(review.transcript, /Question 1[\s\S]*Answer 1[\s\S]*Question 3[\s\S]*Answer 3/);
     assert.equal(review.lastHarness, "claude");
     await assert.rejects(loadClaudeMessages(path.join(root, "outside.jsonl")), /Claude session path is outside Claude projects/, "real path-security violations remain rejected");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("learning reads a done conversation outside the first 50 listed rows", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-done-learning-"));
+  try {
+    const project = await addProject("Done learning", root, { writeInstructions: false });
+    const conversationId = randomUUID();
+    const directory = claudeProjectDir(root, claudeProjectsRoot());
+    await mkdir(directory, { recursive: true });
+    await ensureConversationRecord(project.id, "claude", conversationId, "test-node");
+    await writeFile(path.join(directory, `${conversationId}.jsonl`), [
+      { type: "user", sessionId: conversationId, cwd: root, timestamp: new Date().toISOString(), message: { role: "user", content: "Check before changing files." } },
+      { type: "assistant", sessionId: conversationId, cwd: root, timestamp: new Date().toISOString(), message: { role: "assistant", content: [{ type: "text", text: "Checked and fixed." }] } },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n");
+    for (let index = 0; index < 50; index++) await ensureConversationRecord(project.id, "pi", randomUUID(), "test-node");
+    const record = await beginConversationCloseout(project, "claude", conversationId, { rating: "good", description: "" });
+    const listed = await listHarnessSessions(project);
+    assert.equal(listed.length, 50);
+    assert.ok(!listed.some((session) => session.id === conversationId), "marking done pushes the target past the list cap");
+    const error = await finishConversationCloseout(project, conversationId, record, {
+      load: loadConversationMessages,
+      models: (_project, _id, transcript) => {
+        assert.deepEqual(transcript.messages.map((message) => message.text), ["Check before changing files.", "Checked and fixed."]);
+        return { classify: async () => "good", describe: async () => ({ description: "Checked before editing.", rules: [] }), select: async () => [] };
+      },
+    });
+    assert.equal(error, undefined, "learning must load the requested transcript regardless of list position");
+    assert.equal((await sessionFeedbackOverrides())[conversationId].status, "complete");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

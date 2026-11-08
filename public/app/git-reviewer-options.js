@@ -73,7 +73,7 @@ function saveSettingsReviewer() {
   const { provider, modelId } = selectedModel(elements.settingsGitReviewerModel);
   const gitReviewer = harness ? { harnessId: harness.id, ...(provider ? { provider } : {}), modelId, thinkingLevel: elements.settingsGitReviewerThinking.value } : null;
   state.gitReviewer = gitReviewer;
-  savePreferences({ gitReviewer }).catch((error) => toast(error.message));
+  savePreferences({ gitReviewer }).catch((error) => toast.error(error.message));
 }
 
 /** Loads the Settings → Git panel from the saved default reviewer. */

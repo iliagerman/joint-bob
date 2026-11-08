@@ -55,9 +55,9 @@ export function makeTwoStepButton({ label, armedLabel, testid, onConfirm, classN
 
 /** Puts text on the clipboard. Secrets are copied from the screen and never kept anywhere else. */
 export async function copyText(value, message) {
-  if (!navigator.clipboard) { toast("Copying is not available here. Select the text and copy it."); return; }
+  if (!navigator.clipboard) { toast.error("Copying is not available here. Select the text and copy it."); return; }
   try { await navigator.clipboard.writeText(value); toast(message); }
-  catch (error) { toast(error?.message || "Could not copy"); }
+  catch (error) { toast.error(error?.message || "Could not copy"); }
 }
 
 /** Inline result line: errors and confirmations stay next to the control that caused them. */

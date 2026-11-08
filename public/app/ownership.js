@@ -146,11 +146,11 @@ async function takeLockedConversationOwnership(force = false) {
 }
 
 elements.conversationLockForceButton.addEventListener("click", () => {
-  void takeLockedConversationOwnership(true).catch((error) => { resetOwnershipWait(); toast(error.message, 12000); });
+  void takeLockedConversationOwnership(true).catch((error) => { resetOwnershipWait(); toast.error(error.message); });
 });
 
 elements.conversationLockTakeButton.addEventListener("click", () => {
   if (shared.ownershipWait && !shared.ownershipTaking) { shared.ownershipWait.resolve(false); return; }
   if (takeoverController) { takeoverController.abort(); return; }
-  void takeLockedConversationOwnership().catch((error) => { resetOwnershipWait(); toast(error.message, 8000); });
+  void takeLockedConversationOwnership().catch((error) => { resetOwnershipWait(); toast.error(error.message); });
 });

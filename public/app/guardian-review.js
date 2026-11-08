@@ -65,7 +65,7 @@ function render() {
 document.addEventListener("guardian-event", (event) => {
   const payload = event.detail;
   if (payload.type === "guardianReviews") show(payload.reviews || []);
-  if (payload.type === "guardianBlocked") toast(payload.message, 8000);
+  if (payload.type === "guardianBlocked") toast.error(payload.message);
 });
 
 // Another conversation of the project is waiting on the person; say so once, without taking over.

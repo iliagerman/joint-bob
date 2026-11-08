@@ -21,7 +21,7 @@ export function installWorkspaceCreationSharing(addButton) {
   creationButton = node("button", "", "ghost");
   creationButton.type = "button";
   creationButton.dataset.testid = "workspace-create-sharing";
-  creationButton.addEventListener("click", () => openWorkspaceSharing().catch(error => toast(error.message)));
+  creationButton.addEventListener("click", () => openWorkspaceSharing().catch(error => toast.error(error.message)));
   addButton.before(creationButton);
   updateCreationButton();
 }

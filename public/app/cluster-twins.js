@@ -22,7 +22,7 @@ function button(label, testid, className, action) {
   const control = text("button", label, className); control.type = "button"; control.dataset.testid = testid;
   control.addEventListener("click", async () => {
     control.disabled = true;
-    try { await action(); } catch (error) { toast(error.message); } finally { control.disabled = false; }
+    try { await action(); } catch (error) { toast.error(error.message); } finally { control.disabled = false; }
   });
   return control;
 }

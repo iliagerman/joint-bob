@@ -68,7 +68,7 @@ function render(profiles) {
     meta.append(stateLine);
     row.append(meta);
     if (profile.canManage) {
-      row.append(button("Share…", "browser-profile-share", () => void openShareDialog(profile).catch((error) => toast(error.message))));
+      row.append(button("Share…", "browser-profile-share", () => void openShareDialog(profile).catch((error) => toast.error(error.message))));
       row.append(button("Rename", "browser-profile-rename", () => startRename(row, profile)));
       if (profile.holder) row.append(button("Close there", "browser-profile-close", () => void closeProfile(profile)));
       else row.append(button("Delete", "browser-profile-delete", () => void deleteProfile(profile), " danger"));
@@ -91,7 +91,7 @@ function startRename(row, profile) {
     event.preventDefault();
     void (async () => {
       try { await change(profile, { label: input.value.trim() }, "Profile renamed"); await loadBrowserProfileDirectory(); }
-      catch (error) { toast(error.message); }
+      catch (error) { toast.error(error.message); }
     })();
   });
   row.append(form); input.focus(); input.select();
@@ -100,14 +100,14 @@ function startRename(row, profile) {
 async function closeProfile(profile) {
   const confirmed = await confirmAction({ eyebrow: "Browser profile", title: `Close ${profile.label}?`, message: "Its browser closes in the conversation that has it open, and that conversation's agent stops using it. Its saved logins stay. Any conversation it is shared with can then open it.", confirmLabel: "Close browser", destructive: true });
   if (!confirmed) return;
-  try { await change(profile, { close: true }, `${profile.label} closed`); } catch (error) { toast(error.message); }
+  try { await change(profile, { close: true }, `${profile.label} closed`); } catch (error) { toast.error(error.message); }
   await loadBrowserProfileDirectory();
 }
 
 async function deleteProfile(profile) {
   const confirmed = await confirmAction({ eyebrow: "Browser profile", title: `Delete ${profile.label}?`, message: "Its saved logins are deleted from its machine. This cannot be undone.", confirmLabel: "Delete profile", destructive: true });
   if (!confirmed) return;
-  try { await change(profile, { delete: true }, `${profile.label} deleted`); } catch (error) { toast(error.message); }
+  try { await change(profile, { delete: true }, `${profile.label} deleted`); } catch (error) { toast.error(error.message); }
   await loadBrowserProfileDirectory();
 }
 
@@ -168,7 +168,7 @@ async function openShareDialog(profile) {
         for (const grant of removed) await change(profile, { revoke: shareGrantPayload(grant) });
         dialog.close();
         toast("Browser profile sharing saved");
-      } catch (error) { toast(error.message); }
+      } catch (error) { toast.error(error.message); }
       finally { save.disabled = false; await loadBrowserProfileDirectory(); }
     })();
   });

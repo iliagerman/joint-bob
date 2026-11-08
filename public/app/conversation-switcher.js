@@ -27,7 +27,7 @@ function commit(index) {
   const entry = session?.entries[index];
   close();
   if (!entry || index === 0) return;
-  openRecentSession(entry).catch((error) => toast(error.message));
+  openRecentSession(entry).catch((error) => toast.error(error.message));
 }
 
 function step(delta) {

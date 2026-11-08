@@ -208,7 +208,7 @@ elements.updatesCheckButton.addEventListener("click", () => {
       maybeStartPolling(status);
       toast(status.latest.release ? `Latest release is ${status.latest.release.version}` : "No release found");
     })
-    .catch((error) => toast(error.message))
+    .catch((error) => toast.error(error.message))
     .finally(() => { elements.updatesCheckButton.disabled = false; });
 });
 
@@ -219,7 +219,7 @@ elements.harnessUpdatesButton.addEventListener("click", () => {
       renderHarnessUpdates(status);
       maybeStartPolling(status);
     })
-    .catch((error) => toast(error.message));
+    .catch((error) => toast.error(error.message));
 });
 
 elements.updatesAutoInput.addEventListener("change", async () => {
@@ -229,7 +229,7 @@ elements.updatesAutoInput.addEventListener("change", async () => {
     toast(status.autoUpdate ? "Automatic updates enabled" : "Automatic updates disabled");
   } catch (error) {
     elements.updatesAutoInput.checked = !elements.updatesAutoInput.checked;
-    toast(error.message);
+    toast.error(error.message);
   }
 });
 
@@ -247,7 +247,7 @@ elements.updatesInstallButton.addEventListener("click", async () => {
       renderControls(result.status);
       maybeStartPolling(result.status);
     })
-    .catch((error) => toast(error.message));
+    .catch((error) => toast.error(error.message));
 });
 
 elements.updatesInstallAllButton.addEventListener("click", async () => {
@@ -264,5 +264,5 @@ elements.updatesInstallAllButton.addEventListener("click", async () => {
       await reloadInventory();
       await refreshUpdateStatus();
     })
-    .catch((error) => toast(error.message));
+    .catch((error) => toast.error(error.message));
 });

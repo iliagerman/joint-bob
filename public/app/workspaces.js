@@ -66,7 +66,7 @@ function renderWorkspaces() {
     secrets.className = "ghost compact";
     secrets.textContent = "Secrets";
     secrets.dataset.testid = "workspace-secrets-button";
-    secrets.addEventListener("click", () => openSecretScope("workspace", workspace.id, workspace.label).catch((error) => toast(error.message)));
+    secrets.addEventListener("click", () => openSecretScope("workspace", workspace.id, workspace.label).catch((error) => toast.error(error.message)));
     row.append(secrets);
 
     if (!workspace.source) {
@@ -75,7 +75,7 @@ function renderWorkspaces() {
       share.className = "ghost compact";
       share.textContent = "Share";
       share.dataset.testid = "workspace-share-button";
-      share.addEventListener("click", () => openWorkspaceSharing(workspace).catch((error) => toast(error.message)));
+      share.addEventListener("click", () => openWorkspaceSharing(workspace).catch((error) => toast.error(error.message)));
       row.append(share);
     }
 
@@ -85,7 +85,7 @@ function renderWorkspaces() {
       budget.className = "ghost compact";
       budget.textContent = "Budget";
       budget.dataset.testid = "workspace-budget-button";
-      budget.addEventListener("click", () => openBudgetDialog(workspaceBudgetTarget(workspace)).catch((error) => toast(error.message)));
+      budget.addEventListener("click", () => openBudgetDialog(workspaceBudgetTarget(workspace)).catch((error) => toast.error(error.message)));
       row.append(budget);
     }
 
@@ -108,7 +108,7 @@ function renderWorkspaces() {
         await loadWorkspaces();
         toast(`Deleted ${workspace.label}`);
       } catch (error) {
-        toast(error.message);
+        toast.error(error.message);
       }
     });
     row.append(remove);
@@ -138,11 +138,11 @@ export function openProjectPathMapping(project) {
   elements.projectMacPathInput.value = project.macPath || "";
   elements.projectPathDialog.showModal();
 }
-elements.projectWorkspaceInput.addEventListener("change", () => fillProjectBases().catch((error) => toast(error.message)));
+elements.projectWorkspaceInput.addEventListener("change", () => fillProjectBases().catch((error) => toast.error(error.message)));
 installWorkspaceCreationSharing(elements.workspaceAddButton);
-elements.workspaceAddButton.addEventListener("click", () => addWorkspace().catch((error) => toast(error.message)));
+elements.workspaceAddButton.addEventListener("click", () => addWorkspace().catch((error) => toast.error(error.message)));
 elements.workspaceNameInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
-  addWorkspace().catch((error) => toast(error.message));
+  addWorkspace().catch((error) => toast.error(error.message));
 });

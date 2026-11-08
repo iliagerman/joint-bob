@@ -122,7 +122,7 @@ function renderClusterChoices(selector, clusters, spec) {
       try {
         await api(`/api/browser/${spec.path}/${encodeURIComponent(cluster.id)}`, { method: "PUT", body: JSON.stringify({ executorNodeId: choice.value || null }) });
         toast(spec.saved(cluster));
-      } catch (error) { toast(error.message); }
+      } catch (error) { toast.error(error.message); }
       finally { statusLoading = false; }
       await loadBrowserStatus();
     });
@@ -140,7 +140,7 @@ document.querySelector("#settingsBrowserExecutor").addEventListener("change", as
   try {
     await api("/api/browser/config", { method: "PUT", body: JSON.stringify({ executorNodeId: select.value || null }) });
     toast("Default browser machine saved on this machine only. Existing accounts are unchanged.");
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
   finally { statusLoading = false; }
   await loadBrowserStatus();
 });

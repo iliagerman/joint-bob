@@ -84,7 +84,7 @@ export async function openCommandSharing(id) {
         const result = await api(`/api/projects/${encodeURIComponent(chosen)}/sessions`);
         if (!dialog.open || project.value !== chosen) return;
         for (const session of result.sessions || []) add({ projectId: chosen, conversationId: session.conversationId || session.id }, session.title || session.id, false);
-      } catch (error) { toast(error.message); }
+      } catch (error) { toast.error(error.message); }
     });
     const actions = document.createElement("div"); actions.className = "dialog-actions";
     const cancel = button("Cancel", "command-share-cancel", () => dialog.close());
@@ -102,9 +102,9 @@ export async function openCommandSharing(id) {
       try {
         await api(`/api/commands/${encodeURIComponent(command.id)}/sharing`, { method: "PUT", body: JSON.stringify(grants) });
         dialog.close(); toast("Command sharing saved");
-      } catch (error) { toast(error.message); }
+      } catch (error) { toast.error(error.message); }
       finally { save.disabled = false; }
     });
     dialog.showModal();
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast.error(error.message); }
 }
