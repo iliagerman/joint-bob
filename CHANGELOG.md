@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.236.0 — 2026-11-08
+
+- Conversation lists and opening a conversation are much faster on a machine with many Pi conversations. A project's list now reads only that project's Pi transcripts, and skips the ones Joint Bob's own background work leaves behind, instead of opening every Pi transcript on the machine each time.
+- When your other machine asks for one conversation or its transcript, the project's conversation list is reused instead of being rebuilt from its whole history for each request.
+- Joint Bob's own background work no longer assumes Pi. Bob, titles, icons, knowledge cleanup, summaries a conversation's own agent cannot write, and the sync check and dashboards when they have no agent of their own now run on an agent that is signed in on that machine. Settings has a new **Background agent** choice: Automatic takes Pi, then Claude, then Kiro, whichever is signed in, at its default model and effort; or pick an agent, model and effort yourself.
+- Credentials for TypeSafe, Tavily and Azure are now shared with your other machines like the rest, and one credential that cannot be shared no longer stops the others from being shared.
+
 ## 2.235.0 — 2026-11-08
 
 - Each project on the control center's board is drawn in its own color, the one chosen in the project's settings, so projects tell apart at a glance. Its chip in the project filter and its messages in Bob's chat have the same color. A project without a color gets one from the same palette; choose another in its settings when two look alike.
