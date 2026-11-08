@@ -3,6 +3,17 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.237.0 — 2026-11-08
+
+- File sync between your machines no longer stalls when another project has a large backlog of files waiting for a peer. Its worker spent about 13 seconds on every pass walking that backlog, so the other machine's requests timed out and changed files stopped arriving.
+- Shared conversations no longer hold up the rest of the work between your machines, and a conversation that grew on the machine that owns it now fetches only its new part instead of the whole transcript again.
+- Your machines stopped sending account details to a relay server every 15 seconds only to be refused. Sharing changes that a later change replaced are no longer resent, and other refused deliveries wait before trying again instead of retrying every 2 seconds.
+- A finished conversation whose learning step failed now tries again after an hour, waiting twice as long each time up to a week, or a day at a time when no decision-model key applies. It no longer retries every hour without end, and the same error is no longer written and sent to your other machines each time. A summary or learning run on a model that does not offer the agent's default effort now uses the nearest effort that model offers.
+- Agents start with less work on the server, which stays responsive while they run. Fewer files are read for each launch, a git check runs only when the repository changed, secret files are written only when they changed, and GitHub App tokens are refreshed in the background before they expire.
+- On a Mac, the server's own log files are trimmed every hour instead of growing without limit.
+- Joint Bob no longer installs its own Syncthing beside one you already run. The two used to fight over the same folder, and the loser restarted every 5 seconds for days.
+- Bob can now send a message to a conversation on the board even before its transcript appears in the list.
+
 ## 2.236.0 — 2026-11-08
 
 - Conversation lists and opening a conversation are much faster on a machine with many Pi conversations. A project's list now reads only that project's Pi transcripts, and skips the ones Joint Bob's own background work leaves behind, instead of opening every Pi transcript on the machine each time.
