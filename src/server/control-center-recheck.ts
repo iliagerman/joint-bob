@@ -10,11 +10,13 @@ import {
 import {
   evidenceHash, isOpenItem, RELEVANCE_QUESTION, relevanceEvidence, relevanceState, replacedItems, settledByFacts, subjectKey, subjectOf, type ConversationNow,
 } from "../control-center/recheck.js";
+import { readReviewCheck } from "../control-center/review-check.js";
 import { storedDigest } from "../conversation-digest.js";
 import { allPendingGuardianReviews, onGuardianEvent } from "../guardian/reviews.js";
 import { getProject, projectVisible } from "../store.js";
 import { bobDecisionModel } from "./bob.js";
 import { bobSessionFor } from "./control-center-session.js";
+import { onConversationTurn } from "./harness-sessions.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { sharedProjectSessions } from "./sessions-helpers.js";
 
@@ -32,8 +34,8 @@ const MODEL_QUESTIONS = 8;
 const chains = new Map<string, Promise<void>>();
 const soon = new Map<string, NodeJS.Timeout>();
 
-/** Where each conversation the items are about stands for the person: one listing per project. */
-async function conversationsOf(items: BobMessage[], session: AuthSession): Promise<Map<string, ConversationNow>> {
+/** Where each conversation the items are about stands for the person (one listing per project), and when Bob last checked it. */
+async function conversationsOf(db: DatabaseSync, items: BobMessage[], session: AuthSession): Promise<Map<string, ConversationNow>> {
   const wanted = new Map<string, Set<string>>();
   for (const item of items) {
     const subject = subjectOf(item);
@@ -46,7 +48,10 @@ async function conversationsOf(items: BobMessage[], session: AuthSession): Promi
     for (const conversationId of conversationIds) {
       const entry = sessions.find((candidate) => (candidate.conversationId ?? candidate.id) === conversationId);
       const state = !entry ? "missing" : entry.running ? "running" : entry.doneAt ? "done" : entry.reviewState === "reviewed" ? "reviewed" : "waiting";
-      found.set(`${projectId}:${conversationId}`, { state, updatedAt: entry?.updatedAt ?? null, title: entry?.title ?? null, summary: storedDigest(projectId, conversationId)?.summary ?? null });
+      found.set(`${projectId}:${conversationId}`, {
+        state, updatedAt: entry?.updatedAt ?? null, title: entry?.title ?? null, summary: storedDigest(projectId, conversationId)?.summary ?? null,
+        checkedAt: readReviewCheck(db, projectId, conversationId)?.checkedAt ?? null,
+      });
     }
   }
   return found;
@@ -92,7 +97,7 @@ async function recheck(accountId: string): Promise<void> {
   const items = listOpenBobMessages(db, accountId).filter(isOpenItem);
   if (!items.length) return;
   await runAsAccount(actor, async () => {
-    const conversations = await conversationsOf(items, session);
+    const conversations = await conversationsOf(db, items, session);
     const pending = new Set(allPendingGuardianReviews().map((review) => review.id));
     const replaced = replacedItems(items);
     const open: OpenBobMessage[] = [];
@@ -126,11 +131,24 @@ async function recheckEveryone(): Promise<void> {
   for (const actor of listBobAccounts(await bobDatabase())) recheckSoon(actor.accountId);
 }
 
+/** A conversation's turn started or ended: whoever has open items about it has them checked again now, not at the next sweep. */
+async function recheckAbout(projectId: string, conversationId: string): Promise<void> {
+  const db = await bobDatabase();
+  for (const actor of listBobAccounts(db)) {
+    const about = listOpenBobMessages(db, actor.accountId).some((item) => {
+      const subject = subjectOf(item);
+      return subject?.kind === "conversation" && subject.projectId === projectId && subject.conversationId === conversationId;
+    });
+    if (about) recheckSoon(actor.accountId);
+  }
+}
+
 let started = false;
 
 /**
- * Starts checking open items again: on a timer, when the person reviews or closes a conversation, when a Guardian step is
- * answered, and when the person writes to Bob (what they say is part of the log the decision model reads).
+ * Starts checking open items again: on a timer, when the person reviews or closes a conversation, when a conversation's turn
+ * starts or ends, when a Guardian step is answered, and when the person writes to Bob (what they say is part of the log the
+ * decision model reads).
  */
 export function startBobRecheck(): void {
   if (started) return;
@@ -140,4 +158,6 @@ export function startBobRecheck(): void {
   onBobRecheckAsked(recheckSoon);
   onGuardianEvent(everyone);
   onBobMessage((accountId, message) => { if (message.role === "user") recheckSoon(accountId); });
+  onConversationTurn((shared) => void recheckAbout(shared.projectId, shared.conversationId)
+    .catch((error) => console.warn("Bob could not check his open items again", error instanceof Error ? error.message : error)));
 }

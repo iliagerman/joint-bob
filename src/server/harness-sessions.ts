@@ -44,6 +44,14 @@ export function onConversationMessage(listener: ConversationMessageListener): ()
   conversationMessageListeners.add(listener);
   return () => conversationMessageListeners.delete(listener);
 }
+
+const conversationTurnListeners = new Set<ConversationMessageListener>();
+
+/** Called as a turn starts and as it ends in a person's conversation; internal turns are not included. */
+export function onConversationTurn(listener: ConversationMessageListener): () => void {
+  conversationTurnListeners.add(listener);
+  return () => conversationTurnListeners.delete(listener);
+}
 const pendingOpen = new Map<string, Promise<SharedHarnessSession>>();
 
 export function harnessSessionKey(projectId: string, engine: HarnessId, sessionId: string): string {
@@ -99,6 +107,11 @@ function subscribe(shared: SharedHarnessSession): () => void {
     }
     if (event.type === "agent_start" || event.type === "status" || event.type === "conversationWorkChanged") broadcastToProject(shared.projectId, { type: "sessionsChanged" });
     if (!internal && event.type === "conversationWorkChanged") scheduleReviewNotifications(shared.projectId);
+    if (!internal && (event.type === "agent_start" || event.type === "agent_end")) {
+      for (const listener of conversationTurnListeners) {
+        try { listener(shared); } catch (error) { console.warn("Conversation turn listener failed", error); }
+      }
+    }
     if (!internal && (event.type === "assistantFinal" || event.type === "agent_end")) {
       for (const listener of conversationMessageListeners) {
         try { listener(shared); } catch (error) { console.warn("Conversation message listener failed", error); }

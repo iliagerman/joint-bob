@@ -285,6 +285,17 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.deepEqual(await check.locator(".control-action").allTextContents(), ["Push it on", "Done", "Abandon", "Open", "Reply", "Dismiss"], "its own buttons, then reply and dismiss; it has its own Done");
   // A finished card can be closed from the board too.
   assert.equal(await page.locator('[data-key="p1:c3"]').getByTestId("control-card-action-done").isVisible(), true);
+  // It shows where its conversation stands now, as the board does, and follows the board as that changes: the board is read
+  // again and the chat is not.
+  assert.equal(await check.getByTestId("control-chat-now").textContent(), "Done · ready for review");
+  const moveCard = (column: string) => page.evaluate((to) => {
+    (window as unknown as { __board: { cards: Array<{ conversationId: string; column: string }> } }).__board.cards.find((card) => card.conversationId === "c3")!.column = to;
+    window.dispatchEvent(new CustomEvent("running-refreshed"));
+  }, column);
+  await moveCard("running");
+  await page.waitForFunction(() => document.querySelector('[data-id="check"] [data-testid="control-chat-now"]')?.textContent === "Running now");
+  await moveCard("review");
+  await page.waitForFunction(() => document.querySelector('[data-id="check"] [data-testid="control-chat-now"]')?.textContent === "Done · ready for review");
 
   // Done in the chat: the item shows a check with what was pressed and leaves, and the card leaves the board with the same check.
   await check.getByRole("button", { name: "Done", exact: true }).click();

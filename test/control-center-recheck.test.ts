@@ -17,7 +17,7 @@ function item(change: Partial<BobMessage> = {}): BobMessage {
   };
 }
 const guardian = item({ id: "guard", role: "system", importance: "needs-ok", actions: [{ id: "guardian.allow", label: "Allow once", data: { projectId: "p1", conversationId: "c1", reviewId: "r1" } }, { id: "guardian.block", label: "Block", data: { reviewId: "r1" } }] });
-const conversation = (state: ConversationNow["state"], updatedAt: string | null = POSTED): ConversationNow => ({ state, updatedAt, title: "Fix the menu", summary: "Menu fixed on desktop; mobile waits for a decision." });
+const conversation = (state: ConversationNow["state"], updatedAt: string | null = POSTED, checkedAt: string | null = null): ConversationNow => ({ state, updatedAt, title: "Fix the menu", summary: "Menu fixed on desktop; mobile waits for a decision.", checkedAt });
 
 test("an item is a message that waits for a button press: not a report, not one already cleared, not one that only opens something", () => {
   assert.equal(isOpenItem(item()), true);
@@ -42,7 +42,7 @@ test("a newer item about the same conversation replaces the older one; Guardian 
   assert.deepEqual([...replacedItems([older, guardian, newer, other])], ["older"]);
 });
 
-test("the facts settle an item when its conversation was closed, looked at, answered or moved on, or its Guardian step was answered", () => {
+test("the facts settle an item when its conversation was closed, answered or moved on, a note once Bob checked the turn it is about, or its Guardian step was answered", () => {
   const settle = (message: BobMessage, now?: ConversationNow, replaced = false, guardianPending?: boolean) => settledByFacts(message, { conversation: now, replaced, guardianPending });
   assert.equal(settle(item(), conversation("waiting")), null, "still waiting");
   assert.equal(settle(item(), conversation("done")), "It was marked done.");
@@ -52,10 +52,13 @@ test("the facts settle an item when its conversation was closed, looked at, answ
   assert.equal(settle(item(), conversation("waiting", later(90))), "It moved on since.");
   assert.equal(settle(item(), conversation("missing")), null, "a conversation not found is left to the decision model");
   assert.equal(settle(item(), undefined, true), "A newer message about it replaced it.");
-  // Bob's note that he pushed it on is about the turn that runs now: only closing or looking at it settles it.
+  // Bob's note that he pushed it on is about the turn he pushed: it lasts while that turn runs, and goes once he checked the
+  // conversation again as it ended, or the person looked at it.
   const pushed = item({ importance: "fyi" });
-  assert.equal(settle(pushed, conversation("running")), null);
-  assert.equal(settle(pushed, conversation("waiting", later(600))), null);
+  assert.equal(settle(pushed, conversation("running", later(600))), null, "the turn he pushed runs");
+  assert.equal(settle(pushed, conversation("waiting", later(600))), null, "it ended, and Bob has not checked it yet");
+  assert.equal(settle(pushed, conversation("waiting", later(600), later(-1))), null, "the check that pushed it is not a new one");
+  assert.equal(settle(pushed, conversation("waiting", later(600), later(620))), "Bob checked it again when the turn he pushed ended.");
   assert.equal(settle(pushed, conversation("reviewed")), "You looked at it.");
   assert.equal(settle(guardian, conversation("reviewed"), false, true), null, "a Guardian step waits until it is answered");
   assert.equal(settle(guardian, undefined, false, false), "The step was answered, or it timed out.");

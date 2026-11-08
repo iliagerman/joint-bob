@@ -127,6 +127,8 @@ async function check(shared: SharedHarnessSession, actor: ActingAccount, turnEnd
     }
   }
   broadcastToAllClients({ type: "controlCenterChanged" }, actor.accountId);
+  // What Bob found settles his older items about it: a newer one replaces them, and a note that he pushed it on has its answer.
+  askBobRecheck(actor.accountId);
 }
 
 const BUSY_RETRIES = 5;

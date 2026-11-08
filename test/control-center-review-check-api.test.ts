@@ -9,7 +9,10 @@ import type { BobMessage } from "../src/control-center/bob-store.js";
 import { api, projectNamed, seedDevEnvironment, signIn, stopDevNode, waitForDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
 import { serverArgs } from "./server-entry.js";
 
-/** A stand-in decision model: a message names its project; a stopped conversation is "not done" the first time and "done" after. */
+/**
+ * A stand-in decision model: a message names its project; a stopped conversation is "not done" the first time and "done" after,
+ * except the login page, which waits for the person.
+ */
 async function decisionModel(): Promise<{ server: Server; url: string; verdicts: string[] }> {
   const verdicts: string[] = [];
   const server = createServer((request, response) => {
@@ -21,7 +24,7 @@ async function decisionModel(): Promise<{ server: Server; url: string; verdicts:
       const choose = (choice: string) => ({ type: "choice", choice, confidence: 0.97 });
       const answers: Record<string, unknown> = {};
       for (const [id, question] of Object.entries(parsed.questions)) {
-        if (id === "verdict") { const verdict = verdicts.length ? "done" : "continue"; verdicts.push(verdict); answers[id] = choose(verdict); }
+        if (id === "verdict") { const verdict = parsed.state.includes("fix the login page") ? "needs_user" : verdicts.length ? "done" : "continue"; verdicts.push(verdict); answers[id] = choose(verdict); }
         else if (id === "kind") answers[id] = choose("task");
         else if (id === "size") answers[id] = choose("long");
         else if (id === "project") answers[id] = choose(Object.entries(question.criteria).find(([key, text]) => key !== "none" && state.user_message?.includes(text.split(".")[0]))?.[0] ?? "none");
@@ -55,7 +58,7 @@ async function eventually<T>(read: () => Promise<T | undefined>, label: string):
   throw new Error(`Never happened: ${label}`);
 }
 
-test("a conversation that stops before its task is done is told to go on, one the decision model finds done is left for review, and Abandon closes it", { timeout: 180_000 }, async () => {
+test("a conversation that stops before its task is done is told to go on, one the decision model finds done is left for review, Bob's note goes once he checked it, and Abandon closes one", { timeout: 180_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-review-check-"));
   const classifier = await decisionModel();
   let child: ChildProcess | undefined;
@@ -92,18 +95,24 @@ test("a conversation that stops before its task is done is told to go on, one th
     const card = await eventually(async () => (await api<{ cards: Array<{ column: string; reviewCheck: { verdict: string } | null }> }>(node, auth, "GET", "/control-center/board")).body.cards.find((entry) => entry.reviewCheck), "the board shows the check");
     assert.equal(card.reviewCheck?.verdict, "done");
     assert.notEqual(card.column, "needs-you");
+    // Bob's note was about the turn he pushed: once he checked that turn, it leaves the chat at once, not at the next sweep.
+    const noted = await eventually(async () => (await timeline()).find((message) => message.id === said.id && message.resolvedAt), "Bob's note left the chat");
+    assert.deepEqual([noted.resolution, noted.actions], ["Bob checked it again when the turn he pushed ended.", []]);
 
-    // Abandon stops it if it still runs and closes it as marking it done does: it leaves the board, and Bob's check ends.
-    // The pressed message leaves the chat, which says it: nothing new is written.
-    const abandoned = await api<{ messages: BobMessage[]; pressed: BobMessage }>(node, auth, "POST", "/control-center/bob/action", { messageId: said.id, actionId: "conversation.abandon" });
+    // Abandon stops a conversation if it still runs and closes it as marking it done does: it leaves the board, and Bob's
+    // check ends. The pressed message leaves the chat, which says it: nothing new is written.
+    const login = await api<{ action: string }>(node, auth, "POST", "/control-center/bob/message", { message: "fix the login page in Joint Bob" });
+    assert.equal(login.body.action, "started", JSON.stringify(login.body));
+    const waits = await eventually(async () => (await timeline()).find((message) => message.text.startsWith('"fix the login page in Joint Bob" waits for you') && message.actions.length), "Bob brought it to the person");
+    const abandoned = await api<{ messages: BobMessage[]; pressed: BobMessage }>(node, auth, "POST", "/control-center/bob/action", { messageId: waits.id, actionId: "conversation.abandon" });
     assert.equal(abandoned.status, 200, JSON.stringify(abandoned.body));
     assert.deepEqual(abandoned.body.messages, []);
     assert.equal(abandoned.body.pressed.resolution, "You chose “Abandon”.");
     const sessions = (await api<{ sessions: Array<{ title: string; doneAt?: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`)).body.sessions;
-    assert.ok(sessions.find((session) => session.title === "fix the mobile menu in Joint Bob")?.doneAt, "the conversation is marked done");
+    assert.ok(sessions.find((session) => session.title === "fix the login page in Joint Bob")?.doneAt, "the conversation is marked done");
     const board = (await api<{ cards: Array<{ title: string }> }>(node, auth, "GET", "/control-center/board")).body.cards;
-    assert.equal(board.some((entry) => entry.title === "fix the mobile menu in Joint Bob"), false, "it left the board");
-    assert.deepEqual((await timeline()).find((message) => message.id === said.id)?.actions, [], "the buttons ran once");
+    assert.equal(board.some((entry) => entry.title === "fix the login page in Joint Bob"), false, "it left the board");
+    assert.deepEqual((await timeline()).find((message) => message.id === waits.id)?.actions, [], "the buttons ran once");
   } finally {
     if (child) await stopDevNode(child);
     classifier.server.close();

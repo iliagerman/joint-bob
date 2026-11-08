@@ -55,6 +55,29 @@ function conversationOf(message) {
   return { open, title: open?.title ?? quoted ?? "the conversation" };
 }
 
+/**
+ * Where each conversation on the board stands now, by project and conversation. The board is read again whenever anything
+ * changes (and every few seconds while an agent runs), so a message about a conversation shows what it does now, with no
+ * reading of its own.
+ */
+let boardNow = new Map();
+const NOW_WORDS = { running: "Running now", "needs-you": "Waits for you", review: "Done · ready for review" };
+
+/** The board column of the conversation an open message is about; null once the message is cleared, or off the board. */
+function nowOf(message, about) {
+  if (message.resolvedAt || !about?.open) return null;
+  return boardNow.get(`${about.open.projectId}:${about.open.conversationId}`) ?? null;
+}
+
+function renderNow(column) {
+  const now = element("span", `control-entry-now ${column}`);
+  now.dataset.testid = "control-chat-now";
+  now.dataset.column = column;
+  now.title = "Where this conversation stands now, as on the board";
+  now.append(element("span", `control-pulse ${column}`), element("span", "", NOW_WORDS[column] ?? column));
+  return now;
+}
+
 /** What a source means, in words, for the line under a conversation's name. */
 const SOURCE_WORDS = {
   "Review check": "Bob checked it when it stopped",
@@ -223,6 +246,8 @@ function renderConversationNotice(message, about) {
   const { label, detail } = sourceOf(message);
   const raised = element("div", "control-entry-event");
   raised.append(importanceLabel(message), element("span", "control-entry-raised", SOURCE_WORDS[label] ?? label), timeOf(message));
+  const now = nowOf(message, about);
+  if (now) raised.append(renderNow(now));
   wrap.append(source, raised, renderBody(message, withoutTitle(message.text, about.title)));
   appendControls(wrap, message, about);
   if (detail) wrap.append(element("div", "control-via", detail));
@@ -311,6 +336,24 @@ function matchesFilter(message) {
 }
 
 const entryOf = (id) => elements.controlChatMessages.querySelector(`.control-entry[data-id="${CSS.escape(id)}"]`);
+
+/**
+ * Puts where each message's conversation stands now in step with the board, in place: the chat is not drawn again for it, so
+ * an item on its way out, a reply being written and the scroll are left alone.
+ */
+function updateNow() {
+  for (const message of messages) {
+    const entry = message.role === "user" || message.resolvedAt ? null : entryOf(message.id);
+    const about = entry && conversationOf(message);
+    if (!about) continue;
+    const column = nowOf(message, about);
+    const shown = entry.querySelector('[data-testid="control-chat-now"]');
+    if ((shown?.dataset.column ?? null) === column) continue;
+    if (!column) shown.remove();
+    else if (shown) shown.replaceWith(renderNow(column));
+    else entry.querySelector(".control-entry-event")?.append(renderNow(column));
+  }
+}
 
 /** Items on screen that were cleared since leave with their animation (all together), then the chat is drawn again. */
 async function readMessages() {
@@ -622,6 +665,7 @@ elements.controlChatInput.addEventListener("keydown", (event) => {
 // projects changed: the board is drawn every few seconds while agents run, and refilling a list closes it on a phone.
 let listedProjects = "";
 window.addEventListener("control-center-rendered", (event) => {
+  boardNow = new Map(event.detail.cards.map((card) => [`${card.projectId}:${card.conversationId}`, card.column]));
   const choose = (select, first) => {
     const chosen = select.value;
     select.replaceChildren(...first, ...event.detail.projects.map((project) => new Option(project.name, project.id)));
@@ -636,6 +680,7 @@ window.addEventListener("control-center-rendered", (event) => {
     drawnMessages = "";
     renderMessages();
   }
+  updateNow();
   applyLayout();
   // The board's own project chips focus the chat too: one project chosen there filters it here.
   const focus = event.detail.focus.length === 1 ? event.detail.focus[0] : "";

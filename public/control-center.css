@@ -221,6 +221,9 @@ button.control-entry-conversation:hover { text-decoration: underline; text-under
 button.control-entry-conversation::after { content: " ↗"; color: var(--muted); font-weight: 400; }
 .control-entry-event { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
 .control-entry-raised { color: var(--text); }
+.control-entry-now { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
+.control-entry-now .control-pulse { margin-top: 0; }
+.control-entry-now.needs-you .control-pulse { background: #f2b44b; }
 
 /* Bob's acknowledgement while he works on a message: what he got, with a live dot and how long so far. */
 .control-pending .control-msg { display: flex; align-items: baseline; gap: 7px; color: var(--muted); }

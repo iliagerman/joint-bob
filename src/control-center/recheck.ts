@@ -3,10 +3,10 @@ import type { SystemOneQuestion } from "../classifiers/typesafe.js";
 import type { BobAction, BobMessage } from "./bob-store.js";
 
 /**
- * Bob's open items are checked again every few minutes, and at once when the person reviews or closes a conversation, so the
- * chat only shows what still waits for them. What the facts settle (the conversation was marked done, answered or moved on, a
- * newer item about it came, the Guardian step was answered; a note that only told the person something, once they looked at
- * the conversation) is cleared at once. Looking at a conversation does not answer what it asks. What they cannot settle, the
+ * Bob's open items are checked again every few minutes, and at once when the person reviews or closes a conversation or its
+ * turn starts or ends, so the chat only shows what still waits for them. What the facts settle (the conversation was marked
+ * done, answered or moved on, a newer item about it came, the Guardian step was answered; a note that Bob pushed it on, once
+ * he checked the turn he pushed or the person looked at the conversation) is cleared at once. Looking at a conversation does not answer what it asks. What they cannot settle, the
  * decision model judges from the log of what happened since: the person's later messages, Bob's answers, and the items cleared
  * after it. Unsure means the item stays.
  */
@@ -35,8 +35,8 @@ export function subjectOf(item: BobMessage): ItemSubject | null {
 
 export const subjectKey = (subject: ItemSubject): string => subject.kind === "guardian" ? `guardian:${subject.reviewId}` : `${subject.projectId}:${subject.conversationId}`;
 
-/** Where a conversation stands for the person, as their project's list shows it. */
-export interface ConversationNow { state: "running" | "waiting" | "reviewed" | "done" | "missing"; updatedAt: string | null; title: string | null; summary: string | null }
+/** Where a conversation stands for the person, as their project's list shows it, and when Bob last checked it as a turn ended. */
+export interface ConversationNow { state: "running" | "waiting" | "reviewed" | "done" | "missing"; updatedAt: string | null; title: string | null; summary: string | null; checkedAt: string | null }
 
 /** Items about a conversation that a newer open item about the same conversation replaced. */
 export function replacedItems(items: BobMessage[]): Set<string> {
@@ -70,9 +70,13 @@ export function settledByFacts(item: BobMessage, facts: ItemFacts): string | nul
   const now = facts.conversation;
   if (!now) return null;
   if (now.state === "done") return "It was marked done.";
-  // A note that Bob pushed it on is about the turn that runs now, and is seen once the person looked; an item that asks the
-  // person is settled only by their answer.
-  if (item.importance === "fyi") return now.state === "reviewed" ? "You looked at it." : null;
+  // A note that Bob pushed it on lasts as long as the turn he pushed: it goes once he checked the conversation again as that
+  // turn ended (what it came to is his next message, or the board), or the person looked. An item that asks the person is
+  // settled only by their answer.
+  if (item.importance === "fyi") {
+    if (now.state === "reviewed") return "You looked at it.";
+    return now.checkedAt && Date.parse(now.checkedAt) > Date.parse(item.createdAt) ? "Bob checked it again when the turn he pushed ended." : null;
+  }
   if (now.state === "running") return "It is running again.";
   if (now.updatedAt && Date.parse(now.updatedAt) > Date.parse(item.createdAt) + MOVED_ON_MS) return "It moved on since.";
   return null;
