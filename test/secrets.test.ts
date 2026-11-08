@@ -62,6 +62,21 @@ test("secret accounts redact saved values, retain omitted edits, and expose only
   });
 });
 
+test("system decision credentials need a machine selection, not a project attachment", async () => {
+  await withSecrets("system-ai", async secrets => {
+    const key = await secrets.saveSecretAccount({ label: "System evaluator", provider: "typesafe", variables: [{ name: "TYPESAFE_AI_API_KEY", kind: "value", value: "synthetic-system-key" }] });
+    assert.equal(secrets.systemSecretVariable(key.id, "TYPESAFE_AI_API_KEY"), "synthetic-system-key");
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), {}, "system credentials are not exported to project agents");
+    assert.deepEqual(await secrets.getScopeSecretAccounts("project", "project-a"), { accountIds: [] });
+    const website = await secrets.saveSecretAccount({ label: "Website", provider: "website", websiteOrigin: "https://example.test", variables: [{ name: "TYPESAFE_AI_API_KEY", kind: "value", value: "website-key" }] });
+    assert.throws(() => secrets.systemSecretVariable(website.id, "TYPESAFE_AI_API_KEY"), /not available for system/);
+    const restricted = await secrets.saveSecretAccount({ label: "Project only", provider: "typesafe", projectId: "project-a", variables: [{ name: "TYPESAFE_AI_API_KEY", kind: "value", value: "restricted-key" }] });
+    assert.throws(() => secrets.systemSecretVariable(restricted.id, "TYPESAFE_AI_API_KEY"), /not available for system/);
+    await secrets.deleteSecretAccount(key.id);
+    assert.throws(() => secrets.systemSecretVariable(key.id, "TYPESAFE_AI_API_KEY"), /not available for system/);
+  });
+});
+
 test("Azure service principal credentials stay encrypted, scoped and redacted", async () => {
   await withSecrets("azure", async (secrets) => {
     const { secretAccountSchema } = await import("../src/server/schemas.js");

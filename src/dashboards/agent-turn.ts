@@ -1,4 +1,5 @@
 import { internalSessionId } from "../internal-sessions.js";
+import { withSystemAiProfile } from "../system-ai.js";
 import { actingAccount } from "../account-context.js";
 import { automationProfileContext } from "../provider-profiles/context.js";
 import { resolvePoolModelSettings } from "../provider-profiles/pool-execution.js";
@@ -33,6 +34,10 @@ export interface DashboardAgentTurnInput {
  * runtime makes a used-up budget refuse the turn. Returns the agent's final text.
  */
 export async function runDashboardAgentTurn(input: DashboardAgentTurnInput): Promise<string> {
+  return withSystemAiProfile(input.settings.harnessId, input.settings.provider, () => dashboardAgentWithProfile(input));
+}
+
+async function dashboardAgentWithProfile(input: DashboardAgentTurnInput): Promise<string> {
   const override = process.env.JOINT_BOB_DASHBOARD_AGENT;
   if (override) {
     const module = await import(override) as { default: (input: DashboardAgentTurnInput) => Promise<string> };

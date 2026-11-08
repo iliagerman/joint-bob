@@ -75,6 +75,7 @@ for (const runner of runners) for (const source of ["cluster", "conversation", "
       getProject: async () => ({ id: "project", type: "workspace" }), asNode: (work: () => any) => work(),
       actingAccount: () => source === "cluster" ? undefined : ({ accountId: "owner" }), automationProfileContext, withAutomationProfile,
       validateAutoRespondProfile: () => {},
+      withSystemAiProfile: (_harness: string, _provider: string, work: () => unknown) => work(),
       resolveSubscriptionPool: poolRunner.resolveSubscriptionPool, promptOnSubscriptionPool: poolRunner.promptOnSubscriptionPool,
       resolvePoolModelSettings,
       conversationScopeId: () => "side", setScopeSecretAccounts: async () => {},

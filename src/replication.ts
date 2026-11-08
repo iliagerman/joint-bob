@@ -26,6 +26,7 @@ import { applyProviderProfileEvent, applyProviderPoolSelectionEvent, applyProvid
 import { applySubscriptionPoolEvent } from "./provider-profiles/pools.js";
 import { applyClusterSubscriptionPoolEvent } from "./provider-profiles/pool-sharing.js";
 import { applyStoryEvent } from "./story-replication.js";
+import { applySystemAiEvent } from "./system-ai-replication.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -422,6 +423,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "provider.poolSelection": applyProviderPoolSelectionEvent,
   "provider.poolAssignment": applyClusterSubscriptionPoolEvent,
   story: applyStoryEvent,
+  "system.ai": applySystemAiEvent,
 };
 
 /** Every event type this node can apply. Each one needs a scope in replication-v2.ts. */

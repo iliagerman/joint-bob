@@ -295,6 +295,8 @@ app.put("/api/settings", async (request, response, next) => {
     await assertManagedHomeChangeAllowed(homePath);
     await ensureManagedHome(homePath, (await listWorkspaces()).map((workspace) => workspace.id));
     const settings = updateSettings(payload, session.userId);
+    const { publishSystemAiSettings } = await import("../../system-ai-replication.js");
+    await publishSystemAiSettings(["backgroundAgent", "syncCheck", "dashboards"].filter(key => key in payload));
     // Paths, Kiro on or off, or defaults can change which agents are ready for background work.
     forgetHarnessReadiness();
     if (payload.conversationCommands) await announceCommandChanges();

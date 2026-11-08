@@ -490,6 +490,8 @@ test("node settings run the sync check by default and let the user pick its harn
   await page.locator("#settingsDialog[open]").waitFor();
 
   await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  await page.getByTestId('settings-tab-system-ai').click();
+  await page.getByTestId('system-ai-decision-model').waitFor();
   const enabled = page.getByTestId("settings-sync-check-enabled");
   const harness = page.getByTestId("settings-sync-check-harness");
   assert.equal(await enabled.isChecked(), true, "the sync check is on by default");
@@ -499,7 +501,7 @@ test("node settings run the sync check by default and let the user pick its harn
   await harness.selectOption("claude");
   await enabled.uncheck();
   await page.getByTestId("settings-save-button").click();
-  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  await page.getByTestId('system-ai-status').getByText('Saved', { exact: false }).waitFor();
   const saved = await page.evaluate(async () => (await (await fetch("/api/settings")).json()) as { syncCheck: Record<string, unknown>; conversationDefaults: Record<string, Record<string, unknown>> });
   assert.equal(saved.syncCheck.enabled, false);
   assert.equal(saved.syncCheck.harnessId, "claude");
@@ -513,13 +515,15 @@ test("node settings let the user pick the dashboard agent's harness and model", 
   await page.locator("#settingsDialog[open]").waitFor();
 
   await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  await page.getByTestId('settings-tab-system-ai').click();
+  await page.getByTestId('system-ai-decision-model').waitFor();
   const harness = page.getByTestId("settings-dashboards-harness");
   assert.equal(await harness.inputValue(), "pi", "the dashboard agent starts on Pi");
   await page.getByTestId("settings-dashboards-model").waitFor({ state: "attached" });
 
   await harness.selectOption("claude");
   await page.getByTestId("settings-save-button").click();
-  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  await page.getByTestId('system-ai-status').getByText('Saved', { exact: false }).waitFor();
   const saved = await page.evaluate(async () => (await (await fetch("/api/settings")).json()) as { dashboards: Record<string, unknown>; conversationDefaults: Record<string, Record<string, unknown>> });
   assert.equal(saved.dashboards.harnessId, "claude");
   assert.equal(saved.dashboards.modelId, saved.conversationDefaults.claude.modelId, "a new harness starts from its conversation default model");
@@ -532,6 +536,8 @@ test("node settings run background work on an automatic agent and let the user c
   await page.locator("#settingsDialog[open]").waitFor();
 
   await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  await page.getByTestId('settings-tab-system-ai').click();
+  await page.getByTestId('system-ai-decision-model').waitFor();
   const harness = page.getByTestId("settings-background-agent-harness");
   assert.equal(await harness.inputValue(), "", "background work starts on Automatic");
   assert.equal(await page.locator("#settingsBackgroundAgentModel").locator("select, input, button").count(), 0, "Automatic has no model of its own");
@@ -540,7 +546,7 @@ test("node settings run background work on an automatic agent and let the user c
   await harness.selectOption("claude");
   await page.getByTestId("settings-background-agent-model").waitFor({ state: "attached" });
   await page.getByTestId("settings-save-button").click();
-  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  await page.getByTestId('system-ai-status').getByText('Saved', { exact: false }).waitFor();
   const saved = await page.evaluate(async () => (await (await fetch("/api/settings")).json()) as { backgroundAgent: Record<string, unknown>; conversationDefaults: Record<string, Record<string, unknown>> });
   assert.equal(saved.backgroundAgent.harnessId, "claude");
   assert.equal(saved.backgroundAgent.modelId, saved.conversationDefaults.claude.modelId, "a chosen agent starts from its conversation default model");

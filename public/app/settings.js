@@ -35,6 +35,8 @@ import { createSettingsSearch } from "./settings-search.js";
 import { loadFileSyncSettings } from "./file-sync-settings.js";
 import { loadGuardianSettings } from "./guardian-settings.js";
 import { loadQualityAnalytics } from "./quality-analytics.js";
+import { loadSystemAiSettings, saveSystemAiSettings } from "./system-ai-settings.js";
+import { loadConversationChatSettings } from "./conversation-chat.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
 function isNewerVersion(candidate, baseline) {
@@ -103,13 +105,15 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync", "settingsPanel-automation-tags", "settingsPanel-story", "settingsPanel-guardian", "settingsPanel-quality"].includes(panel.id);
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync", "settingsPanel-automation-tags", "settingsPanel-story", "settingsPanel-guardian", "settingsPanel-quality", "settingsPanel-system-ai"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(requested) {
   // A tab hidden from this account (Relay for a replicated user, admin tabs for a member) falls back to Account.
   const name = elements.settingsTabs.some((tab) => tab.dataset.settingsTab === requested && !tab.hidden && (isNodeAdmin() || !tab.hasAttribute("data-admin-only"))) ? requested : "account";
   elements.settingsForm.dataset.tab = name;
+  // System AI has its own endpoint and must not validate hidden settings in other tabs.
+  elements.settingsForm.noValidate = name === "system-ai";
   for (const tab of elements.settingsTabs) {
     const selected = tab.dataset.settingsTab === name;
     tab.setAttribute("aria-selected", selected ? "true" : "false");
@@ -126,13 +130,20 @@ function selectSettingsTab(requested) {
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "guardian" || name === "classifiers") void loadGuardianSettings().catch((error) => toast.error(error.message));
   if (name === "quality") void loadQualityAnalytics();
+  if (name === "system-ai") {
+    void loadSystemAiSettings({ controls: (descriptor, settings, prefix, options) => createConversationControls(descriptor, settings, prefix, { ...options, preserveUnavailableThinking: true }), render: (settings, descriptors) => {
+      systemHarnessDescriptors = descriptors;
+      renderBackgroundAgentSettings(settings); renderSyncCheckSettings(settings); renderDashboardAgentSettings(settings);
+    }, value: () => ({ backgroundAgent: backgroundAgentValue(), syncCheck: syncCheckValue(), dashboards: dashboardAgentValue() }) });
+    void loadSummaryModelSettings().catch(error => toast.error(error.message));
+  }
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "file-sync") void loadFileSyncSettings(); // settings-page (P4)
   if (name === "connections") void loadProviderProfiles().catch((error) => toast.error(error.message));
   if (name === "story") void loadStorySettings().catch((error) => toast.error(error.message));
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast.error(error.message));
-  if (name === "conversations") void loadSummaryModelSettings().catch((error) => toast.error(error.message));
+  if (name === "conversations") void loadConversationChatSettings().catch((error) => toast.error(error.message));
   if (name === "users") void loadUsers().catch((error) => toast.error(error.message));
   if (name === "account") void loadMyNodes().catch((error) => toast.error(error.message));
   if (name === "node") {
@@ -192,8 +203,9 @@ function createConversationControls(descriptor, settings, prefix, options = {}) 
   let catalog = { providers: [], models: [] };
   const selectedProvider = () => provider ? provider.value : fixedProvider;
   function fillThinking(levels, current) {
-    thinking.replaceChildren(...levels.map((level) => new Option(level, level)));
-    thinking.value = levels.includes(current) ? current : levels.includes("default") ? "default" : levels[0];
+    const choices = levels.map(level => ({ value: level, label: level }));
+    thinking.replaceChildren(...(options.preserveUnavailableThinking ? withSaved(choices, current) : choices).map(({ value, label }) => new Option(label, value)));
+    thinking.value = current && (options.preserveUnavailableThinking || levels.includes(current)) ? current : levels.includes("default") ? "default" : levels[0];
   }
   function refreshModels() {
     const models = catalog.models.filter((candidate) => candidate.provider === selectedProvider());
@@ -313,21 +325,22 @@ function conversationDefaultsValue() {
     return [descriptor.id, { provider: fields.provider ? fields.provider.value : descriptor.configuration.fixedProvider, modelId: fields.model.value, thinkingLevel: fields.thinking.value }];
   }));
 }
+let systemHarnessDescriptors = [];
 let syncCheckFields = null;
 
 /** The sync check picks its own harness and model; switching harness starts from that harness's conversation default. */
 function renderSyncCheckModel(settings, harnessId, current) {
-  const descriptor = harnessDescriptors.find(({ id }) => id === harnessId);
+  const descriptor = systemHarnessDescriptors.find(({ id }) => id === harnessId);
   if (!descriptor) { elements.settingsSyncCheckModel.replaceChildren(); syncCheckFields = null; return; }
-  const controls = createConversationControls(descriptor, settings, "", { current: current ?? settings.conversationDefaults[descriptor.id], idPrefix: "settingsSyncCheck", testPrefix: "settings-sync-check", label: "Sync check" });
+  const controls = createConversationControls(descriptor, settings, "", { current: current ?? settings.conversationDefaults[descriptor.id], idPrefix: "settingsSyncCheckChoice", testPrefix: "settings-sync-check", label: "Sync check", preserveUnavailableThinking: true });
   syncCheckFields = { descriptor, ...controls.fields };
   elements.settingsSyncCheckModel.replaceChildren(...controls.controls);
 }
 
 function renderSyncCheckSettings(settings) {
   const sync = settings.syncCheck;
-  const runnable = harnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
-  const choices = runnable.some(({ id }) => id === sync.harnessId) ? runnable : [...runnable, harnessDescriptors.find(({ id }) => id === sync.harnessId)].filter(Boolean);
+  const runnable = systemHarnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
+  const choices = runnable.some(({ id }) => id === sync.harnessId) ? runnable : [...runnable, systemHarnessDescriptors.find(({ id }) => id === sync.harnessId)].filter(Boolean);
   elements.settingsSyncCheckEnabled.checked = sync.enabled;
   elements.settingsSyncCheckHarness.replaceChildren(...choices.map(({ id, label }) => new Option(label, id)));
   elements.settingsSyncCheckHarness.value = sync.harnessId;
@@ -356,10 +369,10 @@ let backgroundAgentFields = null;
 
 /** Automatic shows no model: it runs the chosen agent's own default model and effort. */
 function renderBackgroundAgentModel(settings, harnessId, current) {
-  const descriptor = harnessDescriptors.find(({ id }) => id === harnessId);
+  const descriptor = systemHarnessDescriptors.find(({ id }) => id === harnessId);
   if (!descriptor) { elements.settingsBackgroundAgentModel.replaceChildren(); backgroundAgentFields = null; return; }
   const stored = current?.harnessId === harnessId && current.modelId ? current : settings.conversationDefaults[descriptor.id];
-  const controls = createConversationControls(descriptor, settings, "", { current: stored, idPrefix: "settingsBackgroundAgent", testPrefix: "settings-background-agent", label: "Background agent" });
+  const controls = createConversationControls(descriptor, settings, "", { current: stored, idPrefix: "settingsBackgroundAgentChoice", testPrefix: "settings-background-agent", label: "Background agent", preserveUnavailableThinking: true });
   backgroundAgentFields = { descriptor, ...controls.fields };
   elements.settingsBackgroundAgentModel.replaceChildren(...controls.controls);
 }
@@ -374,8 +387,8 @@ function backgroundAgentSummary(status) {
 
 function renderBackgroundAgentSettings(settings) {
   const choice = settings.backgroundAgent ?? { harnessId: "" };
-  const runnable = harnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
-  const choices = !choice.harnessId || runnable.some(({ id }) => id === choice.harnessId) ? runnable : [...runnable, harnessDescriptors.find(({ id }) => id === choice.harnessId)].filter(Boolean);
+  const runnable = systemHarnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
+  const choices = !choice.harnessId || runnable.some(({ id }) => id === choice.harnessId) ? runnable : [...runnable, systemHarnessDescriptors.find(({ id }) => id === choice.harnessId)].filter(Boolean);
   elements.settingsBackgroundAgentHarness.replaceChildren(new Option("Automatic", ""), ...choices.map(({ id, label }) => new Option(label, id)));
   elements.settingsBackgroundAgentHarness.value = choice.harnessId;
   elements.settingsBackgroundAgentHarness.onchange = () => renderBackgroundAgentModel(settings, elements.settingsBackgroundAgentHarness.value, choice);
@@ -394,17 +407,17 @@ let dashboardAgentFields = null;
 
 /** Like the sync check, the dashboard agent picks its own harness and model on this node. */
 function renderDashboardAgentModel(settings, harnessId, current) {
-  const descriptor = harnessDescriptors.find(({ id }) => id === harnessId);
+  const descriptor = systemHarnessDescriptors.find(({ id }) => id === harnessId);
   if (!descriptor) { elements.settingsDashboardsModel.replaceChildren(); dashboardAgentFields = null; return; }
-  const controls = createConversationControls(descriptor, settings, "", { current: current ?? settings.conversationDefaults[descriptor.id], idPrefix: "settingsDashboards", testPrefix: "settings-dashboards", label: "Dashboard agent" });
+  const controls = createConversationControls(descriptor, settings, "", { current: current ?? settings.conversationDefaults[descriptor.id], idPrefix: "settingsDashboardsChoice", testPrefix: "settings-dashboards", label: "Dashboard agent", preserveUnavailableThinking: true });
   dashboardAgentFields = { descriptor, ...controls.fields };
   elements.settingsDashboardsModel.replaceChildren(...controls.controls);
 }
 
 function renderDashboardAgentSettings(settings) {
   const agent = settings.dashboards;
-  const runnable = harnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
-  const choices = runnable.some(({ id }) => id === agent.harnessId) ? runnable : [...runnable, harnessDescriptors.find(({ id }) => id === agent.harnessId)].filter(Boolean);
+  const runnable = systemHarnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
+  const choices = runnable.some(({ id }) => id === agent.harnessId) ? runnable : [...runnable, systemHarnessDescriptors.find(({ id }) => id === agent.harnessId)].filter(Boolean);
   elements.settingsDashboardsHarness.replaceChildren(...choices.map(({ id, label }) => new Option(label, id)));
   elements.settingsDashboardsHarness.value = agent.harnessId;
   elements.settingsDashboardsHarness.onchange = () => renderDashboardAgentModel(settings, elements.settingsDashboardsHarness.value);
@@ -519,9 +532,6 @@ async function loadSettings() {
   elements.settingsConversationMemoryLimitEnabled.checked = settings.conversationMemoryLimitGb != null;
   elements.settingsConversationMemoryLimitGb.value = settings.conversationMemoryLimitGb ?? 8;
   elements.settingsConversationMemoryLimitGb.disabled = !elements.settingsConversationMemoryLimitEnabled.checked;
-  renderBackgroundAgentSettings(settings);
-  renderSyncCheckSettings(settings);
-  renderDashboardAgentSettings(settings);
   elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
   elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsRuntimeStatus.textContent = "";
@@ -618,7 +628,7 @@ function personalSettingsValue() {
 async function savePersonalSettings() {
   const saved = await api("/api/settings/personal", { method: "PUT", body: JSON.stringify(personalSettingsValue()) });
   state.conversationLabels = saved.conversationLabels;
-  if (state.activeProjectId) await refreshSessionsQuietly();
+  if (state.activeProjectId) void refreshSessionsQuietly();
   else renderSessions();
   elements.settingsDialog.close();
   toast("Settings saved");
@@ -626,6 +636,7 @@ async function savePersonalSettings() {
 
 async function saveSettings(event) {
   event.preventDefault();
+  if (elements.settingsForm.dataset.tab === "system-ai") { await saveSystemAiSettings(); return; }
   if (!settingsReady || settingsLoading) return;
   for (const descriptor of harnessDescriptors) {
     if (descriptor.id === "kiro" && !kiroEnabledValue()) continue;
@@ -634,12 +645,6 @@ async function saveSettings(event) {
     if (!model.value) throw new Error(`Choose a ${descriptor.label} model for new conversations`);
   }
   if (!isNodeAdmin()) { await savePersonalSettings(); return; }
-  const syncCheck = syncCheckValue();
-  if (syncCheck && (!syncCheck.provider || !syncCheck.modelId)) throw new Error("Choose a model for the sync check");
-  const dashboards = dashboardAgentValue();
-  if (dashboards && (!dashboards.provider || !dashboards.modelId)) throw new Error("Choose a model for the dashboard agent");
-  const backgroundAgent = backgroundAgentValue();
-  if (backgroundAgent.harnessId && (!backgroundAgent.provider || !backgroundAgent.modelId)) throw new Error("Choose a model for the background agent");
   const runtime = runtimeFieldsValue();
   for (const harness of clearedHarnessesOnSave) runtime[harness] = blankHarnessPayload();
   const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), runtime);
@@ -668,9 +673,6 @@ async function saveSettings(event) {
       newConversationWorktree: elements.settingsNewConversationWorktree.checked,
       gitPullFileLimit: Number(elements.settingsGitPullFileLimit.value),
       gitPullTimeoutSeconds: Number(elements.settingsGitPullTimeoutSeconds.value),
-      ...(syncCheck ? { syncCheck } : {}),
-      ...(dashboards ? { dashboards } : {}),
-      backgroundAgent,
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       runnerAccess: { otherNodes: elements.settingsRunnerOtherNodes.checked },
       conversationCommands: personalSettingsValue().conversationCommands,
@@ -679,7 +681,8 @@ async function saveSettings(event) {
   await saveChangedTerminalPolicy();
   state.conversationLabels = saved.conversationLabels;
   state.conversationLabelIcons = saved.conversationLabelIcons;
-  if (state.activeProjectId) await refreshSessionsQuietly();
+  // Refreshes can keep queuing during live activity; they are not part of saving.
+  if (state.activeProjectId) void refreshSessionsQuietly();
   else renderSessions();
   const restartRequired = harnessDescriptors.filter(({ id }) => saved.restartRequired[id]).map(({ label }) => `${label} configuration`);
   elements.settingsRestartMessage.hidden = restartRequired.length === 0;
@@ -830,7 +833,8 @@ elements.settingsChangePasswordButton.addEventListener("click", async () => {
 let settingsSaving = false;
 elements.settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (settingsSaving || !settingsReady || settingsLoading) return;
+  if (elements.settingsForm.dataset.tab === "system-ai") { await saveSystemAiSettings(); return; }
+  if (elements.settingsForm.dataset.tab === "quality" || settingsSaving || !settingsReady || settingsLoading) return;
   settingsSaving = true;
   const button = elements.settingsForm.querySelector('[type="submit"]');
   button.disabled = true;

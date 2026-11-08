@@ -110,7 +110,10 @@ app.get("/api/conversation-summary/settings", async (_request, response, next) =
 /** Admin only (see ADMIN_ROUTES): this node's own policy. */
 app.put("/api/conversation-summary/settings", async (request, response, next) => {
   try {
-    response.json({ node: saveNodeSummaryPolicy(summaryPolicySchema.parse(request.body)) });
+    const node = saveNodeSummaryPolicy(summaryPolicySchema.parse(request.body));
+    const { publishSystemAiSettings } = await import("../../system-ai-replication.js");
+    await publishSystemAiSettings(["conversationSummary"]);
+    response.json({ node });
   } catch (error) {
     next(error);
   }
@@ -121,7 +124,10 @@ app.put("/api/conversation-summary/instructions", async (request, response, next
   try {
     const { instructions } = z.object({ instructions: summaryInstructionsSchema.nullable() }).strict().parse(request.body);
     const custom = instructions && instructions !== DEFAULT_SUMMARY_INSTRUCTIONS ? instructions : null;
-    response.json({ instructions: { custom: saveNodeSummaryInstructions(custom), default: DEFAULT_SUMMARY_INSTRUCTIONS } });
+    const saved = saveNodeSummaryInstructions(custom);
+    const { publishSystemAiSettings } = await import("../../system-ai-replication.js");
+    await publishSystemAiSettings(["conversationSummaryInstructions"]);
+    response.json({ instructions: { custom: saved, default: DEFAULT_SUMMARY_INSTRUCTIONS } });
   } catch (error) {
     next(error);
   }

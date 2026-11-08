@@ -5186,10 +5186,27 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 /* Machine-local quality dashboard: bounded pages, readable on narrow screens. */
 .quality-analytics { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .quality-analytics h2, .quality-analytics h3, .quality-analytics p { margin: 0 0 8px; }
-.quality-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 8px; }
+.quality-collection { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--field); }
+.quality-collection .checkbox-row input { flex: 0 0 18px; width: 18px; height: 18px; padding: 0; }
+.quality-collection .muted, .quality-collection-details { font-size: 13px; line-height: 1.5; }
+.quality-analytics summary { cursor: pointer; padding-block: 10px; color: var(--text); font-weight: 600; }
+.quality-filter-section { border-block: 1px solid var(--line); }
+.quality-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; padding-bottom: 12px; }
 .quality-filters label { display: grid; gap: 4px; min-width: 0; }
 .quality-filters input, .quality-filters select { width: 100%; min-width: 0; }
 .quality-actions, #quality-pager { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.quality-actions > label { flex: 1 1 200px; }
+.quality-analytics button { min-height: 44px; border-color: var(--line); white-space: normal; }
+#settingsForm[data-tab="quality"] [data-testid="settings-save-button"] { display: none; }
+.system-ai-panel fieldset, .system-ai-panel fieldset > div, #systemAiChoices { min-width: 0; }
+.system-ai-panel input:not([type="checkbox"]), .system-ai-panel select, .system-ai-panel textarea { width: 100%; min-width: 0; max-width: 100%; }
+.system-ai-panel output, #systemAiNode { overflow-wrap: anywhere; }
+.system-ai-panel .checkbox-row input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+.system-ai-panel fieldset > div { display: grid; gap: 8px; }
+@media (max-width: 600px) {
+  .quality-filters { grid-template-columns: minmax(0, 1fr); }
+  .quality-actions > label { flex-basis: 100%; }
+}
 .quality-analytics table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
 .quality-analytics th, .quality-analytics td { padding: 6px; border-bottom: 1px solid var(--line); text-align: start; overflow-wrap: anywhere; }
 .quality-analytics td button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }

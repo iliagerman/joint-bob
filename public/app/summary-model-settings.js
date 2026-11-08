@@ -1,16 +1,13 @@
 import { harnessOption } from "../harness-metadata.js";
-import { loadConversationChatSettings } from "./conversation-chat.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { isNodeAdmin } from "./node-admin.js";
 import { toast } from "./shell.js";
 
-// Settings → Conversations → Activity summary: when this machine updates conversation
-// summaries, which agent, model and effort write them, and the instructions they follow.
-// It is the machine's setting, so only its admin changes it; a relay this machine has joined
-// can set when and who for every member instead, and a machine that serves a relay can
-// publish its own choice to the relay's machines. The instructions stay this machine's own.
+// Settings → System AI → Activity summary. These controls keep their dedicated
+// summary routes and immediate-save behavior; the server replicates them to twins.
+// Relay policy still overrides cadence/writer, not the saved summary instructions.
 
 const choices = { harnesses: [], models: [] };
 const instructions = { custom: null, default: "" };
@@ -61,7 +58,7 @@ function fillForm(policy) {
 
 function showInstructions(saved = false) {
   elements.settingsSummaryInstructions.value = instructions.custom ?? instructions.default;
-  elements.settingsSummaryInstructionsStatus.textContent = `${saved ? "Saved · " : ""}${instructions.custom ? "this machine's own instructions" : "built-in instructions"}`;
+  elements.settingsSummaryInstructionsStatus.textContent = `${saved ? "Saved · " : ""}${instructions.custom ? "instructions shared with trusted twins" : "built-in instructions"}`;
   elements.settingsSummaryInstructionsReset.disabled = !instructions.custom || !isNodeAdmin();
 }
 
@@ -77,7 +74,6 @@ async function saveInstructions(text) {
 }
 
 export async function loadSummaryModelSettings() {
-  await loadConversationChatSettings();
   const [harnessBody, modelBody, settings] = await Promise.all([api("/api/harnesses"), api("/api/models"), api("/api/conversation-summary/settings")]);
   choices.harnesses = harnessBody.harnesses.filter((harness) => harness.runtimeConfigured);
   choices.models = modelBody.models;

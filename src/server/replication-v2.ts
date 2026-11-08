@@ -78,6 +78,7 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   // The person's chat with Bob, so they can go on from any of their machines.
   "control.bobMessage": "twins",
   // Subscription profile names and choices: the administrator's twins, never a visited node.
+  "system.ai": "twins-only",
   "provider.profile": "twins-only",
   "provider.selection": "twins-only",
   "provider.pool": "twins-only",
@@ -196,8 +197,15 @@ export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string,
     && mayReceiveResource(db, peer, "project", project));
 }
 
+/** A previous release rejects unknown event types as a whole batch. Keep system settings
+ * on their own endpoint and retry queue so an older twin still receives ordinary events. */
+export function replicationDeliveryBatches(events: ReplicationEvent[]): ReplicationEvent[][] {
+  return [events.filter(event => event.entityType !== "system.ai"), events.filter(event => event.entityType === "system.ai")].filter(batch => batch.length);
+}
+
 export async function sendReplicationV2(peer: PeerEndpoint, events: ReplicationEvent[]): Promise<unknown> {
-  return signedPeerPost(peer, "/api/cluster/v2/events", { events });
+  const target = events[0].entityType === "system.ai" ? "/api/cluster/v2/system-ai/events" : "/api/cluster/v2/events";
+  return signedPeerPost(peer, target, { events });
 }
 
 export async function signedPeerPost(peer: PeerEndpoint, target: string, payload: unknown, timeoutMs = 10_000): Promise<unknown> {

@@ -13,8 +13,9 @@ import { currentRoutingConfigTarget, dueRoutingConfigDeliveries, dropRoutingConf
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { signedPost } from "./cluster-v2.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
+import { initSystemAiSettings } from "../system-ai-replication.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
-import { accountEventPeers, mayReplicateEvent, visitorEventAccounts, visitorEventRoute, presentReplicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
+import { accountEventPeers, mayReplicateEvent, visitorEventAccounts, visitorEventRoute, presentReplicationPeers, replicationDeliveryBatches, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
 import { peerAway } from "../peer-presence.js";
 import { settled, warnOnChange } from "./quiet-log.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
@@ -425,6 +426,7 @@ export async function flushReplicationOutbox(): Promise<void> {
   flags.replicationFlushInProgress = true;
   try {
     const db = await clusterV2Database(), local = await getClusterNode();
+    initSystemAiSettings(db, local.id);
     // Twins get every event directly; cluster members get project events through the hubs
     // (cluster-hubs.ts). A visitor's own pins and recents go straight to their home node.
     const own = accountEventPeers(db);
@@ -436,14 +438,17 @@ export async function flushReplicationOutbox(): Promise<void> {
       if (accounts && !accounts.length) continue;
       const events = await eventsForPeer(peer.nodeId, new Date(), (event) => event.originNodeId === local.id && (twin || visitorEventRoute(db, local.id, peer.nodeId, event)) && mayReplicateEvent(db, local.id, peer.nodeId, event), accounts);
       if (!events.length) continue;
-      try {
-        const receipt = replicationReceiptSchema.parse(await sendReplicationV2(peer, events));
-        await recordPeerReceipt(peer.nodeId, receipt.received);
-        settled(`replication:${peer.nodeId}`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Peer replication failed";
-        await recordPeerFailure(peer.nodeId, events.map((event) => event.id), message);
-        warnOnChange(`replication:${peer.nodeId}`, `Replication to ${peer.nodeId} failed: ${message}`);
+      for (const batch of replicationDeliveryBatches(events)) {
+        const logKey = `replication:${peer.nodeId}:${batch[0].entityType === "system.ai" ? "system-ai" : "events"}`;
+        try {
+          const receipt = replicationReceiptSchema.parse(await sendReplicationV2(peer, batch));
+          await recordPeerReceipt(peer.nodeId, receipt.received);
+          settled(logKey);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Peer replication failed";
+          await recordPeerFailure(peer.nodeId, batch.map((event) => event.id), message);
+          warnOnChange(logKey, `Replication to ${peer.nodeId} failed: ${message}`);
+        }
       }
     }
   } finally {

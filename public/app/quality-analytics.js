@@ -9,19 +9,34 @@ const root = () => document.getElementById('qualityAnalytics');
 const el = (tag, text, className) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; };
 const field = id => document.getElementById(id);
 const percent = (count, total) => total ? `${(100 * count / total).toFixed(1)}%` : '—';
-function button(text, id, handler) { const node = el('button', text, 'secondary'); node.type = 'button'; node.dataset.testid = id; node.addEventListener('click', handler); return node; }
+function button(text, id, handler) { const node = el('button', text, 'ghost'); node.type = 'button'; node.dataset.testid = id; node.addEventListener('click', handler); return node; }
 function label(text, control) { const node = el('label', text); node.append(control); return node; }
 function input(id, placeholder, type = 'text') { const node = el('input'); node.id = id; node.dataset.testid = id.replaceAll('qualityIssue', 'quality-issue-filter'); node.type = type; node.placeholder = placeholder; return node; }
 function mount() {
   const target = root(); target.replaceChildren();
   const toggle = input('qualityEnabled', '', 'checkbox'); toggle.dataset.testid = 'quality-enabled';
+  const status = el('p', 'Changes save automatically on this machine.', 'settings-hint');
+  status.dataset.testid = 'quality-save-status'; status.setAttribute('role', 'status');
   toggle.addEventListener('change', async () => {
+    const enabled = toggle.checked;
     toggle.disabled = true;
-    try { await api('/api/quality-analytics/settings', { method: 'PUT', body: JSON.stringify({ enabled: toggle.checked }) }); await loadQualityAnalytics(); }
-    catch (error) { toggle.checked = !toggle.checked; toast.error(error.message); }
-    finally { toggle.disabled = false; }
+    status.classList.remove('quality-error'); status.textContent = 'Saving collection settings…';
+    try {
+      await api('/api/quality-analytics/settings', { method: 'PUT', body: JSON.stringify({ enabled }) });
+      status.textContent = 'Saved on this machine.';
+      await loadQualityAnalytics();
+    } catch (error) {
+      toggle.checked = !enabled;
+      status.classList.add('quality-error'); status.textContent = `Could not save: ${error.message}`;
+    } finally { toggle.disabled = false; }
   });
-  target.append(el('h2', 'Reply quality'), label('Aggregate quality on this machine', toggle), el('p', 'Only conversations already available on this machine are analyzed, including normal synced copies. Claude and Jev receive evidence for analysis; only derived lessons, reasons and metrics are retained here. Other machines are unchanged. Enabling starts historical backfill and may incur model usage. Disabling keeps collected results.', 'muted'));
+  const collection = el('section', undefined, 'quality-collection');
+  const toggleLabel = el('label', undefined, 'checkbox-row'); toggleLabel.append(toggle, document.createTextNode('Aggregate quality on this machine'));
+  collection.append(toggleLabel, status, el('p', 'Only conversations already available on this machine are analyzed, including normal synced copies. Claude and Jev receive evidence; derived lessons, reasons and metrics stay here. Other machines are unchanged. Enabling scans history and may incur model usage. Disabling keeps results.', 'muted'));
+  collection.append(button('Configure models and accounts in System AI', 'quality-system-ai-link', async () => {
+    const { openSettings } = await import('./settings.js'); await openSettings('system-ai');
+  }));
+  target.append(el('h2', 'Reply quality'), collection);
   const filters = el('div', undefined, 'quality-filters');
   const project = el('select'); project.id = 'qualityProject'; project.setAttribute('aria-label', 'Project');
   const from = input('qualityFrom', '', 'date'), to = input('qualityTo', '', 'date');
@@ -30,7 +45,9 @@ function mount() {
   const issue = input('qualityIssue', 'Issue type'), version = input('qualityVersion', 'Evaluator version'); version.value = '1';
   filters.append(label('Project', project), label('From', from), label('To', to), label('Source model', model), label('Harness', harness), label('Issue', issue), label('Evaluator version', version), label('Claude evaluator', claudeEvaluator), label('Jev evaluator', jevEvaluator));
   for (const control of [project, from, to, model, harness, issue, version, claudeEvaluator, jevEvaluator]) control.addEventListener('change', () => { page = 0; });
-  target.append(filters);
+  const filterSection = el('details', undefined, 'quality-filter-section');
+  const filterToggle = el('summary', 'Filters'); filterToggle.dataset.testid = 'quality-filters-toggle';
+  filterSection.append(filterToggle, filters); target.append(filterSection);
   const actions = el('div', undefined, 'quality-actions');
   actions.append(button('Refresh', 'quality-refresh', () => { page = 0; void loadQualityAnalytics(); }), button('Retry / scan local history', 'quality-retry', async () => {
     try { await api('/api/quality-analytics/retry', { method: 'POST', body: '{}' }); toast('Local history scan queued'); await loadQualityAnalytics(); }
@@ -73,11 +90,15 @@ function render(view) {
   project.replaceChildren(new Option('All accessible projects', ''), ...view.projects.map(item => new Option(item.name, item.id))); project.value = selected;
   field('quality-summary').textContent = `${view.totals.replies} evaluated replies · ${percent(view.totals.issues, view.totals.replies)} with issues · ${view.totals.good} supported good · ${view.totals.unknown} unknown outcomes`;
   const coverage = field('quality-coverage'); coverage.replaceChildren(el('p', `Collection ${view.enabled ? 'enabled' : 'off'} · ${view.jobs.map(job => `${job.count} ${job.state}`).join(' · ') || 'No history scanned'}. Missing evidence is not success. Refresh to see progress.`, 'muted'));
-  if (view.coverage) coverage.append(el('p', `Known eligible replies across selected projects: ${view.coverage.eligibleReplies}. Unscanned or missing transcripts may contain additional replies that cannot yet be counted.`, 'muted'));
+  const details = el('details', undefined, 'quality-collection-details');
+  const detailsToggle = el('summary', 'Coverage and evaluator details'); detailsToggle.dataset.testid = 'quality-details-toggle';
+  details.append(detailsToggle);
+  if (view.coverage) details.append(el('p', `Known eligible replies across selected projects: ${view.coverage.eligibleReplies}. Unscanned or missing transcripts may contain additional replies that cannot yet be counted.`, 'muted'));
   if (view.collectionError) coverage.append(el('p', view.collectionError, 'quality-error'));
   for (const failure of view.failures.slice(0, 4)) coverage.append(el('p', `${failure.projectId} / ${failure.conversationId}: ${failure.error}`, 'quality-error'));
-  coverage.append(el('p', `Conversation ratings (all-time for selected projects, separate from reply judgments): ${view.feedback.map(item => `${item.source} ${item.rating}: ${item.count}`).join(' · ') || 'none'}`, 'muted'));
-  coverage.append(el('p', `Evaluator/model cohorts: ${view.versions.map(item => `v${item.version} · ${item.claudeModel} · ${item.jevModel}`).join('; ') || 'none'}. Use version and evaluator filters for comparable trends; mixed evaluator cohorts are not a single comparable quality score.`, 'muted'));
+  details.append(el('p', `Conversation ratings (all-time for selected projects, separate from reply judgments): ${view.feedback.map(item => `${item.source} ${item.rating}: ${item.count}`).join(' · ') || 'none'}`, 'muted'));
+  details.append(el('p', `Evaluator/model cohorts: ${view.versions.map(item => `v${item.version} · ${item.claudeModel} · ${item.jevModel}`).join('; ') || 'none'}. Use version and evaluator filters for comparable trends; mixed evaluator cohorts are not a single comparable quality score.`, 'muted'));
+  coverage.append(details);
   field('quality-trends').replaceChildren(table('Quality over time — source dates, not backfill dates', ['Date / evaluator cohort', 'Evaluated', 'Issue rate', 'Unknown'], view.trends.map(row => [`${row.day} · ${row.claudeEvaluator} / ${row.jevEvaluator}`, row.replies, percent(row.issues, row.replies), row.unknown])));
   field('quality-issues').replaceChildren(table('Issue types — no recent occurrence does not prove resolution', ['Type / drill down', 'Replies', 'First observed', 'Last observed'], view.issues.map(row => [button(row.type, `quality-type-${row.type}`, () => { field('qualityIssue').value = row.type; field('qualityView').value = 'rows'; page = 0; void loadQualityAnalytics(); }), row.replies, row.firstSeen, row.lastSeen])));
   field('quality-lessons').replaceChildren(table('Accepted lessons — before / after association, not proof of cause', ['Issue / rule', 'Adopted', 'Before', 'After'], (view.lessons ?? []).map(row => [`${row.type} / ${row.ruleId}`, row.adoptedAt || 'Unknown', `${row.beforeIssues}/${row.beforeReplies}`, `${row.afterIssues}/${row.afterReplies}`])));

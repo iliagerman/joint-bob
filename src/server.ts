@@ -70,6 +70,7 @@ import "./server/routes/cluster.js";
 import "./server/routes/cluster-tasks.js";
 import "./server/routes/platform.js";
 import "./server/routes/quality-analytics.js";
+import "./server/routes/system-ai.js";
 import { startQualityCollection } from "./server/quality-service.js";
 import "./server/routes/secrets.js";
 import "./server/routes/browser.js";

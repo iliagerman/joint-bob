@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { decisionModelTarget } from '../classifiers/conversation-routing.js';
 import type { SystemOneTarget } from '../classifiers/typesafe.js';
 import { genericSecretEnvironment } from '../secrets.js';
+import { systemDecisionKey, withSystemAiProfile } from '../system-ai.js';
+import { withClaudeProfile } from '../provider-profiles/execution.js';
 import { getProject } from '../store.js';
 import { readSubjects } from '../project-knowledge.js';
 import { QUALITY_VERSION, type QualityChunk, type QualityIssue, type QualityReply, type QualityResult } from '../quality-analytics.js';
@@ -54,7 +56,7 @@ export async function judgeQuality(evidence: QualityChunk & { conversationFeedba
       signal.addEventListener('abort', stop, { once: true });
     });
   }
-  if (!response!.ok) throw new QualityCollectionError(`Jev analysis failed (HTTP ${response!.status}). Check this project's model access.`);
+  if (!response!.ok) throw new QualityCollectionError(`Jev analysis failed (HTTP ${response!.status}). Check the system model access in Settings → System AI.`);
   const body = z.object({ model: z.string().min(1), answers: z.record(z.string(), answerSchema), usage: z.object({ input_tokens: z.number(), output_tokens: z.number() }).optional() }).parse(await response!.json());
   for (const [id, question] of Object.entries(questions)) {
     if (!body.answers[id] || !Object.hasOwn((question as { criteria: object }).criteria, body.answers[id].choice)) throw new QualityCollectionError('Jev returned an incomplete or invalid judgment.');
@@ -64,8 +66,9 @@ export async function judgeQuality(evidence: QualityChunk & { conversationFeedba
 
 export async function analyzeQualityReply(projectId: string, reply: QualityReply, types: string[], signal: AbortSignal): Promise<QualityResult> {
   const environment = genericSecretEnvironment(projectId);
-  const key = environment.TYPESAFE_AI_API_KEY;
-  if (!key) throw new QualityCollectionError('No project-authorized TYPESAFE_AI_API_KEY is available on this machine.');
+  let key: string;
+  try { key = systemDecisionKey('typesafe'); }
+  catch (error) { throw new QualityCollectionError((error as Error).message); }
   const target = await decisionModelTarget('typesafe', key);
   if (!target) throw new QualityCollectionError('Jev is unavailable on this machine.');
   const project = await getProject(projectId);
@@ -74,13 +77,13 @@ export async function analyzeQualityReply(projectId: string, reply: QualityReply
   const results: QualityResult[] = [];
   for (const evidence of reply.chunks) {
     signal.throwIfAborted();
-    const generated = await qualityClaude(JSON.stringify({ instructions: 'Describe the quality of this reply window. Identify at most three evidence-supported issue types and reusable lessons. Use an existing ruleId only when the accepted rule covers this exact issue; otherwise empty string. Do not copy source text or secrets. Return JSON {"reason":"at most 600 characters","issues":[{"type":"kebab-case","reason":"at most 400 characters","lesson":"at most 320 characters","ruleId":"accepted rule id or empty"}]}. A window may be partial; do not claim success without evidence.', evidence, conversationFeedback: reply.conversationFeedback, acceptedRules: rules }), signal);
+    const generated = await withSystemAiProfile('claude', 'anthropic', () => withClaudeProfile(projectId, undefined, () => qualityClaude(JSON.stringify({ instructions: 'Describe the quality of this reply window. Identify at most three evidence-supported issue types and reusable lessons. Use an existing ruleId only when the accepted rule covers this exact issue; otherwise empty string. Do not copy source text or secrets. Return JSON {"reason":"at most 600 characters","issues":[{"type":"kebab-case","reason":"at most 400 characters","lesson":"at most 320 characters","ruleId":"accepted rule id or empty"}]}. A window may be partial; do not claim success without evidence.', evidence, conversationFeedback: reply.conversationFeedback, acceptedRules: rules }), signal)));
     let draft: z.infer<typeof draftSchema>;
     try { draft = draftSchema.parse(JSON.parse(generated.text.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''))); }
     catch { throw new QualityReplyError('Claude returned invalid derived analysis for this reply.'); }
     signal.throwIfAborted();
     const judged = await judgeQuality({ ...evidence, conversationFeedback: reply.conversationFeedback }, draft, types, target.target, key, signal);
-    const secrets = Object.values(environment).filter((value): value is string => typeof value === 'string');
+    const secrets = [key, ...Object.values(environment).filter((value): value is string => typeof value === 'string')];
     const issues: QualityIssue[] = draft.issues.flatMap((issue, i) => {
       if (judged.answers[`support_${i}`].choice !== 'supported' || !qualityTextIsAbstract(`${issue.reason} ${issue.lesson}`, evidence) || redactQualityText(issue.type, secrets) !== issue.type) return [];
       const typeChoice = judged.answers[`type_${i}`].choice;

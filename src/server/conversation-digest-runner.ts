@@ -10,7 +10,8 @@ import { relaySummaryPolicies } from "../relay/resource-policy.js";
 import { activeRoutingConfig, routingConfigDatabase } from "../routing-configs.js";
 import { type RoutingMapping } from "../routing-policy.js";
 import { type ConversationNote, type KnowledgeProblem, listProposals, normalizedRuleText, readNotes, readSubjects, writeNote, writeProposal } from "../project-knowledge.js";
-import { genericSecretEnvironment } from "../secrets.js";
+import { systemDecisionKey, withSystemAiProfile } from "../system-ai.js";
+import { systemAiSettings } from "../system-ai-config.js";
 import { getSettings } from "../settings.js";
 import { sessionFeedbackOverrides } from "../names.js";
 import { getProject } from "../store.js";
@@ -54,7 +55,7 @@ function lastAttribution(messages: ChatMessage[]): ConversationModel | undefined
   return undefined;
 }
 
-/** Asks the project's routing classifier which of its tiers should write this summary. */
+/** Asks the system decision model which of the project's tiers should write this summary. */
 async function classifiedRun(project: ProjectRecord, own: ConversationModel, material: string): Promise<SummaryRun | null> {
   try {
     const config = activeRoutingConfig(routingConfigDatabase(), resourceOwner("project", project.id));
@@ -64,8 +65,8 @@ async function classifiedRun(project: ProjectRecord, own: ConversationModel, mat
       .map(([level, mapping]) => ({ level: Number(level), description: mapping.description }))
       .sort((left, right) => left.level - right.level);
     if (!config || !options.length) return null;
-    const classifier = getDifficultyClassifier(config.policy.classifierId);
-    const apiKey = classifier ? genericSecretEnvironment(project.id)[classifier.variableName] : undefined;
+    const classifier = getDifficultyClassifier(systemAiSettings().decision.model);
+    const apiKey = classifier ? systemDecisionKey(classifier.id as "typesafe" | "laya") : undefined;
     if (!classifier || (!apiKey && !classifier.keyOptional)) return null;
     const task = `Task: update a short running summary of a conversation with its newest messages.\n\n${material.slice(-CLASSIFIER_INPUT_LIMIT)}`;
     const classification = await classifier.classify(task, apiKey ?? "", { options });
@@ -77,8 +78,8 @@ async function classifiedRun(project: ProjectRecord, own: ConversationModel, mat
 }
 
 /**
- * Who writes the summary. A fixed writer from Settings or the relay; otherwise the routing
- * classifier's pick when routing is on (automatic), else the conversation's own agent and
+ * Who writes the summary. A fixed writer from Settings or the relay; otherwise the
+ * system classifier's pick from the project's tiers (automatic), else the conversation's own agent and
  * model at that agent's default effort. A conversation agent that cannot run on this
  * machine falls back to the first one that can; a fixed writer that cannot is an error.
  */
@@ -169,11 +170,11 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
   if (override) {
     answer = await (await import(override) as { default: (input: { instructions: string; material: string; run: SummaryRun }) => Promise<string> }).default({ instructions, material, run });
   } else {
-    const result = await runGitReview({
+    const result = await withSystemAiProfile(run.harnessId, run.provider, () => runGitReview({
       // The home folder, not the project: project instruction files have no place in a summary.
       projectId: project.id, conversationId, cwd: getSettings().projects.homePath, harnessId: run.harnessId as HarnessId, provider: run.provider, modelId: run.modelId, thinkingLevel: run.thinkingLevel,
       selection: { scope: "context", label: "conversation messages" }, question: "", diff: material, instructions,
-    });
+    }));
     answer = result.answer;
     model.provider = result.provider;
     model.modelId = result.modelId;

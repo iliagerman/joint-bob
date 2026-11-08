@@ -771,6 +771,7 @@
           <option value="story">Activity overview</option>
           <option value="classifiers">Classifiers</option>
           <option value="guardian" data-admin-only>Guardian</option>
+          <option value="system-ai" data-admin-only>System AI</option>
           <option value="quality" data-admin-only>Quality</option>
           <option value="resources" data-admin-only>Resources</option>
           <option value="file-sync" data-admin-only>File sync</option>
@@ -804,6 +805,7 @@
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines"><span class="settings-tab-icon" style="--tile:#a855f7" aria-hidden="true">🤖</span><span class="settings-tab-label">Harnesses</span></button>
           <button class="settings-tab" type="button" data-settings-tab="connections" role="tab" id="settingsTab-connections" aria-controls="settingsPanel-connections" aria-selected="false" tabindex="-1" data-testid="settings-tab-connections"><span class="settings-tab-icon" style="--tile:#f59e0b" aria-hidden="true">🔌</span><span class="settings-tab-label">Connections</span></button>
           <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers"><span class="settings-tab-icon" style="--tile:#14b8a6" aria-hidden="true">🧭</span><span class="settings-tab-label">Classifiers</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="system-ai" role="tab" id="settingsTab-system-ai" aria-controls="settingsPanel-system-ai" aria-selected="false" tabindex="-1" data-testid="settings-tab-system-ai" data-admin-only><span class="settings-tab-icon" style="--tile:#6366f1" aria-hidden="true">🧠</span><span class="settings-tab-label">System AI</span></button>
           <button class="settings-tab" type="button" data-settings-tab="quality" role="tab" id="settingsTab-quality" aria-controls="settingsPanel-quality" aria-selected="false" tabindex="-1" data-testid="settings-tab-quality" data-admin-only><span class="settings-tab-icon" style="--tile:#0891b2" aria-hidden="true">📈</span><span class="settings-tab-label">Quality</span></button>
           <button class="settings-tab" type="button" data-settings-tab="guardian" role="tab" id="settingsTab-guardian" aria-controls="settingsPanel-guardian" aria-selected="false" tabindex="-1" data-testid="settings-tab-guardian" data-admin-only><span class="settings-tab-icon" style="--tile:#dc2626" aria-hidden="true">🛡️</span><span class="settings-tab-label">Guardian</span></button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets"><span class="settings-tab-icon" style="--tile:#37cfab" aria-hidden="true">🔑</span><span class="settings-tab-label">Secrets</span></button>
@@ -998,7 +1000,7 @@
               <select id="settingsDashboardsHarness" data-testid="settings-dashboards-harness"></select>
             </label>
             <div id="settingsDashboardsModel"></div>
-            <p class="settings-hint">The agent that builds and edits dashboards when you describe them, and that refreshes dashboards whose data needs AI. Script dashboards refresh without it. This choice is for this node only.</p>
+            <p class="settings-hint">The agent that builds and edits dashboards when you describe them, and that refreshes dashboards whose data needs AI. Script dashboards refresh without it. This choice is shared with trusted twins; availability is checked on the execution machine.</p>
           </fieldset>
           <fieldset class="phase-settings" data-admin-only>
             <legend>Shell commands</legend>
@@ -1171,11 +1173,11 @@
             <label id="settingsSummaryHarnessLabel">Agent<select id="settingsSummaryHarness" data-testid="settings-summary-harness"></select></label>
             <label id="settingsSummaryModelLabel">Model<select id="settingsSummaryModel" data-testid="settings-summary-model"></select></label>
             <label id="settingsSummaryThinkingLabel">Effort<select id="settingsSummaryThinking" data-testid="settings-summary-thinking"></select></label>
-            <p class="settings-hint">Applies to every conversation on this machine. Automatic lets the routing classifier pick the model when routing is on, and otherwise uses the conversation's own agent and model. Each update hands the writer the current summary and the messages since. Changes save immediately; only this machine's admin can change them.</p>
+            <p class="settings-hint">Applies to every conversation and is shared with trusted twins. Automatic lets the routing classifier pick the model when routing is on, and otherwise uses the conversation's own agent and model. Each update hands the writer the current summary and the messages since. Changes save immediately; only this machine's admin can change them.</p>
             <label class="checkbox-row" id="settingsSummaryRelay" hidden><input type="checkbox" id="settingsSummaryRelayApply" data-testid="settings-summary-relay-apply" /> Use these settings on every machine of the relay this machine serves</label>
             <label>Summary instructions<textarea id="settingsSummaryInstructions" rows="9" maxlength="6000" spellcheck="false" data-testid="settings-summary-instructions"></textarea></label>
             <div class="settings-summary-instructions-actions"><span class="settings-hint" id="settingsSummaryInstructionsStatus" data-testid="settings-summary-instructions-status"></span><button type="button" class="ghost compact" id="settingsSummaryInstructionsReset" data-testid="settings-summary-instructions-reset">Reset to default</button></div>
-            <p class="settings-hint">What a summary is for and how it reads. Joint Bob adds the new messages, current summary, and output format. Saved when you leave the box. These instructions are this machine's own; a relay's policy does not change them.</p>
+            <p class="settings-hint">What a summary is for and how it reads. Joint Bob adds the new messages, current summary, and output format. Saved when you leave the box. These instructions are shared with trusted twins; a relay's policy does not change them.</p>
           </fieldset>
         </section>
 
@@ -1750,6 +1752,15 @@
             <span id="storySaveStatus" class="settings-hint" role="status" data-testid="story-save-status"></span>
           </div>
         </section>
+        <section class="settings-panel system-ai-panel" id="settingsPanel-system-ai" role="tabpanel" aria-labelledby="settingsTab-system-ai" tabindex="0" data-testid="settings-panel-system-ai" data-admin-only hidden>
+          <h2>System AI</h2>
+          <p class="settings-hint">Configuration is shared with trusted twins, not ordinary cluster peers. Credentials are resolved on the execution machine, never attached to projects. Collection and readiness remain machine-local.</p>
+          <p id="systemAiNode" data-testid="system-ai-node"></p>
+          <output id="systemAiReadiness" data-testid="system-ai-readiness"></output>
+          <div id="systemAiChoices"></div>
+          <output id="systemAiStatus" role="status" data-testid="system-ai-status"></output>
+        </section>
+
         <section class="settings-panel" id="settingsPanel-quality" role="tabpanel" aria-labelledby="settingsTab-quality" tabindex="0" data-testid="settings-panel-quality" data-admin-only hidden>
           <div class="quality-analytics" id="qualityAnalytics"></div>
         </section>

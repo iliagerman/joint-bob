@@ -82,7 +82,7 @@ test("Save settings shows progress, failure, and success", { timeout: 90_000 }, 
     assert.equal(await status.innerText(), "Saving settings…");
     assert.equal(await status.evaluate(element => getComputedStyle(element, "::before").content), '""');
     pending.release();
-    await status.getByText("Could not save settings: Save unavailable").waitFor();
+    await status.getByText(/Could not save settings:.*Save unavailable/).waitFor();
     assert.equal(await status.isVisible(), true);
     await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
     assert.equal(await save.innerText(), "Save settings");
@@ -92,6 +92,35 @@ test("Save settings shows progress, failure, and success", { timeout: 90_000 }, 
     await page.getByText("Settings saved", { exact: true }).waitFor();
   } finally {
     pending.release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("saved settings close even while the conversation refresh is stalled", { timeout: 90_000 }, async (t) => {
+  const { page, node, environment } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator("#projectList .project-card").first().click();
+  await page.evaluate(async () => { const { refreshSessionsQuietly } = await import('/app/socket.js'); await refreshSessionsQuietly(); });
+  await page.getByTestId("settings-open-button").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  const refresh = gate(), requested = gate();
+  await page.route("**/api/projects/*/sessions", async route => {
+    requested.release();
+    await refresh.promise;
+    await route.continue();
+  });
+  try {
+    const saved = page.waitForResponse(response => response.url().endsWith("/api/settings") && response.request().method() === "PUT");
+    await page.getByTestId("settings-save-button").click();
+    assert.equal((await saved).status(), 200);
+    await requested.promise;
+    await page.locator("#settingsDialog[open]").waitFor({ state: "hidden", timeout: 3_000 });
+    await page.getByText("Settings saved", { exact: true }).waitFor();
+  } finally {
+    refresh.release();
     await page.unrouteAll({ behavior: "wait" });
   }
 });

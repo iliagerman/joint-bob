@@ -4,10 +4,9 @@ import { getDifficultyClassifier } from "../classifiers/registry.js";
 import { askSystemOneChoices, type SystemOneQuestion } from "../classifiers/typesafe.js";
 import type { CloseoutDeps } from "../conversation-closeout.js";
 import { digestMaterial, digestMessages } from "../conversation-digest.js";
-import { resourceOwner } from "../ownership.js";
 import { isKnowledgeSlug, readSubjects } from "../project-knowledge.js";
-import { activeRoutingConfig, routingConfigDatabase } from "../routing-configs.js";
-import { genericSecretEnvironment } from "../secrets.js";
+import { systemAiSettings } from "../system-ai-config.js";
+import { systemDecisionKey, withSystemAiProfile } from "../system-ai.js";
 import { getSettings } from "../settings.js";
 import type { ChatMessage, ProjectRecord } from "../types.js";
 import { summaryPolicyNow, summaryRun } from "./conversation-digest-runner.js";
@@ -38,11 +37,12 @@ const draftSchema = z.object({
 export class CloseoutUnavailableError extends Error {}
 
 async function decision(project: ProjectRecord, data: object, question: SystemOneQuestion): Promise<string> {
-  const config = activeRoutingConfig(routingConfigDatabase(), resourceOwner("project", project.id));
-  const classifier = getDifficultyClassifier(config?.policy.classifierId ?? "typesafe");
-  if (!classifier || !["typesafe", "laya"].includes(classifier.id)) throw new CloseoutUnavailableError("No supported decision model configured for conversation feedback");
-  const key = genericSecretEnvironment(project.id)[classifier.variableName] ?? "";
-  if (classifier.id === "typesafe" && !key) throw new CloseoutUnavailableError(`Decision model unavailable for conversation feedback: no ${classifier.variableName} secret applies to this project`);
+  const model = systemAiSettings().decision.model;
+  const classifier = getDifficultyClassifier(model);
+  if (!classifier) throw new CloseoutUnavailableError("No supported system decision model configured for conversation feedback");
+  let key: string;
+  try { key = systemDecisionKey(model); }
+  catch (error) { throw new CloseoutUnavailableError((error as Error).message); }
   const target = await decisionModelTarget(classifier.id as "typesafe" | "laya", key);
   // Laya can be unreachable for a while; that is worth another try later.
   if (!target) throw new Error("Decision model unavailable for conversation feedback");
@@ -61,8 +61,8 @@ export function closeoutModels(project: ProjectRecord, conversationId: string, t
       return z.enum(["good", "bad", "unimportant"]).parse(await decision(project, { conversation: material.slice(-2800) }, CLOSEOUT_RATING_QUESTION));
     },
     async describe(rating, description) {
-      const run = await summaryRun(await summaryPolicyNow(), project, undefined, transcript.messages, transcript.lastHarness, material);
-      const result = await runGitReview({
+      const run = systemAiSettings().operations.feedback ?? await summaryRun(await summaryPolicyNow(), project, undefined, transcript.messages, transcript.lastHarness, material);
+      const result = await withSystemAiProfile(run.harnessId, run.provider, () => runGitReview({
         projectId: project.id, conversationId, cwd: getSettings().projects.homePath,
         harnessId: run.harnessId, provider: run.provider, modelId: run.modelId, thinkingLevel: run.thinkingLevel,
         selection: { scope: "context", label: "conversation feedback" }, question: "", diff: material,
@@ -74,7 +74,7 @@ export function closeoutModels(project: ProjectRecord, conversationId: string, t
           `Existing rules, to preserve rather than duplicate: ${JSON.stringify(readSubjects(project.path)).slice(0, 12000)}`,
           'Return only JSON: {"description":"at most 1000 characters","rules":[{"subject":"lowercase-kebab-case","text":"at most 320 characters","evidence":"at most 240 characters"}]}',
         ].join("\n"),
-      });
+      }));
       return draftSchema.parse(JSON.parse(result.answer.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```$/, "")));
     },
     async select(rating, description, rules) {

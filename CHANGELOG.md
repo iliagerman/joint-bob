@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.247.0 — 2026-11-08
+
+- Added Settings → System AI for internal agent choices, saved system decision credentials and login profiles, shared with trusted twins without exposing keys to project agents.
+- Kept Quality collection enablement and collected insights local to each machine, independently of shared evaluator settings.
+- Fixed the Quality page on phones with an aligned collection checkbox, full-width filters, readable action buttons and collapsible details.
+- Made Quality's automatic saving explicit with inline progress and errors, and removed its unrelated Save settings button.
+- Fixed settings staying on Saving while waiting for conversation-list refreshes after the changes were already saved.
+
 ## 2.246.1 — 2026-11-08
 
 - An update no longer fails with a bare "Installation failed with status 1" while this machine is still finishing a conversation turn that an earlier update interrupted: it stops before downloading anything, says what it waits for, and that stopping the turn lets it update now. The service's own reason for refusing an update is kept in the message too.

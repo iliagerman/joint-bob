@@ -66,7 +66,7 @@ app.get("/api/cluster/inventory", async (_request, response, next) => {
   }
 });
 
-app.post("/api/cluster/v2/events", async (request, response, next) => {
+app.post(["/api/cluster/v2/events", "/api/cluster/v2/system-ai/events"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) {
       sendError(response, 401, "Unauthorized");

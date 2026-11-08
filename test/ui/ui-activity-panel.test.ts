@@ -333,9 +333,10 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.getByTestId("activity-summary-toggle").click();
   await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor();
 
-  // Who writes summaries, and when, is this machine's setting in Settings → Conversations.
+  // Who writes summaries, and when, is configured in Settings → System AI.
   const modelButton = page.getByTestId("activity-summary-model");
   await modelButton.click();
+  await page.getByTestId('settings-tab-system-ai').click();
   const writerPicker = page.getByTestId("settings-summary-writer");
   const harnessPicker = page.getByTestId("settings-summary-harness");
   await harnessPicker.locator("option[value='pi']").waitFor({ state: "attached", timeout: 15_000 });
@@ -371,7 +372,7 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await instructionsBox.fill("Summarize for a manager in three bullets.");
   await instructionsBox.press("Tab");
   assert.equal((await instructionsSaved).status(), 200);
-  await page.waitForFunction(() => document.querySelector("[data-testid='settings-summary-instructions-status']")?.textContent === "Saved · this machine's own instructions");
+  await page.waitForFunction(() => document.querySelector("[data-testid='settings-summary-instructions-status']")?.textContent === "Saved · instructions shared with trusted twins");
   const withInstructions = await page.evaluate(() => fetch("/api/conversation-summary/settings").then((response) => response.json()));
   assert.equal(withInstructions.instructions.custom, "Summarize for a manager in three bullets.");
   const instructionsReset = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/instructions") && response.request().method() === "PUT");

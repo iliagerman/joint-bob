@@ -1,4 +1,5 @@
 import { prepareBackgroundTurn } from "./background-turn.js";
+import { withSystemAiProfile } from "../system-ai.js";
 import { internalSessionId } from "../internal-sessions.js";
 import { asNode } from "../account-context.js";
 import { promises as fs } from "node:fs";
@@ -166,6 +167,10 @@ export function syncResolverPrompt(conflicts: Array<{ conflict: string; original
 }
 
 async function runAgentResolver(input: SyncResolverInput): Promise<void> {
+  return withSystemAiProfile(input.settings.harnessId, input.settings.provider, () => runAgentResolverWithProfile(input));
+}
+
+async function runAgentResolverWithProfile(input: SyncResolverInput): Promise<void> {
   const override = process.env.JOINT_BOB_SYNC_RESOLVER;
   if (override) {
     const module = await import(override) as { default: SyncResolver };

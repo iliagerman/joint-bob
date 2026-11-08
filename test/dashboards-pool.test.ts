@@ -83,6 +83,7 @@ for (const scope of ["project", "workspace", "cluster", "none"] as const) {
       internalSessionId: () => "internal", getHarness: () => ({ runtime: true }),
       getHarnessRuntime: async () => ({ open: async () => session, validateSettings: async () => {} }),
       actingAccount: () => ({ accountId: "owner" }), automationProfileContext: () => undefined,
+      withSystemAiProfile: (_harness: string, _provider: string, work: () => unknown) => work(),
       getProject: async () => ({ id: "project", type: "workspace" }),
       resolveSubscriptionPool: chat.resolveSubscriptionPool, promptOnSubscriptionPool: chat.promptOnSubscriptionPool,
       resolvePoolModelSettings,

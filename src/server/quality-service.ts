@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { listHarnessSessions } from '../harnesses.js';
 import { fingerprint, QUALITY_VERSION } from '../quality-analytics.js';
-import { getSettings } from '../settings.js';
+import { qualityModelId } from './quality-claude.js';
 import { readSubjects } from '../project-knowledge.js';
 import { projectAdditionalPaths } from './session-scope.js';
 import { asNode } from '../account-context.js';
@@ -34,7 +34,7 @@ export function qualityWorker(): QualityCollector {
           const records = (await listConversationRecords(project.id)).filter(row => !isInternalSession(row.sessionId));
           const sessions = await listHarnessSessions({ ...project, additionalPaths: await projectAdditionalPaths(project.id) }, [], records.map(row => `${row.engine}:${row.sessionId}`));
           const ids = new Set([...records.map(row => row.conversationId ?? row.sessionId), ...sessions.map(session => session.conversationId ?? session.id)]);
-          const evaluationRevision = fingerprint({ version: QUALITY_VERSION, model: getSettings().conversationDefaults.claude.modelId, rules: readSubjects(project.path) });
+          const evaluationRevision = fingerprint({ version: QUALITY_VERSION, model: qualityModelId(), rules: readSubjects(project.path) });
           for (const conversationId of ids) {
             const session = sessions.find(item => (item.conversationId ?? item.id) === conversationId);
             const files = session?.segments?.length ? session.segments.map(segment => segment.path) : [session?.path ?? ''];
@@ -61,7 +61,7 @@ export function qualityWorker(): QualityCollector {
         }
         const busy = [...harnessSessions.values()].some(shared => shared.projectId === projectId && shared.conversationId === conversationId && harnessSessionBusy(shared));
         const last = transcript.messages.at(-1);
-        return { ...transcript, evaluationRevision: fingerprint({ rules: readSubjects(project.path), model: getSettings().conversationDefaults.claude.modelId, version: QUALITY_VERSION }), complete: !busy && last?.role !== 'toolResult' && last?.role !== 'tool' };
+        return { ...transcript, evaluationRevision: fingerprint({ rules: readSubjects(project.path), model: qualityModelId(), version: QUALITY_VERSION }), complete: !busy && last?.role !== 'toolResult' && last?.role !== 'tool' };
       }));
     },
     async feedback(projectId, conversationId) {

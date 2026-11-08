@@ -108,7 +108,8 @@ function resolveBackgroundAgent(choice: BackgroundAgentSettings, defaults: Recor
       thinkingLevel: (chosen?.thinkingLevel || fallback.thinkingLevel) as ConversationDefault["thinkingLevel"],
     };
   };
-  if (choice.harnessId && runnable.some((adapter) => adapter.id === choice.harnessId)) return fill(choice.harnessId, "setting", choice);
+  // Keep explicit twin choices visible even when this machine cannot execute them.
+  if (choice.harnessId) return fill(choice.harnessId, "setting", choice);
   const ready = knownReadyHarnesses()?.ready;
   const harnessId = runnable.find((adapter) => ready?.includes(adapter.id))?.id ?? runnable[0]?.id ?? "pi";
   return fill(harnessId, "automatic");
@@ -141,7 +142,7 @@ function assertRunnableHarness(label: string, input: { harnessId: string; provid
   if (adapter.configuration?.fixedProvider && input.provider !== adapter.configuration.fixedProvider) throw new Error(`${label} provider must be ${adapter.configuration.fixedProvider}`);
 }
 
-function validateSyncCheck(input: SyncCheckSettings): SyncCheckSettings {
+export function validateSyncCheck(input: SyncCheckSettings): SyncCheckSettings {
   const parsed = syncCheckSchema.parse(input);
   assertRunnableHarness("Sync check", parsed);
   return parsed;
@@ -159,7 +160,7 @@ function dashboardAgent(defaults: Record<string, ConversationDefault>): Dashboar
   return fallback;
 }
 
-function validateBackgroundAgent(input: BackgroundAgentSettings): BackgroundAgentSettings {
+export function validateBackgroundAgent(input: BackgroundAgentSettings): BackgroundAgentSettings {
   const parsed = backgroundAgentSchema.parse(input);
   if (!parsed.harnessId) return AUTOMATIC_BACKGROUND_AGENT;
   if (parsed.modelId) assertRunnableHarness("Background agent", parsed);
@@ -169,10 +170,16 @@ function validateBackgroundAgent(input: BackgroundAgentSettings): BackgroundAgen
 
 /** The agent Joint Bob's background work runs with right now on this node. */
 export function backgroundAgentNow(): ResolvedBackgroundAgent {
-  return resolveBackgroundAgent(backgroundAgentSetting(), getSettings().conversationDefaults);
+  const choice = backgroundAgentSetting(), defaults = getSettings().conversationDefaults;
+  if (choice.harnessId) {
+    const provider = choice.modelId ? choice.provider : defaults[choice.harnessId]?.provider ?? "";
+    assertRunnableHarness("Background agent", { harnessId: choice.harnessId, provider });
+    if (!defaults[choice.harnessId]) throw new Error(`Background agent harness ${choice.harnessId} has no defaults on this node`);
+  }
+  return resolveBackgroundAgent(choice, defaults);
 }
 
-function validateDashboardAgent(input: DashboardAgentSettings): DashboardAgentSettings {
+export function validateDashboardAgent(input: DashboardAgentSettings): DashboardAgentSettings {
   const parsed = dashboardAgentSchema.parse(input);
   assertRunnableHarness("Dashboard agent", parsed);
   return parsed;

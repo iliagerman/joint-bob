@@ -2,7 +2,7 @@ import { accountReceivesFrom } from "./cluster-accounts.js";
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { NotFoundError } from "./not-found.js";
 import { actingAccount, type ActingAccount } from "./account-context.js";
-import { forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
+import { forgetResourceOwner, newResourceOwner, ownedByAdmin, resourceOwner, setResourceOwner } from "./ownership.js";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -188,6 +188,27 @@ export function secretAccountVariable(accountIds: string[], name: string): strin
     if (variable) return variable.value;
   }
   return undefined;
+}
+
+/** System decisions use an explicit admin-owned account, not a project's agent environment. */
+function systemAccountAllowed(row: AccountRow): boolean {
+  if (row.website_origin || row.project_id || !ownedByAdmin("secret", row.id, db())) return false;
+  if (!row.origin_node_id) return true;
+  const local = hasTable("cluster_node") ? (db().prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string } | undefined)?.id : undefined;
+  return Boolean(local && (row.origin_node_id === local || isTrustedTwin(db(), local, row.origin_node_id)));
+}
+
+export function systemSecretAccounts(): SecretAccount[] {
+  const rows = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts ORDER BY label, id").all() as AccountRow[];
+  return rows.filter(systemAccountAllowed).map(publicAccount).filter(account => account.variables.some(variable => variable.kind === "value" && ["TYPESAFE_AI_API_KEY", "LAYA_API_KEY"].includes(variable.name)));
+}
+
+export function systemSecretVariable(accountId: string, name: "TYPESAFE_AI_API_KEY" | "LAYA_API_KEY"): string {
+  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts WHERE id = ?").get(accountId) as AccountRow | undefined;
+  if (!row || !systemAccountAllowed(row)) throw new Error("Selected secret account is not available for system tasks on this machine. Check Settings → System AI.");
+  const variable = storedVariables(row).find(item => item.name === name && item.kind === "value");
+  if (!variable?.value) throw new Error(`Selected system secret has no ${name}. Check Settings → System AI.`);
+  return variable.value;
 }
 
 function accountRow(id: string): AccountRow {
