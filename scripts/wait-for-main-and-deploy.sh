@@ -72,9 +72,21 @@ for _ in {1..90}; do
         exit 1
       fi
       sleep "${RETRY_SECONDS}"
-      # A newer push deploys a release that contains this one, to every machine.
-      if [ "$(remote_main)" != "${COMMIT}" ]; then
-        echo "A newer push replaced ${COMMIT}; its own deployment covers the machine that was busy."
+      newer="$(remote_main)"
+      if [ -n "${newer}" ] && [ "${newer}" != "${COMMIT}" ]; then
+        # A push from this machine deploys a release that contains this one, to every machine.
+        if pgrep -f "wait-for-main-and-deploy.sh ${newer}" >/dev/null 2>&1; then
+          echo "A newer push replaced ${COMMIT}; its own deployment covers the machine that was busy."
+          exit 0
+        fi
+        # A push from another machine (the homeserver cannot deploy to this one) starts no
+        # deployment here: stopping left both machines on the old release until the next push.
+        if git -C "${ROOT}" fetch -q "${REMOTE}" main 2>/dev/null && git -C "${ROOT}" merge-base --is-ancestor "${COMMIT}" "${newer}" 2>/dev/null; then
+          echo "A newer push (${newer}) has no deployment here; deploying it instead of ${COMMIT}."
+          COMMIT="${newer}"
+          continue
+        fi
+        echo "Remote main moved to ${newer}, which does not contain ${COMMIT}; this deployment stops."
         exit 0
       fi
     done
