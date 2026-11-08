@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.242.1 — 2026-11-08
+
+- Conversation lists and opening a conversation are faster again on a machine that shows many conversations from your other machines. Looking up each one's usage read the whole project's usage history; it now reads only that conversation's.
+
 ## 2.242.0 — 2026-11-08
 
 - The Activity overview makes the voice for every line before it starts, and shows how many lines are ready. A voice slower than speech, such as the open-source voice on a small machine, no longer stops the movie at each slide. A rewritten movie and the answer to a question are voiced before they play.
