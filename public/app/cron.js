@@ -189,7 +189,7 @@ function action(label, testid, callback) {
   button.type = "button"; button.className = "ghost compact"; button.textContent = label; button.dataset.testid = testid;
   button.addEventListener("click", async () => {
     button.disabled = true;
-    try { await callback(); } catch (error) { errorText.textContent = error.message; toast(error.message); }
+    try { await callback(); } catch (error) { errorText.textContent = error.message; toast.error(error.message); }
     finally { button.disabled = false; }
   });
   return button;
