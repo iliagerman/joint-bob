@@ -160,3 +160,50 @@ test("a restart resumes Pi summaries from node.db instead of re-reading every tr
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// All of a node's Pi transcripts share one folder. A project's listing must not open the other
+// projects' transcripts it has already read once, nor background runs, which never list.
+// A directory named like a transcript stands in for "opened": reading it fails the listing.
+test("a project's listing leaves background runs and other projects' known transcripts unopened", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-pi-flat-listing-"));
+  const previousDataDir = process.env.PI_WEB_DATA_DIR;
+  process.env.PI_WEB_DATA_DIR = path.join(root, "data");
+  try {
+    const sessionRoot = path.join(root, "sessions");
+    const mine = path.join(root, "mine"), theirs = path.join(root, "theirs");
+    await mkdir(sessionRoot, { recursive: true });
+    await mkdir(mine, { recursive: true });
+    await mkdir(theirs, { recursive: true });
+    const transcript = (id: string, cwd: string, text: string): string => `${[
+      { type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00.000Z", cwd },
+      { type: "message", id: `${id}-user`, parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text }], timestamp: Date.parse("2026-01-01T00:00:01.000Z") } },
+    ].map((record) => JSON.stringify(record)).join("\n")}\n`;
+    const ownFile = path.join(sessionRoot, "2026-01-01T00-00-00-000Z_0b1a2c3d-0000-4000-8000-000000000001.jsonl");
+    const otherFile = path.join(sessionRoot, "2026-01-01T00-00-00-000Z_0b1a2c3d-0000-4000-8000-000000000002.jsonl");
+    await writeFile(ownFile, transcript("0b1a2c3d-0000-4000-8000-000000000001", mine, "Mine"));
+    await writeFile(otherFile, transcript("0b1a2c3d-0000-4000-8000-000000000002", theirs, "Theirs"));
+    // A background run in this very project, named with the reserved prefix: never opened.
+    await mkdir(path.join(sessionRoot, "2026-01-01T00-00-00-000Z_b0b1f17e-0000-4000-8000-000000000003.jsonl"));
+
+    const settings = await import(`../src/settings.js?cache=${Date.now()}-${Math.random()}`);
+    settings.updateSettings({
+      pi: { executable: "", configPath: path.join(root, "pi"), sessionPath: sessionRoot },
+      claude: { executable: "", configPath: path.join(root, "claude"), sessionPath: path.join(root, "claude", "projects") },
+      syncthing: { endpoint: "" },
+      projects: { homePath: path.join(root, "JointBob") },
+    });
+    const pi = await import(`../src/pi-service.js?cache=${Date.now()}-${Math.random()}`);
+    assert.deepEqual((await pi.listPiSessions({ path: mine })).map((session: { title: string }) => session.title), ["Mine"], "the first listing reads the other project's transcript once");
+    assert.deepEqual((await pi.listPiSessions({ path: theirs })).map((session: { title: string }) => session.title), ["Theirs"], "a transcript read for one project still lists in its own");
+
+    await rm(otherFile);
+    await mkdir(otherFile);
+    assert.deepEqual((await pi.listPiSessions({ path: mine })).map((session: { title: string }) => session.title), ["Mine"], "a known transcript of another project is not opened again");
+    const restarted = await import(`../src/pi-service.js?cache=${Date.now()}-${Math.random()}`);
+    assert.deepEqual((await restarted.listPiSessions({ path: mine })).map((session: { title: string }) => session.title), ["Mine"], "after a restart, node.db says which project it belongs to");
+    await assert.rejects(restarted.listPiSessions({ path: theirs }), "its own project still reads it");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previousDataDir;
+    await rm(root, { recursive: true, force: true });
+  }
+});

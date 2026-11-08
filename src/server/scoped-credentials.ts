@@ -6,7 +6,7 @@ import {ownsSecretForTwin} from '../secret-replication.js';
 import {isTrustedTwin} from '../cluster-sharing-policy.js';
 import {clusterV2Database} from '../cluster-v2-store.js';
 import { ClusterV2HttpError } from '../cluster-v2-errors.js';
-import {clearSecretAccountFiles,decryptSecretValue,encryptSecretValue,ensureSecretSchema,normalizeWebsiteOrigin} from '../secrets.js';
+import {clearSecretAccountFiles,decryptSecretValue,encryptSecretValue,ensureSecretSchema,normalizeWebsiteOrigin,SECRET_PROVIDERS} from '../secrets.js';
 import {ensureSelectedSharingSchema} from '../selected-sharing.js';
 import {mayShareProject,sharedProjectIds} from './sharing-files.js';
 import {presentReplicationPeers,replicationPeers,signedPeerPost} from './replication-v2.js';
@@ -53,7 +53,7 @@ function activeGrants(db:DatabaseSync,local:string,peer:string,id:string){
  WHERE g.account_id=? AND (g.node_id='' OR g.node_id=?)`).all(local,peer,id,peer) as Array<{clusterId:string;nodeId:string|null}>);
 }
 const websiteOriginSchema=z.string().max(2048).refine(value=>{try{return normalizeWebsiteOrigin(value)===value;}catch{return false;}},'Website origin is invalid');
-const accountSchema=z.object({id:z.string().uuid(),label:z.string().trim().min(1).max(64),provider:z.enum(['aws','google','github','stripe','cloudflare','openai','elevenlabs','zai','grafana','datadog','jira','gitlab','postgres','mssql','mongodb','custom','website','ssh','certificate']),websiteOrigin:websiteOriginSchema.optional(),variables:z.array(z.object({name:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),kind:z.enum(['value','file']),value:z.string().max(100000)}).strict()).min(1).max(20),scopes:z.array(scopeSchema).max(1000),grants:z.array(grantSchema).max(1000).default([]),projectId:z.string().min(1).max(300).optional(),updatedAt:z.string().datetime()}).strict()
+const accountSchema=z.object({id:z.string().uuid(),label:z.string().trim().min(1).max(64),provider:z.enum(SECRET_PROVIDERS),websiteOrigin:websiteOriginSchema.optional(),variables:z.array(z.object({name:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),kind:z.enum(['value','file']),value:z.string().max(100000)}).strict()).min(1).max(20),scopes:z.array(scopeSchema).max(1000),grants:z.array(grantSchema).max(1000).default([]),projectId:z.string().min(1).max(300).optional(),updatedAt:z.string().datetime()}).strict()
  .refine(account=>account.provider!=='website'||account.websiteOrigin!==undefined,'Website secret accounts require a website origin')
  .refine(account=>account.websiteOrigin===undefined||account.variables.every(variable=>variable.kind==='value'),'Website credential accounts cannot contain file variables');
 export const scopedCredentialSchema=z.object({accounts:z.array(accountSchema).max(10000)}).strict();
@@ -164,8 +164,8 @@ export async function flushScopedCredentials():Promise<void>{
   if(!active&&(copy.project_id||scopes.every(scope=>scope.projectIds.every(id=>!mayShareProject(db,local.id,copy.peer_id,id)))))removeCopy(db,copy.peer_id,copy.account_id);
  }
  for(const peer of presentReplicationPeers(db,local.id)){
-  const accounts=snapshot(db,local.id,peer.nodeId);
-  try{await signedPeerPost(peer,'/api/cluster/v2/credentials/scoped',{accounts});db.prepare('DELETE FROM cluster_v2_scoped_secret_errors WHERE peer_id=?').run(peer.nodeId);}
+  // One account this node cannot describe must not stop delivery to every other peer.
+  try{const accounts=snapshot(db,local.id,peer.nodeId);await signedPeerPost(peer,'/api/cluster/v2/credentials/scoped',{accounts});db.prepare('DELETE FROM cluster_v2_scoped_secret_errors WHERE peer_id=?').run(peer.nodeId);}
   catch(error){db.prepare('INSERT OR REPLACE INTO cluster_v2_scoped_secret_errors VALUES(?,?)').run(peer.nodeId,error instanceof Error?error.message:'Scoped credentials failed');}
  }
 }

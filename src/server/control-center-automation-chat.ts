@@ -7,13 +7,12 @@ import { REPORT_ITEM_ACTIONS, reportItemSchema } from "../control-center/bob-rep
 import { appendBobMessage, bobDatabase, type BobAction, type BobMessage, type BobSettings } from "../control-center/bob-store.js";
 import type { BobDecision } from "../control-center/decisions.js";
 import { storedDigest } from "../conversation-digest.js";
-import type { HarnessId } from "../types.js";
 import {
   collectAutomations, createReport, createScheduledTask, deleteAutomation, entriesMatching, reportChangeSchema, reportInputSchema, scheduledTaskChangeSchema,
   scheduledTaskInputSchema, setAutomationEnabled, updateReport, updateScheduledTask, updateWebhookCompact, webhookChangeSchema, type Collected,
 } from "./control-center-automations.js";
 import { runGitReview } from "./git-review-run.js";
-import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { runCronCommand } from "./routes/cron.js";
 
@@ -101,8 +100,7 @@ export type Interpret = (input: InterpretInput) => Promise<string>;
 
 export const interpretWithAgent: Interpret = async (input) => {
   const result = await runGitReview({
-    projectId: input.cwd.id, cwd: input.cwd.path, harnessId: (input.settings.harnessId || iconHarnessId()) as HarnessId,
-    provider: input.settings.provider, modelId: input.settings.modelId, thinkingLevel: input.settings.thinkingLevel,
+    projectId: input.cwd.id, cwd: input.cwd.path, ...agentFor(input.settings),
     selection: { scope: "context", label: "Bob automations" }, question: "", diff: intentContext(input), instructions: INTENT_INSTRUCTIONS,
   });
   return result.answer;

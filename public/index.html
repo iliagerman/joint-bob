@@ -968,6 +968,15 @@
             </label>
             <p class="settings-hint">When on, this node describes uploaded images and browser screenshots with a vision-capable Pi model and inlines small text files, sending the words and the file path instead of the raw image so the harness does not carry every picture in its history. Agents can still open the file. When off, attachments are sent as today.</p>
           </fieldset>
+          <fieldset class="phase-settings" data-testid="settings-background-agent" data-admin-only>
+            <legend>Background agent</legend>
+            <label>Background agent harness
+              <select id="settingsBackgroundAgentHarness" data-testid="settings-background-agent-harness"></select>
+            </label>
+            <div id="settingsBackgroundAgentModel"></div>
+            <output id="settingsBackgroundAgentStatus" class="engine-readiness" data-testid="settings-background-agent-status"></output>
+            <p class="settings-hint">The agent Joint Bob uses for its own work on this node: Bob, conversation summaries when the conversation's agent cannot write them, titles, icons, knowledge cleanup, and the sync check and dashboards unless they have their own choice. Automatic uses the first agent that is installed and signed in here (Pi, then Claude, then Kiro) at its default model and effort from the agent settings above. Choose an agent to set its model and effort yourself.</p>
+          </fieldset>
           <fieldset class="phase-settings" data-testid="settings-sync-check" data-admin-only>
             <legend>Sync check</legend>
             <label class="checkbox-row">

@@ -20,6 +20,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { clearHarnessSessionCache, getHarness, harnessForSessionPath, listHarnessSessions } from "../harnesses.js";
 import { getProject } from "../store.js";
+import type { ProjectRecord } from "../types.js";
 import { listTasks } from '../tasks.js';
 import { getConversationOwnership, type ConversationOwnership } from "../conversation-ownership.js";
 import { deletedConversationKeys, ensureConversationRecord, ensureConversationRecordSchema } from "../conversation-records.js";
@@ -64,10 +65,32 @@ export async function sharedTranscriptProject(peer:string,id:string){
  if(!mayShareProject(db,local.id,peer,id))throw new ClusterV2HttpError(403,"Project is not shared with this node");
  const project=await getProject(id);if(!project)throw new ClusterV2HttpError(404,"Project not found");return project;
 }
-async function sourceTranscripts(peer:string,projectId:string){
- const project=await sharedTranscriptProject(peer,projectId),sessions=await listHarnessSessions({...project,additionalPaths:await projectAdditionalPaths(projectId)});
+type SourceTranscript={engine:string;id:string;path:string;subagent?:boolean};
+/** A project's shareable transcripts are the same for every peer. A twin asks for the whole
+    inventory, for one conversation's entry, and for single files, often several times a
+    minute; each of those listed the project's whole history. The list is kept until the
+    project's conversations change, and for two minutes at most, like the inventory. Whether
+    the project is still shared with the asking peer is settled on every request. */
+const SOURCES_MAX_AGE_MS=120_000;
+const sourceLists=new Map<string,{revision:string;at:number;rows:Promise<SourceTranscript[]>}>();
+async function sourceTranscripts(peer:string,projectId:string,fresh=false):Promise<SourceTranscript[]>{
+ const project=await sharedTranscriptProject(peer,projectId);
+ const revision=projectListingRevision(projectId),kept=sourceLists.get(projectId);
+ if(!fresh&&kept&&kept.revision===revision&&Date.now()-kept.at<SOURCES_MAX_AGE_MS)return kept.rows;
+ const entry={revision,at:Date.now(),rows:listSourceTranscripts(project)};
+ sourceLists.set(projectId,entry);
+ entry.rows.catch(()=>{if(sourceLists.get(projectId)===entry)sourceLists.delete(projectId);});
+ return entry.rows;
+}
+/** One conversation from the kept list; a conversation it does not know yet lists the project again. */
+async function sourceTranscript(peer:string,projectId:string,engine:string,sessionId:string):Promise<SourceTranscript|undefined>{
+ const find=(rows:SourceTranscript[])=>rows.find(row=>row.engine===engine&&row.id===sessionId);
+ return find(await sourceTranscripts(peer,projectId))??find(await sourceTranscripts(peer,projectId,true));
+}
+async function listSourceTranscripts(project:ProjectRecord):Promise<SourceTranscript[]>{
+ const projectId=project.id,sessions=await listHarnessSessions({...project,additionalPaths:await projectAdditionalPaths(projectId)});
  const local=await getClusterNode();
- const entries:Array<{engine:string;id:string;path:string;subagent?:boolean}>=sessions.flatMap(session=>session.segments?.length?session.segments.map(segment=>({engine:segment.engine,id:segment.sessionId,path:segment.path})): [{engine:session.harnessId,id:session.id,path:session.path,subagent:Boolean(session.parentSessionPath)}]);
+ const entries:SourceTranscript[]=sessions.flatMap(session=>session.segments?.length?session.segments.map(segment=>({engine:segment.engine,id:segment.sessionId,path:segment.path})): [{engine:session.harnessId,id:session.id,path:session.path,subagent:Boolean(session.parentSessionPath)}]);
  // Ticket conversations live under ticket working directories, not the project's cwd.
  for(const task of await listTasks(projectId)){
   if(!task.sessionPath||task.sessionPath==='watch'||task.currentNodeId!==local.id)continue;
@@ -86,7 +109,7 @@ export function sharedTranscriptFile(peer:string,projectId:string,engine:string,
  return withProjectRuntime(projectId,()=>sharedTranscriptFileNow(peer,projectId,engine,sessionId));
 }
 async function sharedTranscriptFileNow(peer:string,projectId:string,engine:string,sessionId:string):Promise<string>{
- const session=(await sourceTranscripts(peer,projectId)).find(row=>row.engine===engine&&row.id===sessionId);
+ const session=await sourceTranscript(peer,projectId,engine,sessionId);
  if(!session)throw new ClusterV2HttpError(404,"Conversation not found in shared project");
  return localTranscriptFile(session);
 }
@@ -114,12 +137,12 @@ export async function sharedTranscriptInventory(peer:string,projectId:string,onl
     for two minutes at most: on Linux the file watcher can miss a change. */
 const INVENTORY_MAX_AGE_MS=120_000;
 const inventories=new Map<string,{revision:string;at:number;entries:Promise<Entry[]>}>();
-export function forgetSharedTranscriptInventories():void{inventories.clear();}
+export function forgetSharedTranscriptInventories():void{inventories.clear();sourceLists.clear();}
 async function sharedTranscriptInventoryNow(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
  const entries:Entry[]=[];
- for(const session of await sourceTranscripts(peer,projectId)){
+ const sessions=only?[await sourceTranscript(peer,projectId,only.engine,only.sessionId)].filter((row):row is SourceTranscript=>Boolean(row)):await sourceTranscripts(peer,projectId);
+ for(const session of sessions){
   if(session.path.startsWith('draft:'))continue;
-  if(only&&(session.engine!==only.engine||session.id!==only.sessionId))continue;
   const adapter=getHarness(session.engine),file=await localTranscriptFile(session),info=await stat(file);
   entries.push(entrySchema.parse({engine:session.engine,sessionId:session.id,relativePath:path.relative(adapter.sync.transcriptRoot(),file),size:info.size,hash:await fileHash(file,info)}));
  }

@@ -12,7 +12,7 @@ import { genericSecretEnvironment } from "../secrets.js";
 import type { HarnessId, ProjectRecord } from "../types.js";
 import type { BobSettings } from "../control-center/bob-store.js";
 import { runGitReview } from "./git-review-run.js";
-import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 
 // Joint Bob's display agent: Bob hands it a request to change how the app looks, it decides the change to the app's own display
 // settings (Settings → Appearance: the theme, and text and panel sizes), and Bob's chat applies it in the page the person wrote
@@ -97,7 +97,7 @@ const TASK = "Task: change the Joint Bob app's own display settings (its theme, 
  * level runs; Bob's own model only when the profile has no levels for the agent.
  */
 async function displayRun(projects: ProjectRecord[], settings: BobSettings, message: string): Promise<DisplayRun> {
-  const harnessId = settings.harnessId || iconHarnessId();
+  const agent = agentFor(settings), harnessId = agent.harnessId;
   const fixedProvider = getHarness(harnessId as HarnessId).configuration?.fixedProvider;
   let lightest: DisplayRun | null = null;
   for (const project of projects) {
@@ -112,7 +112,7 @@ async function displayRun(projects: ProjectRecord[], settings: BobSettings, mess
     const run = displayRunFrom(harnessId, lighter, classification, config.policy.confidenceThreshold, classifier.label, fixedProvider);
     if (run) return run;
   }
-  return lightest ?? { harnessId, provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.thinkingLevel, by: "no routing profile, so Bob's own model" };
+  return lightest ?? { ...agent, by: "no routing profile, so Bob's own model" };
 }
 
 // ── What the agent is told ──────────────────────────────────────────────────────────────────────────────

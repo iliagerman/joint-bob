@@ -6,7 +6,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
 import { getClusterNode } from "./cluster.js";
-import { decryptSecretValue, encryptSecretValue, ensureSecretSchema, normalizeWebsiteOrigin, type SecretKind, type SecretProvider } from "./secrets.js";
+import { decryptSecretValue, encryptSecretValue, ensureSecretSchema, normalizeWebsiteOrigin, SECRET_PROVIDERS, type SecretKind, type SecretProvider } from "./secrets.js";
 
 /** The material a replicating account carries to a peer. Values travel in the event body,
     which the mesh transport already authenticates and encrypts in flight; each side stores
@@ -86,7 +86,7 @@ function validateEvent(event: SecretCredentialEvent): void {
   if (!event.originNodeId) throw new Error("Secret credential event needs an origin node ID");
   const value = event.value;
   if (!value || typeof value.label !== "string" || !value.label.trim() || value.label.length > 64) throw new Error("Secret credential event needs a label");
-  if (!(["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "typesafe", "tavily", "elevenlabs", "zai", "grafana", "datadog", "jira", "gitlab", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
+  if (!(SECRET_PROVIDERS as readonly string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
   if (value.replicate !== undefined && typeof value.replicate !== "boolean") throw new Error("Secret credential event replicate flag is invalid");
   if (value.projectId !== undefined && (typeof value.projectId !== "string" || !value.projectId.trim() || value.projectId.length > 300)) throw new Error("Secret credential event project ID is invalid");
   if (value.provider === "website" && value.websiteOrigin == null) throw new Error("Website secret accounts require a website origin");

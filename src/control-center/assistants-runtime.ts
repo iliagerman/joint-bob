@@ -5,10 +5,9 @@ import { useAssistants, viaFor, type AskOutcome, type AssistantPorts, type PickD
 import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import { bobDecisionModel } from "../server/bob.js";
 import { runGitReview } from "../server/git-review-run.js";
-import { iconHarnessId } from "../server/label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { projectsWithSharedNames } from "../server/projects.js";
 import { announceToAllClients } from "../server/realtime.js";
-import type { HarnessId } from "../types.js";
 import { registerBobContextProvider, type BobContextProvider, type BobTurn } from "./bob-hooks.js";
 import { appendBobMessage, bobDatabase } from "./bob-store.js";
 
@@ -31,8 +30,7 @@ async function pickDeps(turn: BobTurn): Promise<PickDeps> {
     ask: async (state, questions) => model ? askSystemOneChoices(model.target, state, questions, model.apiKey) : null,
     ...project ? {
       agent: async (step) => (await runGitReview({
-        projectId: project.id, cwd: project.path, harnessId: (turn.settings.harnessId || iconHarnessId()) as HarnessId,
-        provider: turn.settings.provider, modelId: turn.settings.modelId, thinkingLevel: turn.settings.thinkingLevel,
+        projectId: project.id, cwd: project.path, ...agentFor(turn.settings),
         selection: { scope: "context", label: "Bob's assistants" }, question: "", diff: step.material, instructions: step.instructions,
       })).answer,
     } : {},

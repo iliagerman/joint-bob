@@ -3,9 +3,9 @@ import type { AuthSession } from "../auth.js";
 import { askSystemOneChoices, type SystemOneTarget } from "../classifiers/typesafe.js";
 import { loadBoard } from "../server/control-center-board.js";
 import { runGitReview } from "../server/git-review-run.js";
-import { iconHarnessId } from "../server/label-icon.js";
+import { agentFor } from "../background-agent.js";
 import type { BobReply } from "../server/bob.js";
-import type { HarnessId, ProjectRecord } from "../types.js";
+import type { ProjectRecord } from "../types.js";
 import { registerBobAction, type BobActionContext } from "./bob-actions.js";
 import { appendBobMessage, bobDatabase, type BobMessage, type BobSettings } from "./bob-store.js";
 import { decideMoveIntent, type IntentCard } from "./moves-intent.js";
@@ -46,8 +46,7 @@ function agentAsker(projects: ProjectRecord[], settings: BobSettings): ((prompt:
   return async (prompt) => {
     try {
       const result = await runGitReview({
-        projectId: project.id, cwd: project.path, harnessId: (settings.harnessId || iconHarnessId()) as HarnessId,
-        provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.thinkingLevel,
+        projectId: project.id, cwd: project.path, ...agentFor(settings),
         selection: { scope: "context", label: "Bob" }, question: prompt, diff: "", instructions: prompt,
       });
       return result.answer;

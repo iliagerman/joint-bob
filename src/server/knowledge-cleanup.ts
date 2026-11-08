@@ -16,7 +16,7 @@ import { listProjects } from "../store.js";
 import type { HarnessId, ProjectRecord } from "../types.js";
 import { summaryPolicyNow } from "./conversation-digest-runner.js";
 import { runGitReview } from "./git-review-run.js";
-import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { flags } from "./state.js";
 
 /** A removal is applied without asking only when the decision model is more than this sure of it. */
@@ -101,7 +101,7 @@ function decisionKey(project: ProjectRecord): { classifier: NonNullable<ReturnTy
 async function reviewerRun(): Promise<{ harnessId: HarnessId; provider: string; modelId: string; thinkingLevel: string }> {
   const writer = (await summaryPolicyNow()).writer;
   if (writer.source === "fixed") return { harnessId: writer.harnessId as HarnessId, provider: writer.provider ?? "", modelId: writer.modelId, thinkingLevel: writer.thinkingLevel };
-  return { harnessId: iconHarnessId() as HarnessId, provider: "", modelId: "", thinkingLevel: "" };
+  return agentFor(undefined);
 }
 
 function parseVerdicts(answer: string, subject: KnowledgeSubject, root: string): CleanupVerdict[] {

@@ -477,8 +477,34 @@ async function piFilesInHistory(project: SessionProjectPaths & { historyDays?: n
   return selected.filter((filePath): filePath is string => filePath !== null);
 }
 
+/** What one listing checks every transcript against, worked out once for the whole listing. */
+interface PiListingScope { cwds: Set<string>; recordSessionIds: Set<string>; includeUnstarted: boolean }
+
+function piListingScope(project: SessionProjectPaths): PiListingScope {
+  return { cwds: new Set(sessionCwds(project)), recordSessionIds: new Set(project.recordSessionIds ?? []), includeUnstarted: Boolean(project.includeUnstarted) };
+}
+
+/**
+ * Whether a listing can leave a transcript out without opening it. All of a node's Pi
+ * transcripts share one folder, so a project's listing would otherwise open every other
+ * project's too. Background runs say so in their file name, and they are never listed. A
+ * transcript's working folder is in its first line and never changes, so one read before
+ * (kept in memory or in node.db) says which project it belongs to.
+ */
+function piTranscriptOutsideListing(filePath: string, scope: PiListingScope): boolean {
+  if (isInternalSession(piSessionIdFromFileName(path.basename(filePath)))) return true;
+  let known = piTranscriptSummaryCache.get(filePath);
+  if (!known) {
+    known = storedPiSummary(filePath);
+    if (known) piTranscriptSummaryCache.set(filePath, known);
+  }
+  return Boolean(known && !scope.cwds.has(known.cwd) && !scope.recordSessionIds.has(`pi:${known.id}`));
+}
+
 export async function listPiSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<SessionSummary[]> {
-  const summaries = await mapWithConcurrency(await piFilesInHistory(project, await piSessionFiles(project)), PI_LIST_CONCURRENCY, (filePath) => summarizePiTranscript(filePath, project));
+  const scope = piListingScope(project);
+  const candidates = (await piSessionFiles(project)).filter((filePath) => !piTranscriptOutsideListing(filePath, scope));
+  const summaries = await mapWithConcurrency(await piFilesInHistory(project, candidates), PI_LIST_CONCURRENCY, (filePath) => summarizePiTranscript(filePath, scope));
   return summaries.filter((session): session is SessionSummary => session !== null);
 }
 
@@ -599,7 +625,7 @@ async function readPiSummaryState(filePath: string): Promise<PiTranscriptSummary
   }
 }
 
-async function summarizePiTranscript(filePath: string, project: SessionProjectPaths): Promise<SessionSummary | null> {
+async function summarizePiTranscript(filePath: string, scope: PiListingScope): Promise<SessionSummary | null> {
   let state: PiTranscriptSummaryState | null;
   try {
     state = await readPiSummaryState(filePath);
@@ -613,8 +639,8 @@ async function summarizePiTranscript(filePath: string, project: SessionProjectPa
   }
   // Opening a new chat writes only the automatic setup command. It is not a
   // conversation until the user has supplied a real prompt, but it can still be opened.
-  if (!state || (!state.firstMessage && !project.includeUnstarted) || isInternalSession(state.id, state.firstMessage)
-    || (!sessionCwds(project).includes(state.cwd) && !project.recordSessionIds?.includes(`pi:${state.id}`))) return null;
+  if (!state || (!state.firstMessage && !scope.includeUnstarted) || isInternalSession(state.id, state.firstMessage)
+    || (!scope.cwds.has(state.cwd) && !scope.recordSessionIds.has(`pi:${state.id}`))) return null;
   return {
     id: state.id,
     path: filePath,
@@ -633,8 +659,9 @@ export async function refreshPiSessions(project: SessionProjectPaths & { history
   if (!changedFiles.length) return listPiSessions(project);
   const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
   const retained = previous.filter((session) => !changed.has(path.resolve(session.path)));
-  const selected = await piFilesInHistory(project, [...changed]);
-  const refreshed = await mapWithConcurrency(selected, PI_LIST_CONCURRENCY, (filePath) => summarizePiTranscript(filePath, project));
+  const scope = piListingScope(project);
+  const selected = await piFilesInHistory(project, [...changed].filter((filePath) => !piTranscriptOutsideListing(filePath, scope)));
+  const refreshed = await mapWithConcurrency(selected, PI_LIST_CONCURRENCY, (filePath) => summarizePiTranscript(filePath, scope));
   return [...retained, ...refreshed.filter((session): session is SessionSummary => Boolean(session))];
 }
 

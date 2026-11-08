@@ -6,10 +6,10 @@ import { appendBobMessage, type BobMessage, type BobSettings } from "../control-
 import { DASHBOARD_INTENT_INSTRUCTIONS, decideDashboardIntent } from "../control-center/dashboard-intent.js";
 import type { AskChoices, BobDecision } from "../control-center/decisions.js";
 import { listWorkspaces } from "../store.js";
-import type { HarnessId, ProjectRecord } from "../types.js";
+import type { ProjectRecord } from "../types.js";
 import { startDashboardBuild, type BuildTarget } from "./control-center-dashboard-builds.js";
 import { runGitReview } from "./git-review-run.js";
-import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 
 export interface BobDashboardRequest {
   session: AuthSession;
@@ -31,8 +31,7 @@ export interface BobDashboardRequest {
 async function askAgent(input: BobDashboardRequest, message: string): Promise<string> {
   const home = input.project ?? input.projects[0];
   const result = await runGitReview({
-    projectId: home.id, cwd: home.path, harnessId: (input.settings.harnessId || iconHarnessId()) as HarnessId,
-    provider: input.settings.provider, modelId: input.settings.modelId, thinkingLevel: input.settings.thinkingLevel,
+    projectId: home.id, cwd: home.path, ...agentFor(input.settings),
     selection: { scope: "context", label: "Bob" }, question: message, diff: `Message:\n${message}`, instructions: DASHBOARD_INTENT_INSTRUCTIONS,
   });
   return result.answer;

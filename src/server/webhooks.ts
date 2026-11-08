@@ -10,6 +10,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, setWebhookConversationHistory } from "../conversation-records.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
+import { backgroundAgent } from "../background-agent.js";
 import { ensureSessionTitle } from "../names.js";
 import { bindWebhookTitle, automationTitleInstruction } from "../webhook-title.js";
 import { getProjectLock } from "../project-locks.js";
@@ -38,10 +39,10 @@ const SOCKET_FILES = 6;
 const SOCKET_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 
 /** The harness a new conversation uses when the webhook names none: the first one this node can run. */
+/** A webhook that names no agent runs on the background agent: one that is signed in here, not Pi by assumption. */
 function defaultEngine(): string {
-  const adapter = listDiscoveredHarnesses().find((candidate) => candidate.runtime);
-  if (!adapter) throw new WebhookError(503, "No harness is available on this machine");
-  return adapter.id;
+  if (!listDiscoveredHarnesses().some((candidate) => candidate.runtime)) throw new WebhookError(503, "No harness is available on this machine");
+  return backgroundAgent().harnessId;
 }
 
 /**

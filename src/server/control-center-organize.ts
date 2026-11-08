@@ -19,6 +19,7 @@ import { startBobConversation, titleOf } from "./control-center-start.js";
 import { writeSummaries } from "./control-center-summaries.js";
 import { runGitReview } from "./git-review-run.js";
 import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { createProjectAsActor, deleteProjectAsActor, markConversationDoneAsActor, renameConversationAsActor, updateProjectAsActor } from "./routes/projects.js";
 import { deleteConversationAsActor } from "./routes/sessions.js";
@@ -104,8 +105,7 @@ export type OrganizeInterpret = (input: { message: string; recentChat: string[];
 
 const interpretWithAgent: OrganizeInterpret = async (input) => {
   const result = await runGitReview({
-    projectId: input.cwd.id, cwd: input.cwd.path, harnessId: (input.settings.harnessId || iconHarnessId()) as HarnessId,
-    provider: input.settings.provider, modelId: input.settings.modelId, thinkingLevel: input.settings.thinkingLevel,
+    projectId: input.cwd.id, cwd: input.cwd.path, ...agentFor(input.settings),
     selection: { scope: "context", label: "Bob organizing" }, question: "", diff: context(input.world, input.message, input.recentChat), instructions: INSTRUCTIONS,
   });
   return result.answer;

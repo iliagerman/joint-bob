@@ -12,6 +12,7 @@ import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harnesses/runtime-configuration.js";
 import type { HarnessAdapter } from "./harnesses/contract.js";
 import { decrypt, save, setting, settingsDatabase, value } from "./settings-store.js";
+import { knownReadyHarnesses } from "./harness-readiness.js";
 import { servingSettings } from "./relay/store.js";
 import { commandPresetSchema, identifyCommandPresets } from "./saved-commands.js";
 import { defaultManagedHome } from "./managed-home.js";
@@ -66,11 +67,57 @@ export const syncCheckSchema = z.object({
   thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
 }).strict();
 
-/** On by default, driven by Pi (or the first harness that can run) with that harness's default model. */
-function defaultSyncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSettings {
+/**
+ * The agent, model and effort Joint Bob's own background work uses on this node: summaries'
+ * fallback, Bob, titles, icons, the sync check and dashboards when they have no choice of
+ * their own. An empty harness means automatic. The model and effort may be left empty for
+ * the agent's default from Settings → Agents.
+ */
+export interface BackgroundAgentSettings { harnessId: string; provider: string; modelId: string; thinkingLevel: string }
+export const backgroundAgentSchema = z.object({
+  harnessId: z.string().trim().max(100),
+  provider: z.string().trim().max(200),
+  modelId: z.string().trim().max(300),
+  thinkingLevel: z.union([z.literal(""), z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])]),
+}).strict();
+const AUTOMATIC_BACKGROUND_AGENT: BackgroundAgentSettings = { harnessId: "", provider: "", modelId: "", thinkingLevel: "" };
+
+function backgroundAgentSetting(): BackgroundAgentSettings {
+  const stored = setting("backgroundAgent");
+  const parsed = stored ? backgroundAgentSchema.safeParse(JSON.parse(stored.value)) : undefined;
+  return parsed?.success ? parsed.data : AUTOMATIC_BACKGROUND_AGENT;
+}
+
+/** The background agent as it runs now, with the model and effort filled in. */
+export interface ResolvedBackgroundAgent extends ConversationDefault { harnessId: string; source: "setting" | "automatic" }
+
+/**
+ * Automatic picks the first agent, in Settings order (Pi, Claude, Kiro), that is installed and
+ * signed in here, at its default model and effort. Until the first sign-in check has
+ * answered, or when it found none, it falls back to the first agent that can run here.
+ */
+function resolveBackgroundAgent(choice: BackgroundAgentSettings, defaults: Record<string, ConversationDefault>): ResolvedBackgroundAgent {
   const runnable = listDiscoveredHarnesses().filter((adapter) => adapter.runtime && defaults[adapter.id]);
-  const harnessId = runnable.find((adapter) => adapter.id === "pi")?.id ?? runnable[0]?.id ?? "pi";
-  return { enabled: true, harnessId, ...(defaults[harnessId] ?? { provider: "", modelId: "", thinkingLevel: "off" }) };
+  const fill = (harnessId: string, source: ResolvedBackgroundAgent["source"], chosen?: BackgroundAgentSettings): ResolvedBackgroundAgent => {
+    const fallback = defaults[harnessId] ?? { provider: "", modelId: "", thinkingLevel: "off" };
+    const modelChosen = Boolean(chosen?.modelId);
+    return {
+      harnessId, source,
+      provider: modelChosen ? chosen!.provider : fallback.provider,
+      modelId: modelChosen ? chosen!.modelId : fallback.modelId,
+      thinkingLevel: (chosen?.thinkingLevel || fallback.thinkingLevel) as ConversationDefault["thinkingLevel"],
+    };
+  };
+  if (choice.harnessId && runnable.some((adapter) => adapter.id === choice.harnessId)) return fill(choice.harnessId, "setting", choice);
+  const ready = knownReadyHarnesses()?.ready;
+  const harnessId = runnable.find((adapter) => ready?.includes(adapter.id))?.id ?? runnable[0]?.id ?? "pi";
+  return fill(harnessId, "automatic");
+}
+
+/** On by default, driven by the background agent. */
+function defaultSyncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSettings {
+  const { source: _source, ...agent } = resolveBackgroundAgent(backgroundAgentSetting(), defaults);
+  return { enabled: true, ...agent };
 }
 
 function syncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSettings {
@@ -110,6 +157,19 @@ function dashboardAgent(defaults: Record<string, ConversationDefault>): Dashboar
   if (parsed?.success) return parsed.data;
   const { enabled: _enabled, ...fallback } = defaultSyncCheck(defaults);
   return fallback;
+}
+
+function validateBackgroundAgent(input: BackgroundAgentSettings): BackgroundAgentSettings {
+  const parsed = backgroundAgentSchema.parse(input);
+  if (!parsed.harnessId) return AUTOMATIC_BACKGROUND_AGENT;
+  if (parsed.modelId) assertRunnableHarness("Background agent", parsed);
+  else if (!listDiscoveredHarnesses().some((adapter) => adapter.id === parsed.harnessId && adapter.runtime)) throw new Error(`Background agent harness ${parsed.harnessId} cannot run agents on this node`);
+  return parsed.modelId ? parsed : { ...parsed, provider: "" };
+}
+
+/** The agent Joint Bob's background work runs with right now on this node. */
+export function backgroundAgentNow(): ResolvedBackgroundAgent {
+  return resolveBackgroundAgent(backgroundAgentSetting(), getSettings().conversationDefaults);
 }
 
 function validateDashboardAgent(input: DashboardAgentSettings): DashboardAgentSettings {
@@ -229,6 +289,7 @@ export interface SettingsInput {
   gitPullTimeoutSeconds?: number;
   syncCheck?: SyncCheckSettings;
   dashboards?: DashboardAgentSettings;
+  backgroundAgent?: BackgroundAgentSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
   runnerAccess?: RunnerAccessSettings;
@@ -263,6 +324,7 @@ export interface SettingsResponse {
   gitPullTimeoutSeconds: number;
   syncCheck: SyncCheckSettings;
   dashboards: DashboardAgentSettings;
+  backgroundAgent: BackgroundAgentSettings;
   remoteTerminal: RemoteTerminalSettings;
   runnerAccess: RunnerAccessSettings;
   conversationCommands: ConversationCommandsSettings;
@@ -536,6 +598,7 @@ export function nodeSettings(): SettingsResponse {
     gitPullTimeoutSeconds: Number(value("gitPullTimeoutSeconds", "360")),
     syncCheck: syncCheck(conversationDefaults),
     dashboards: dashboardAgent(conversationDefaults),
+    backgroundAgent: backgroundAgentSetting(),
     remoteTerminal: remoteTerminalSettings(),
     runnerAccess: runnerAccessSettings(),
     conversationCommands: conversationCommands(),
@@ -657,6 +720,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   if (!Number.isInteger(gitPullTimeoutSeconds) || gitPullTimeoutSeconds < 60 || gitPullTimeoutSeconds > 3600) throw new Error("Git PR timeout must be between 60 and 3600 seconds");
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const dashboardAgentSettings = input.dashboards ? validateDashboardAgent(input.dashboards) : undefined;
+  const backgroundAgentSettings = input.backgroundAgent ? validateBackgroundAgent(input.backgroundAgent) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const commandInput = input.conversationCommands ?? previous.conversationCommands;
   const conversationCommands = { ...commandInput, presets: identifyCommandPresets(commandInput.presets ?? [], previous.conversationCommands.presets) };
@@ -690,6 +754,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "gitPullTimeoutSeconds", String(gitPullTimeoutSeconds));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     if (dashboardAgentSettings) save(db, "dashboards", JSON.stringify(dashboardAgentSettings));
+    if (backgroundAgentSettings) save(db, "backgroundAgent", JSON.stringify(backgroundAgentSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));
     // Only an explicit choice is stored, so a node that later starts serving a relay still gets the relay default.

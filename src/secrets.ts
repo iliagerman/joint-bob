@@ -14,7 +14,9 @@ import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 import { applyGithubAccounts, assertGithubAccountsDistinct, assertGithubVariableNames, finalizeGithubVariables, githubAccount, githubAccountContext, githubAccountSummary, githubOwnerFromRemote, GITHUB_TOKEN_VARIABLE, type GithubAccount, type GithubAccountSummary } from "./github-credentials.js";
 
-export type SecretProvider = "aws" | "azure" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "typesafe" | "tavily" | "elevenlabs" | "zai" | "grafana" | "datadog" | "jira" | "gitlab" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
+/** Every provider a secret account can have. Anything that checks a provider (saving, replication, scoped sharing) uses this list, so a new provider cannot be missing from one of them. */
+export const SECRET_PROVIDERS = ["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "typesafe", "tavily", "elevenlabs", "zai", "grafana", "datadog", "jira", "gitlab", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as const;
+export type SecretProvider = typeof SECRET_PROVIDERS[number];
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -124,7 +126,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "typesafe", "tavily", "elevenlabs", "zai", "grafana", "datadog", "jira", "gitlab", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
+  if (!(SECRET_PROVIDERS as readonly string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();

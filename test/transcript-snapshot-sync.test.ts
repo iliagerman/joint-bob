@@ -63,6 +63,30 @@ test("a project's inventory is kept until its conversations change, while a name
   assert.equal(mine(await sharedTranscriptInventory(f.peer, f.project.id))?.hash, hash(f.content + later), "a change in the project is listed again");
 });
 
+// A twin catching up asks for one conversation and its file; each of those used to list the
+// project's whole history. A deletion written straight into node.db, which announces nothing,
+// shows which answers come from the kept list and which listed the project again.
+test("one conversation and its file are found in the kept project list until the project changes", async (t) => {
+  const { sessionListingChanged } = await import("../src/session-listing-revisions.js");
+  const { sharedTranscriptFile } = await import("../src/server/shared-transcripts.js");
+  const f = await fixture(t);
+  await mkdir(path.dirname(f.destination), { recursive: true });
+  await writeFile(f.destination, f.content);
+  await sharedTranscriptInventory(f.peer, f.project.id);
+  const nodeDb = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+  t.after(() => nodeDb.close());
+  nodeDb.prepare("INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, 'pi', ?, ?, ?)").run(f.project.id, f.sessionId, new Date().toISOString(), f.local.id);
+
+  const named = await sharedTranscriptInventory(f.peer, f.project.id, { engine: "pi", sessionId: f.sessionId });
+  assert.equal(named[0]?.hash, hash(f.content), "a named conversation is answered from the kept list");
+  assert.equal(await sharedTranscriptFile(f.peer, f.project.id, "pi", f.sessionId), f.destination, "so is its file");
+  await assert.rejects(sharedTranscriptInventory(randomUUID(), f.project.id, { engine: "pi", sessionId: f.sessionId }), /not shared/, "a peer the project is not shared with is still refused");
+
+  sessionListingChanged(f.project.id);
+  await assert.rejects(sharedTranscriptFile(f.peer, f.project.id, "pi", f.sessionId), /not found/, "a change in the project lists it again");
+  assert.deepEqual(await sharedTranscriptInventory(f.peer, f.project.id, { engine: "pi", sessionId: f.sessionId }), [], "and the named conversation is gone with it");
+});
+
 test("transcript inventory hashes only the advertised bytes when the owner appends during hashing", async (t) => {
   const f = await fixture(t);
   await mkdir(path.dirname(f.destination), { recursive: true });

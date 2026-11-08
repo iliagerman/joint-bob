@@ -17,13 +17,12 @@ import { storedDigest } from "../conversation-digest.js";
 import { sessionTitleOverrides } from "../names.js";
 import { listQueuedPrompts } from "../prompt-queue.js";
 import { getProject, projectVisible } from "../store.js";
-import type { HarnessId } from "../types.js";
 import { bobDecisionModel } from "./bob.js";
 import { titleOf } from "./control-center-start.js";
 import { queueConversationPrompt, stopConversationTurn } from "./conversation-prompt.js";
 import { runGitReview } from "./git-review-run.js";
 import { harnessSessionBusy, onConversationMessage, type SharedHarnessSession } from "./harness-sessions.js";
-import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { broadcastToAllClients } from "./realtime.js";
 import { markConversationDoneAsActor } from "./routes/projects.js";
@@ -55,8 +54,7 @@ async function decide(actor: ActingAccount, settings: BobSettings, conversation:
     }
     // The model is missing, could not answer, or was not sure enough: Bob's own agent reads the same and decides.
     const result = await runGitReview({
-      projectId: conversation.projectId, cwd, harnessId: (settings.harnessId || iconHarnessId()) as HarnessId,
-      provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.thinkingLevel,
+      projectId: conversation.projectId, cwd, ...agentFor(settings),
       selection: { scope: "context", label: "Bob review check" }, question: "",
       diff: JSON.stringify({ user_request: input.request, conversation_summary: input.summary, agent_last_message: input.answer.slice(-8000) }), instructions: REVIEW_INSTRUCTIONS,
     });

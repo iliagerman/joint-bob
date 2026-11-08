@@ -26,6 +26,8 @@ import { Feature, requireFeature, sendError } from "../http-auth.js";
 import { broadcastToAllClients, reloadSharedSkills } from "../realtime.js";
 import { auditQuerySchema, labelIconRequestSchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
 import { generateLabelIcon } from "../label-icon.js";
+import { currentBackgroundAgent, forgetHarnessReadiness } from "../../background-agent.js";
+import { knownReadyHarnesses } from "../../harness-readiness.js";
 import { app } from "../state.js";
 import { announceCommandChanges, registerSavedCommandRoutes } from "../saved-commands.js";
 
@@ -245,6 +247,17 @@ app.get("/api/settings/sync-check", (_request, response) => {
   response.json(syncCheckStatus());
 });
 
+// Which agent runs background work here now, and which agents are signed in; checked again when asked with ?check=1.
+app.get("/api/settings/background-agent", async (request, response, next) => {
+  try {
+    if (request.query.check === "1") forgetHarnessReadiness();
+    const agent = await currentBackgroundAgent();
+    response.json({ agent, ready: knownReadyHarnesses()?.ready ?? [] });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/settings/sync-check/run", async (_request, response, next) => {
   try { response.json(await runSyncCheck()); } catch (error) { next(error); }
 });
@@ -282,6 +295,8 @@ app.put("/api/settings", async (request, response, next) => {
     await assertManagedHomeChangeAllowed(homePath);
     await ensureManagedHome(homePath, (await listWorkspaces()).map((workspace) => workspace.id));
     const settings = updateSettings(payload, session.userId);
+    // Paths, Kiro on or off, or defaults can change which agents are ready for background work.
+    forgetHarnessReadiness();
     if (payload.conversationCommands) await announceCommandChanges();
     clearHarnessSessionCache();
     resetSyncthingConnection();
@@ -300,7 +315,8 @@ app.put("/api/settings", async (request, response, next) => {
       /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message) ||
       error.message.includes("Resource paths") || error.message.includes("resource paths") ||
       error.message.startsWith("Sync check ") ||
-      error.message.startsWith("Dashboard agent ")
+      error.message.startsWith("Dashboard agent ") ||
+      error.message.startsWith("Background agent ")
     )) {
       sendError(response, 400, error.message);
       return;

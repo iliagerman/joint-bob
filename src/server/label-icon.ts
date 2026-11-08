@@ -1,20 +1,20 @@
 import { labelIconPrompt, parseGeneratedIcon } from "../conversation-labels.js";
 import { getSettings } from "../settings.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
+import { backgroundAgent } from "../background-agent.js";
 import { runGitReview } from "./git-review-run.js";
 
 export type LabelIconGenerator = (input: { label: string; harnessId: string; provider: string; modelId: string; prompt: string }) => Promise<string>;
 
-/** An explicit harness wins; otherwise Pi when this node has it, else the first agent that can run. */
+/** An explicit harness wins; otherwise the background agent (Settings → Conversations). */
 export function iconHarnessId(requested?: string): string {
   const runnable = listDiscoveredHarnesses().filter((adapter) => adapter.runtime && getSettings().conversationDefaults[adapter.id]);
   if (requested) {
     if (!runnable.some((adapter) => adapter.id === requested)) throw new Error(`Icon harness ${requested} cannot run agents on this node`);
     return requested;
   }
-  const chosen = runnable.find((adapter) => adapter.id === "pi") ?? runnable[0];
-  if (!chosen) throw new Error("No agent is available on this node to generate an icon");
-  return chosen.id;
+  if (!runnable.length) throw new Error("No agent is available on this node to generate an icon");
+  return backgroundAgent().harnessId;
 }
 
 /**
@@ -26,14 +26,15 @@ export interface LabelIconChoice { harnessId?: string; provider?: string; modelI
 
 export async function generateLabelIcon(label: string, choice: LabelIconChoice = {}): Promise<string> {
   const harnessId = iconHarnessId(choice.harnessId);
-  // A model only makes sense with the agent it was picked for; otherwise the agent's default applies.
-  const model = choice.harnessId ? { provider: choice.provider ?? "", modelId: choice.modelId ?? "" } : { provider: "", modelId: "" };
+  // A model only makes sense with the agent it was picked for; otherwise the background agent's model applies.
+  const background = choice.harnessId ? undefined : backgroundAgent();
+  const model = background ? { provider: background.provider, modelId: background.modelId } : { provider: choice.provider ?? "", modelId: choice.modelId ?? "" };
   const prompt = labelIconPrompt(label);
   const override = process.env.JOINT_BOB_LABEL_ICON_GENERATOR;
   const answer = override
     ? await (await import(override) as { default: LabelIconGenerator }).default({ label, harnessId, ...model, prompt })
     : (await runGitReview({
-      projectId: "label-icons", cwd: getSettings().projects.homePath, harnessId, ...model, thinkingLevel: "",
+      projectId: "label-icons", cwd: getSettings().projects.homePath, harnessId, ...model, thinkingLevel: background?.thinkingLevel ?? "",
       selection: { scope: "worktree" }, question: "", diff: "", instructions: prompt,
     })).answer;
   const icon = parseGeneratedIcon(answer);

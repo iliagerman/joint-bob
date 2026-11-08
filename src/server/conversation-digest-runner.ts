@@ -19,7 +19,7 @@ import type { ChatMessage, HarnessId, ProjectRecord } from "../types.js";
 import { loadConversationMessages } from "./conversation-turns.js";
 import { runGitReview } from "./git-review-run.js";
 import { harnessSessions, onConversationMessage, type SharedHarnessSession } from "./harness-sessions.js";
-import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { broadcastToAllClients, send } from "./realtime.js";
 
 export class DigestError extends Error {
@@ -89,7 +89,7 @@ export async function summaryRun(policy: EffectiveSummaryPolicy, project: Projec
     return { harnessId: writer.harnessId, provider: writer.provider ?? "", modelId: writer.modelId, thinkingLevel: writer.thinkingLevel, source: "setting" };
   }
   const own = live ?? lastAttribution(messages) ?? { harnessId: lastHarness };
-  if (!canRunHere(own.harnessId)) return { harnessId: iconHarnessId(), provider: "", modelId: "", thinkingLevel: "", source: "fallback" };
+  if (!canRunHere(own.harnessId)) return { ...agentFor(undefined), source: "fallback" };
   if (writer.source === "automatic") {
     const routed = await classifiedRun(project, own, material);
     if (routed) return routed;

@@ -517,3 +517,26 @@ test("node settings let the user pick the dashboard agent's harness and model", 
   assert.equal(saved.dashboards.harnessId, "claude");
   assert.equal(saved.dashboards.modelId, saved.conversationDefaults.claude.modelId, "a new harness starts from its conversation default model");
 });
+
+test("node settings run background work on an automatic agent and let the user choose one", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  const harness = page.getByTestId("settings-background-agent-harness");
+  assert.equal(await harness.inputValue(), "", "background work starts on Automatic");
+  assert.equal(await page.locator("#settingsBackgroundAgentModel").locator("select, input, button").count(), 0, "Automatic has no model of its own");
+  await page.getByTestId("settings-background-agent-status").filter({ hasText: /Automatic is using .+\. Signed in here: / }).waitFor();
+
+  await harness.selectOption("claude");
+  await page.getByTestId("settings-background-agent-model").waitFor({ state: "attached" });
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  const saved = await page.evaluate(async () => (await (await fetch("/api/settings")).json()) as { backgroundAgent: Record<string, unknown>; conversationDefaults: Record<string, Record<string, unknown>> });
+  assert.equal(saved.backgroundAgent.harnessId, "claude");
+  assert.equal(saved.backgroundAgent.modelId, saved.conversationDefaults.claude.modelId, "a chosen agent starts from its conversation default model");
+  const status = await page.evaluate(async () => (await (await fetch("/api/settings/background-agent")).json()) as { agent: Record<string, unknown> });
+  assert.deepEqual([status.agent.harnessId, status.agent.source], ["claude", "setting"]);
+});

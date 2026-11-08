@@ -13,7 +13,7 @@ import { chooseConversation, decideForBob, needsAgentDecision, type BobDecision,
 import { handleBobMoveRequest } from "../control-center/moves-bob.js";
 import { getClusterNode } from "../cluster.js";
 import { genericSecretEnvironment } from "../secrets.js";
-import type { HarnessId, ProjectRecord } from "../types.js";
+import type { ProjectRecord } from "../types.js";
 import { loadBoard } from "./control-center-board.js";
 import { saveBobAttachments, startBobConversation, titleOf, type BobAttachments } from "./control-center-start.js";
 import { promptTextWithAttachments } from "./chat.js";
@@ -23,6 +23,7 @@ import { askDisplayAgent, type AppearanceContext, type AppearanceSettings } from
 import { bobDashboardRequest } from "./control-center-dashboard-request.js";
 import { GitReviewRunError, runGitReview } from "./git-review-run.js";
 import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { assertProjectEditable, projectsWithSharedNames } from "./projects.js";
 import { isLeased } from "../control-center/leases.js";
 import { storedDigest } from "../conversation-digest.js";
@@ -97,7 +98,7 @@ export async function answerWithAgent(args: { message: string; attachments: BobA
   const { cards } = await loadBoard(args.session);
   if (!args.project) return { text: "There are no projects yet, so there is nothing for me to look at.", via: [] };
   const contributed = await collectBobContext(args.turn);
-  const harnessId = (args.settings.harnessId || iconHarnessId()) as HarnessId;
+  const agent = agentFor(args.settings);
   const source = jointBobSource(args.projects);
   // A question about no project in particular is often about Joint Bob itself: Bob runs in its source then, where its docs are.
   const project = args.projectChosen || !source ? args.project : source;
@@ -106,7 +107,7 @@ export async function answerWithAgent(args: { message: string; attachments: BobA
   const [machines, local] = await Promise.all([listMoveNodes(), getClusterNode()]);
   const facts = { localNodeId: local.id, machineName: (id: string) => machines.find((machine) => machine.id === id)?.name ?? "another machine", jointBobSource: source ? { name: source.name, path: source.path } : null };
   const result = await runGitReview({
-    projectId: project.id, cwd: project.path, harnessId, provider: args.settings.provider, modelId: args.settings.modelId, thinkingLevel: args.settings.thinkingLevel,
+    projectId: project.id, cwd: project.path, ...agent,
     selection: { scope: "context", label: "Bob" }, question: args.message, diff: bobMaterial({ message, recentChat: args.recentChat, context: bobContext(cards, args.options, facts), contributed: contributed.text }),
     images: args.attachments.images.map(({ mimeType, data }) => ({ type: "image" as const, mimeType, data })),
     // Read-only tools always: Bob looks things up (a transcript, Joint Bob's docs) to explain them, and can change nothing.

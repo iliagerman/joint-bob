@@ -350,6 +350,44 @@ function syncCheckValue() {
   return { enabled: elements.settingsSyncCheckEnabled.checked, harnessId: descriptor.id, provider: provider ? provider.value : descriptor.configuration.fixedProvider, modelId: model.value, thinkingLevel: thinking.value };
 }
 
+let backgroundAgentFields = null;
+
+/** Automatic shows no model: it runs the chosen agent's own default model and effort. */
+function renderBackgroundAgentModel(settings, harnessId, current) {
+  const descriptor = harnessDescriptors.find(({ id }) => id === harnessId);
+  if (!descriptor) { elements.settingsBackgroundAgentModel.replaceChildren(); backgroundAgentFields = null; return; }
+  const stored = current?.harnessId === harnessId && current.modelId ? current : settings.conversationDefaults[descriptor.id];
+  const controls = createConversationControls(descriptor, settings, "", { current: stored, idPrefix: "settingsBackgroundAgent", testPrefix: "settings-background-agent", label: "Background agent" });
+  backgroundAgentFields = { descriptor, ...controls.fields };
+  elements.settingsBackgroundAgentModel.replaceChildren(...controls.controls);
+}
+
+function backgroundAgentSummary(status) {
+  const label = harnessDescriptors.find(({ id }) => id === status.agent.harnessId)?.label ?? status.agent.harnessId;
+  const model = [status.agent.modelId, status.agent.thinkingLevel].filter(Boolean).join(", ");
+  const how = status.agent.source === "automatic" ? "Automatic is using" : "Using";
+  const ready = status.ready.map((id) => harnessDescriptors.find((descriptor) => descriptor.id === id)?.label ?? id);
+  return `${how} ${label}${model ? ` (${model})` : ""}. Signed in here: ${ready.length ? ready.join(", ") : "none found"}.`;
+}
+
+function renderBackgroundAgentSettings(settings) {
+  const choice = settings.backgroundAgent ?? { harnessId: "" };
+  const runnable = harnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
+  const choices = !choice.harnessId || runnable.some(({ id }) => id === choice.harnessId) ? runnable : [...runnable, harnessDescriptors.find(({ id }) => id === choice.harnessId)].filter(Boolean);
+  elements.settingsBackgroundAgentHarness.replaceChildren(new Option("Automatic", ""), ...choices.map(({ id, label }) => new Option(label, id)));
+  elements.settingsBackgroundAgentHarness.value = choice.harnessId;
+  elements.settingsBackgroundAgentHarness.onchange = () => renderBackgroundAgentModel(settings, elements.settingsBackgroundAgentHarness.value, choice);
+  renderBackgroundAgentModel(settings, choice.harnessId, choice);
+  elements.settingsBackgroundAgentStatus.textContent = "";
+  api("/api/settings/background-agent").then((status) => { elements.settingsBackgroundAgentStatus.textContent = backgroundAgentSummary(status); }).catch(() => {});
+}
+
+function backgroundAgentValue() {
+  if (!backgroundAgentFields) return { harnessId: "", provider: "", modelId: "", thinkingLevel: "" };
+  const { descriptor, provider, model, thinking } = backgroundAgentFields;
+  return { harnessId: descriptor.id, provider: provider ? provider.value : descriptor.configuration.fixedProvider, modelId: model.value, thinkingLevel: thinking.value };
+}
+
 let dashboardAgentFields = null;
 
 /** Like the sync check, the dashboard agent picks its own harness and model on this node. */
@@ -479,6 +517,7 @@ async function loadSettings() {
   elements.settingsConversationMemoryLimitEnabled.checked = settings.conversationMemoryLimitGb != null;
   elements.settingsConversationMemoryLimitGb.value = settings.conversationMemoryLimitGb ?? 8;
   elements.settingsConversationMemoryLimitGb.disabled = !elements.settingsConversationMemoryLimitEnabled.checked;
+  renderBackgroundAgentSettings(settings);
   renderSyncCheckSettings(settings);
   renderDashboardAgentSettings(settings);
   elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
@@ -597,6 +636,8 @@ async function saveSettings(event) {
   if (syncCheck && (!syncCheck.provider || !syncCheck.modelId)) throw new Error("Choose a model for the sync check");
   const dashboards = dashboardAgentValue();
   if (dashboards && (!dashboards.provider || !dashboards.modelId)) throw new Error("Choose a model for the dashboard agent");
+  const backgroundAgent = backgroundAgentValue();
+  if (backgroundAgent.harnessId && (!backgroundAgent.provider || !backgroundAgent.modelId)) throw new Error("Choose a model for the background agent");
   const runtime = runtimeFieldsValue();
   for (const harness of clearedHarnessesOnSave) runtime[harness] = blankHarnessPayload();
   const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), runtime);
@@ -627,6 +668,7 @@ async function saveSettings(event) {
       gitPullTimeoutSeconds: Number(elements.settingsGitPullTimeoutSeconds.value),
       ...(syncCheck ? { syncCheck } : {}),
       ...(dashboards ? { dashboards } : {}),
+      backgroundAgent,
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       runnerAccess: { otherNodes: elements.settingsRunnerOtherNodes.checked },
       conversationCommands: personalSettingsValue().conversationCommands,

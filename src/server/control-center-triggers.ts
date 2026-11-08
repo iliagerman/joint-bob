@@ -17,6 +17,7 @@ import type { HarnessId, ProjectRecord } from "../types.js";
 import { bobDecisionModel } from "./bob.js";
 import { runGitReview } from "./git-review-run.js";
 import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { assertProjectEditable, ProjectLockedError, projectsWithSharedNames } from "./projects.js";
 import { launchQuickNote, QuickNoteLaunchError } from "./quick-note-dispatch.js";
 import { broadcastToAllClients } from "./realtime.js";
@@ -55,8 +56,7 @@ async function bobRatingDeps(actor: ActingAccount, settings: BobSettings, projec
     stateCharacters: model?.target.stateCharacters ?? 0,
     ...model ? { ask: async (state, questions) => askSystemOneChoices(model.target, state, questions, model.apiKey) } : {},
     agent: async (step) => (await runGitReview({
-      projectId: project.id, cwd: project.path, harnessId: (settings.harnessId || iconHarnessId()) as HarnessId,
-      provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.thinkingLevel,
+      projectId: project.id, cwd: project.path, ...agentFor(settings),
       selection: { scope: "context", label: "Incoming trigger" }, question: "", diff: step.material, instructions: step.instructions,
     })).answer,
   };

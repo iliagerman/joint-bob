@@ -5,13 +5,12 @@ import { REPORT_INSTRUCTIONS, REPORT_WINDOW_HOURS, describeFacts, reportActions,
 import { claimDueBobSchedules, ensureBobScheduleSchema, getBobSchedule, recordBobScheduleRun, type BobSchedule } from "../control-center/bob-schedules.js";
 import { appendBobMessage, bobDatabase, readBobSettings, type BobMessage, type BobSettings } from "../control-center/bob-store.js";
 import { clock, rowMatchesFilter } from "../control-center/automations.js";
-import type { HarnessId } from "../types.js";
 import { usageTotals } from "../usage-ledger.js";
 import { AutomationError, collectAutomations } from "./control-center-automations.js";
 import { startReportTimer } from "./control-center-report-timer.js";
 import { loadBoard } from "./control-center-board.js";
 import { runGitReview } from "./git-review-run.js";
-import { iconHarnessId } from "./label-icon.js";
+import { agentFor } from "../background-agent.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { flags } from "./state.js";
 
@@ -55,7 +54,7 @@ export async function gatherReportFacts(session: AuthSession, schedule: BobSched
 async function writeWithAgent(facts: ReportFacts, settings: BobSettings, project: { id: string; path: string } | undefined): Promise<string> {
   if (!project) throw new Error("there is no project for Bob's agent to run in");
   const result = await runGitReview({
-    projectId: project.id, cwd: project.path, harnessId: (settings.harnessId || iconHarnessId()) as HarnessId, provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.thinkingLevel,
+    projectId: project.id, cwd: project.path, ...agentFor(settings),
     selection: { scope: "context", label: "Bob report" }, question: "", diff: describeFacts(facts), instructions: [BOB_INSTRUCTIONS, REPORT_INSTRUCTIONS].join("\n"),
   });
   return result.answer.trim();
