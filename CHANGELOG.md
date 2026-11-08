@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.233.2 — 2026-11-08
+
+- Conversation titles read in title case in every list, the chat header and the Review jump, and abbreviations such as UX and API stay in capitals. Titles you type keep their stored text.
+- On a phone, Back goes up one level: from a conversation to its project's list, then to Projects, instead of back through every place you visited.
+
 ## 2.233.1 — 2026-11-07
 
 - On a phone, tapping the control center's chips works the first time while agents run. The chips, the agents sheet and the chat's project lists were drawn again every few seconds, so a tap often missed and an open list closed; they now change only when what they show changes.
