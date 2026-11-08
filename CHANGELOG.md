@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.242.2 — 2026-11-08
+
+- Test machines keep their sample conversations: they no longer mark them done a minute after starting or delete them five minutes in, so long browser test runs no longer lose the conversations they open.
+
 ## 2.242.1 — 2026-11-08
 
 - Conversation lists and opening a conversation are faster again on a machine that shows many conversations from your other machines. Looking up each one's usage read the whole project's usage history; it now reads only that conversation's.

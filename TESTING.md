@@ -170,6 +170,7 @@ Conventions that keep it stable:
 - Wait for **application state**, never a load event or a sleep. `await page.getByText("Internal Assistant").waitFor()` is a readiness signal; `waitForTimeout` is not.
 - Use `data-testid` for controls and visible text for content. Every interactive element must carry a `data-testid`.
 - Set a desktop viewport. The control center is hidden below 1024px.
+- The seeded conversations are dated 30 August 2026, and two time-based sweeps would remove them from a node that runs more than a few minutes. The hourly sweep that marks conversations idle for four days done would close every one a test opens, a minute after the node starts: test nodes (`NODE_ENV=test`) skip it, and a test about it sets `JOINT_BOB_TEST_CLOSEOUT_SWEEP=1`. The retention sweep five minutes after start deletes conversations older than the retention window (40 days by default): the seed sets that window to ten years.
 - Before measuring geometry, wait two animation frames.
 - **Assert the precondition the bug needs.** The picker rows only collapsed once the list overflowed its maximum height, so the test selects the project with the most conversations and asserts the list is actually scrolling before it measures a single row.
 

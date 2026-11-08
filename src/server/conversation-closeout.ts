@@ -169,6 +169,9 @@ export async function runInactiveConversationCloseout(now = Date.now()): Promise
 
 let started = false;
 export function startConversationCloseoutScheduler(): void {
+  // Test nodes serve fixed-date fixtures (scripts/dev-seed.ts), all older than four days: the sweep would
+  // close each conversation a test opens a minute after start. A test about the sweep opts in.
+  if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_CLOSEOUT_SWEEP !== "1") return;
   if (started) return;
   started = true;
   const schedule = (delay: number): void => {

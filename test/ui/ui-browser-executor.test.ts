@@ -220,7 +220,8 @@ for (const nodeId of [null, "22222222-2222-4222-8222-222222222222"]) {
 
 // Only the new browser API is stubbed. Authentication, app state, conversation
 // selection and rendering run against the real isolated dev node.
-test("browser viewer UI", { timeout: 360_000 }, async (t) => {
+// 22 subtests each boot the whole app in a fresh page; on a busy machine one takes 40 to 70 seconds.
+test("browser viewer UI", { timeout: 1_800_000 }, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-ui-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];

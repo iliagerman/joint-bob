@@ -45,6 +45,9 @@ updateSettings({
   runtimes: { kiro: { executable: path.join(job.paths.standIns, "kiro-cli"), configPath: "", sessionPath: "" } },
   syncthing: { endpoint: "" },
   projects: { homePath: job.paths.projectsHome },
+  // The seeded transcripts are dated 30 August 2026. With the default 40 days, the retention sweep five
+  // minutes after start deletes every one of them, so the dev environment keeps conversations ten years.
+  conversationRetentionDays: 3650,
 });
 
 if (authenticationStatus().setupRequired) createAdministrator(job.admin.username, job.admin.password, false, job.admin.email);
