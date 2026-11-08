@@ -28,7 +28,9 @@ import { isWebhookOnlyChannel } from "../../relay/stream.js";
 import { peerFetch } from "../../relay/transport.js";
 import { getProject, listProjects } from "../../store.js";
 import { listHarnesses, listHarnessModels } from "../../harnesses.js";
-import { listSecretAccounts, validateProjectSecretAccounts } from "../../secrets.js";
+import { getScopeSecretAccounts, listSecretAccounts, validateProjectSecretAccounts } from "../../secrets.js";
+import { sharedProjectIds } from "../sharing-files.js";
+import { peerMayRunHere } from "../cluster-helpers.js";
 import { listRuntimePeers } from "../runtime-peers.js";
 import {
   createWebhook, deleteWebhook, getWebhook, listWebhooks, readWebhookPayload, recordWebhookDelivery, regenerateWebhookSecret, updateWebhook,
@@ -272,7 +274,7 @@ const commandSchema = z.discriminatedUnion("action", [
 export type WebhookCommand = z.infer<typeof commandSchema>;
 type Command = WebhookCommand;
 
-/** Always executes locally. A twin may manage a webhook, but never stores a copy of it. */
+/** Always executes locally. Remote management never stores another copy. */
 function isWebhookResourceCommand(command: Command): command is WebhookResourceCommand {
   return webhookResourceCommandSchema.safeParse(command).success;
 }
@@ -288,22 +290,57 @@ function decodeResourceData(data: string): Buffer {
   return decoded;
 }
 
-async function manage(command: Command): Promise<unknown> {
+interface WebhookPeerScope { projects: Set<string>; secrets: Set<string> }
+
+async function webhookPeerScope(peerId: string): Promise<WebhookPeerScope | undefined> {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  if (isTrustedTwin(db, local.id, peerId)) return undefined;
+  const projects = new Set(sharedProjectIds(db, local.id, peerId));
+  if (!projects.size) throw new WebhookError(403, "No webhook projects are shared with this machine");
+  const secrets = new Set<string>();
+  for (const id of projects) {
+    const project = await getProject(id);
+    if (!project) continue;
+    for (const scope of [["project", id], ["workspace", project.type ?? "personal"]] as const) {
+      for (const accountId of (await getScopeSecretAccounts(scope[0], scope[1])).accountIds) secrets.add(accountId);
+    }
+  }
+  for (const account of await listSecretAccounts()) if (account.projectId && projects.has(account.projectId)) secrets.add(account.id);
+  return { projects, secrets };
+}
+
+function assertWebhookPeerScope(db: Awaited<ReturnType<typeof clusterV2Database>>, command: Command, scope: WebhookPeerScope): void {
+  const input = "input" in command ? command.input : command.action === "install-transfer" ? command.bundle.input : undefined;
+  const projects = [...("projectId" in command ? [command.projectId] : []), ...(input ? [input.target.projectId] : [])];
+  if ("id" in command) {
+    const hook = getWebhook(db, command.id);
+    if (!hook) throw new WebhookError(404, "Webhook not found");
+    projects.push(hook.target.projectId);
+  }
+  if (projects.some(id => !scope.projects.has(id))) throw new WebhookError(403, "Webhook project is not shared with this machine");
+  if (input?.target.kind === "assistant") throw new WebhookError(403, "Assistant webhooks stay on their assistant's machine");
+  if (input?.secretAccountIds.some(id => !scope.secrets.has(id))) throw new WebhookError(403, "Selected secrets are not attached to a shared project");
+  if (input?.providerProfileId && (!input.creatorAccountId || !listAccessibleProviderProfiles(input.creatorAccountId, "automation").some(profile => profile.id === input.providerProfileId && profile.shared))) throw new WebhookError(403, "Select a shared automation profile on this machine");
+  if (command.action === "skill-inventory" || command.action === "skill-import-existing") throw new WebhookError(403, "Machine-local skill imports require a trusted twin; upload a skill or import it from Git instead");
+}
+
+async function manage(command: Command, scope?: WebhookPeerScope): Promise<unknown> {
   const db = await clusterV2Database();
-  if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation") : [] };
+  if (scope) assertWebhookPeerScope(db, command, scope);
+  if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation").filter(profile => !scope || profile.shared) : [] };
   if ("id" in command && transferring.has(command.id)) throw new WebhookError(409, "Webhook transfer is in progress; wait before changing it");
   // The webhook behind a connected Telegram bot is managed from the assistant, not here.
   if ("id" in command && typeof command.id === "string" && command.action !== "deliveries" && getWebhook(db, command.id)?.reply) throw new WebhookError(409, "Manage this webhook from the assistant's Telegram settings");
-  if (command.action === "list") return { webhooks: listWebhooks(db).filter(hook => !hook.reply), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
+  if (command.action === "list") return { webhooks: listWebhooks(db).filter(hook => !hook.reply && (!scope || scope.projects.has(hook.target.projectId))), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
   if (command.action === "options") {
     const adapters = listHarnesses().filter(({ runtime }) => runtime);
     return {
-      secretAccounts: (await listSecretAccounts()).map(({ id, label, provider, projectId }) => ({ id, label, provider, projectId })),
+      secretAccounts: (await listSecretAccounts()).filter(account => !scope || scope.secrets.has(account.id)).map(({ id, label, provider, projectId }) => ({ id, label, provider, projectId })),
       harnesses: adapters.map(({ id, label, configuration }) => ({ id, label, thinkingLevels: configuration?.thinkingLevels ?? [] })),
       models: (await Promise.all(adapters.map(async ({ id }) => (await listHarnessModels(id)).map(model => ({ ...model, harnessId: id }))))).flat(),
     };
   }
-  if (command.action === "projects") return { projects: (await listProjects()).map(({ id, name }) => ({ id, name })) };
+  if (command.action === "projects") return { projects: (await listProjects()).filter(project => !scope || scope.projects.has(project.id)).map(({ id, name }) => ({ id, name })) };
   if (command.action === "sessions") {
     const project = await getProject(command.projectId);
     if (!project) throw new WebhookError(404, "Project not found on this machine");
@@ -407,9 +444,9 @@ const transferring = new Set<string>();
 async function transferWebhook(command: Extract<Command, { action: "transfer" }>) {
   const db = await clusterV2Database(), local = await getClusterNode();
   if (command.nodeId === local.id) throw new WebhookError(400, "Choose a different machine");
-  if (!(await twinOwners()).some(peer => peer.id === command.nodeId)) throw new WebhookError(403, "Choose an active cluster twin");
   const hook = getWebhook(db, command.id);
   if (!hook) throw new WebhookError(404, "Webhook not found");
+  if (!(await listRuntimePeers(hook.target.projectId)).some(peer => peer.id === command.nodeId)) throw new WebhookError(403, "Choose a machine sharing this webhook's project");
   assertAutomationCreator(hook.creatorAccountId, command.creatorAccountId);
   ensureAutomationExecutionSchema(db);
   if (transferring.has(hook.id) || webhookDeliveryPending(hook.id) || db.prepare("SELECT 1 FROM automation_executions WHERE source_kind='webhook' AND source_id=? AND status IN ('queued','running') LIMIT 1").get(hook.id)) throw new WebhookError(409, "Wait for active webhook runs to finish before transferring");
@@ -428,15 +465,11 @@ async function transferWebhook(command: Extract<Command, { action: "transfer" }>
   } finally { transferring.delete(hook.id); }
 }
 
-async function twinOwners() {
-  const db = await clusterV2Database(), local = await getClusterNode();
-  return (await listRuntimePeers()).filter(peer => isTrustedTwin(db, local.id, peer.id));
-}
-
-/** This machine and the twins that may own webhooks, as the Webhooks settings and the control center's automations list them. */
-export async function webhookOwners(): Promise<Array<{ id: string; name: string; local: boolean }>> {
-  const local = await getClusterNode();
-  return [{ id: local.id, name: local.name, local: true }, ...(await twinOwners()).map(({ id, name }) => ({ id, name, local: false }))];
+/** Owners visible through the project's cluster, workspace or direct sharing grants. */
+export async function webhookOwners(projectId?: string): Promise<Array<{ id: string; name: string; local: boolean; twin: boolean }>> {
+  const local = await getClusterNode(), db = await clusterV2Database();
+  if (projectId && !await getProject(projectId)) throw new WebhookError(404, "Project not found");
+  return [{ id: local.id, name: local.name, local: true, twin: false }, ...(await listRuntimePeers(projectId)).map(({ id, name }) => ({ id, name, local: false, twin: isTrustedTwin(db, local.id, id) }))];
 }
 
 const route = (request: Request, command: Command): Promise<unknown> => runWebhookCommand(z.string().uuid().optional().parse(request.query.nodeId), command);
@@ -452,8 +485,10 @@ export async function runWebhookCommand(nodeId: string | undefined, command: Com
 async function dispatchWebhookCommand(nodeId: string | undefined, command: Command): Promise<unknown> {
   const local = await getClusterNode();
   if (!nodeId || nodeId === local.id) return manage(command);
-  const peer = (await twinOwners()).find(peer => peer.id === nodeId);
-  if (!peer) throw new WebhookError(403, "Webhook owner must be this machine or an active twin");
+  const projectId = "input" in command ? command.input.target.projectId : command.action === "install-transfer" ? command.bundle.input.target.projectId : "projectId" in command ? command.projectId : undefined;
+  const peer = (await listRuntimePeers()).find(peer => peer.id === nodeId);
+  if (!peer) throw new WebhookError(403, "Webhook owner is unavailable or does not share this project");
+  if (projectId && !isTrustedTwin(await clusterV2Database(), local.id, nodeId) && !(await listRuntimePeers(projectId)).some(candidate => candidate.id === nodeId)) throw new WebhookError(403, "Webhook project is not shared with this machine");
   const target = "/api/cluster/v2/webhooks", body = Buffer.from(JSON.stringify(command));
   try {
     const timeout = isWebhookResourceCommand(command) || command.action === "transfer" || command.action === "install-transfer" ? 210_000 : 10_000;
@@ -472,13 +507,15 @@ async function dispatchWebhookCommand(nodeId: string | undefined, command: Comma
 }
 
 app.post("/api/cluster/v2/webhooks", handle(async (request, response) => {
-  const db = await clusterV2Database(), local = await getClusterNode();
-  if (response.locals.machineProtocol !== 2 || !isTrustedTwin(db, local.id, response.locals.machineNodeId)) throw new WebhookError(403, "Only active twins may manage webhooks");
-  response.json(await manage(commandSchema.parse(request.body)));
+  const peerId = response.locals.machineNodeId;
+  if (response.locals.machineProtocol !== 2 || !(await listRuntimePeers()).some(peer => peer.id === peerId)) throw new WebhookError(403, "Only machines sharing a project may manage webhooks");
+  const command = commandSchema.parse(request.body);
+  if (["create", "update", "install-transfer"].includes(command.action) && !await peerMayRunHere(peerId)) throw new WebhookError(403, "This node does not accept runs from other nodes");
+  response.json(await manage(command, await webhookPeerScope(peerId)));
 }));
 
 app.get("/api/webhooks/owners", handle(async (_request, response) => {
-  response.json({ owners: await webhookOwners() });
+  response.json({ owners: await webhookOwners(z.string().min(1).optional().parse(_request.query.projectId)) });
 }));
 app.get("/api/webhooks/profiles", handle(async (request, response) => {
   response.json(await route(request, { action: "profiles" }));

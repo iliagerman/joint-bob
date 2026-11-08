@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.244.0 — 2026-11-08
+
+- Allowed webhooks to run on and transfer to machines sharing their project through a cluster, workspace or project grant, including relay hosts, while keeping unrelated projects and private credentials inaccessible.
+- Made scheduled tasks respect remote execution permissions when Run now is requested on another machine.
+
 ## 2.243.0 — 2026-11-08
 
 - Bob's chat keeps your place when you dismiss, snooze or answer an item, instead of jumping to the newest message. It still follows new messages while you are at the bottom, and goes to the end when you send something or change a filter.

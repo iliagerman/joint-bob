@@ -149,8 +149,8 @@ app.post("/api/cluster/cron", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const command = commandSchema.parse(request.body);
-    // Hosting a scheduled task is running on this node; listing, running, deleting and reading history of existing ones is not.
-    if (["create", "install", "update"].includes(command.action) && !await peerMayRunHere(response.locals.machineNodeId)) { sendError(response, 403, "This node does not accept runs from other nodes"); return; }
+    // Hosting a schedule or triggering a run requires execution permission; reading and deleting do not.
+    if (["create", "install", "update", "run"].includes(command.action) && !await peerMayRunHere(response.locals.machineNodeId)) { sendError(response, 403, "This node does not accept runs from other nodes"); return; }
     response.json(await manageCron(command));
   } catch (error) { next(error); }
 });

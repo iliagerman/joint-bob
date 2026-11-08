@@ -68,12 +68,19 @@ const transferButton = makeTwoStepButton({ label: "Transfer to selected machine"
 machineLabel.after(transferButton);
 field.owner.closest("label").title = "Filter webhooks by their owner machine. Choose or transfer a machine inside the webhook editor.";
 
-function renderMachine() {
-  machineSelect.replaceChildren(...[...field.owner.options].map(option => new Option(option.textContent, option.value)));
-  machineSelect.value = field.owner.value;
-  machineSelect.disabled = Boolean(assistantTarget);
+const ownerLabel = owner => `${owner.name} (${owner.local ? "this machine" : owner.twin ? "twin" : "shared machine"})`;
+let machineRevision = 0;
+async function renderMachine() {
+  const revision = ++machineRevision;
+  machineSelect.disabled = true;
   transferButton.hidden = !editing;
   transferButton.disabled = true;
+  const { owners } = await api(`/api/webhooks/owners?projectId=${encodeURIComponent(field.project.value)}`);
+  if (revision !== machineRevision) return;
+  machineSelect.replaceChildren(...owners.map(owner => new Option(ownerLabel(owner), owner.id)));
+  if (!owners.some(owner => owner.id === field.owner.value)) machineSelect.add(new Option("Unavailable owner", field.owner.value));
+  machineSelect.value = field.owner.value;
+  machineSelect.disabled = Boolean(assistantTarget);
 }
 
 async function transferToMachine() {
@@ -175,7 +182,7 @@ function setEnabled(hook, enabled) {
   return run(async () => {
     await api(endpoint(`/${hook.id}`), { method: "PUT", body: hookBody(hook, { enabled }) });
     await refresh();
-    if (editing?.id === hook.id) { syncEditing(); field.enabled.checked = editing.enabled; renderDetailHead(); }
+    if (editing?.id === hook.id) { syncEditing(); field.enabled.checked = editing.enabled; await renderDetailHead(); }
   });
 }
 
@@ -464,8 +471,8 @@ function showTab(name) {
   });
 }
 
-function renderDetailHead() {
-  renderMachine();
+async function renderDetailHead() {
+  await renderMachine();
   byId("webhooksDetailTitle").textContent = editing?.name ?? "New webhook";
   byId("webhooksDetailState").replaceChildren(...(editing ? [makeBadge(editing.enabled ? "On" : "Off", editing.enabled ? "ok" : "")] : []));
   const actions = byId("webhooksDetailActions");
@@ -510,7 +517,7 @@ async function openDetail(hook = null, tab = "setup") {
     byId("webhooksCountFiles").textContent = "…";
     byId("webhooksCountSkills").textContent = "…";
     byId("webhooksMemoryDot").hidden = true;
-    renderDetailHead();
+    await renderDetailHead();
     renderLiveTabs();
     listSection.hidden = true;
     form.hidden = false;
@@ -627,7 +634,7 @@ async function submit() {
       await refresh();
       syncEditing();
       await fillFields(editing);
-      renderDetailHead();
+      await renderDetailHead();
       say("Saved.", "ok");
     } else {
       const created = await api(endpoint(), { method: "POST", body });
@@ -638,7 +645,7 @@ async function submit() {
       dirty = false;
       updateSavebar();
       files.attach(created.webhook);
-      renderDetailHead();
+      await renderDetailHead();
       renderLiveTabs();
       loadedTabs.delete("skills");
       loadedTabs.delete("memory");
@@ -686,6 +693,7 @@ function wire() {
       const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`);
       await tagPicker.setWorkspace(project.project.type ?? "personal");
       tagPicker.setValue({ managedTagIds: [], manualTags: [] });
+      await renderMachine();
     } catch (error) { say(errorText(error), "error"); }
   });
   field.save.addEventListener("click", () => void submit());
@@ -701,9 +709,9 @@ export async function loadWebhooks() {
     closeDetail();
     say("");
     try {
-      const { owners } = await api("/api/webhooks/owners");
+      const { owners } = await api(`/api/webhooks/owners${projectTarget ? `?projectId=${encodeURIComponent(projectTarget.id)}` : ""}`);
       const selected = field.owner.value;
-      field.owner.replaceChildren(...owners.map(owner => new Option(owner.local ? `${owner.name} (this machine)` : `${owner.name} (twin)`, owner.id)));
+      field.owner.replaceChildren(...owners.map(owner => new Option(ownerLabel(owner), owner.id)));
       if (selected) {
         // Revocation must not silently turn a remote selection into local creation.
         if (!owners.some(owner => owner.id === selected)) field.owner.add(new Option("Unavailable owner", selected));
