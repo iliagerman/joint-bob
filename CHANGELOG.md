@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.239.0 — 2026-11-08
+
+- Every running conversation on the control center's board is marked **Running** on top of its card, in green with a ring that turns, so you can see at a glance which ones are still working. It stays while the agent works or its background tasks run, and keeps turning smoothly as the board refreshes.
+
 ## 2.238.2 — 2026-11-08
 
 - Settings shows the **Background agent** choice again. 2.238.0 removed it from the page by mistake, along with the checks that rely on it.
