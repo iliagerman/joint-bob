@@ -103,14 +103,19 @@ function render() {
 }
 
 async function load() {
+  const asked = projectId;
   data = null;
   render();
-  if (!projectId) return;
+  if (!asked) return;
+  let loaded = null;
   try {
-    data = await api(`/api/control-center/overview?project=${encodeURIComponent(projectId)}`);
+    loaded = await api(`/api/control-center/overview?project=${encodeURIComponent(asked)}`);
   } catch (error) {
     toast(error.message);
   }
+  // Another project was picked while this one loaded: its answer must not be shown, or its rows would open under the new one.
+  if (asked !== projectId) return;
+  data = loaded;
   render();
 }
 
