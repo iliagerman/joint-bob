@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.240.1 — 2026-11-08
 
 - Included the quality analytics page in the offline app assets so releases pass packaging checks.
 
