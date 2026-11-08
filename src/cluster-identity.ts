@@ -94,12 +94,17 @@ export function pinnedClusterPublicKey(db: DatabaseSync, nodeId: string): string
 }
 
 /** The local node's signing key, decrypted (the file sync worker receives it as a KeyObject). */
+// Every signed request needs the private key; it is decrypted and parsed once per stored value.
+const keptPrivateKeys = new WeakMap<DatabaseSync, { encrypted: string; key: KeyObject }>();
 export function clusterPrivateKey(db: DatabaseSync, nodeId: string): KeyObject {
   assertNodeId(nodeId);
   const row = db.prepare("SELECT node_id, private_key_encrypted FROM cluster_v2_identity WHERE singleton = 1").get() as Pick<IdentityRow, "node_id" | "private_key_encrypted"> | undefined;
   if (!row || row.node_id !== nodeId) throw new Error("Local cluster identity does not match node ID");
+  const kept = keptPrivateKeys.get(db);
+  if (kept?.encrypted === row.private_key_encrypted) return kept.key;
   const privateKey = createPrivateKey(decryptSecretValue(row.private_key_encrypted));
   if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("Stored cluster private key is invalid");
+  keptPrivateKeys.set(db, { encrypted: row.private_key_encrypted, key: privateKey });
   return privateKey;
 }
 

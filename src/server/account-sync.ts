@@ -11,6 +11,7 @@ import { peerAway } from "../peer-presence.js";
 import { refreshLocalAccountIds } from "../auth.js";
 import { migrateAccountKeys, remapAccountKey } from "../account-keys.js";
 import { accountClusterIds } from "../cluster-accounts.js";
+import { ensureRelaySharingGroupSchema, relayPeerRequestAllowed } from "../relay/sharing-groups.js";
 
 /** Keeps local account ids current (pairing twins changes them) and moves per-person
     rows along, then runs the one-time move from usernames to account ids. */
@@ -33,7 +34,11 @@ export async function flushAccountReplication(force = false): Promise<void> {
   try {
     await syncLocalAccountIds();
     const db = await clusterV2Database(), local = await getClusterNode();
-    const peers = presentReplicationPeers(db, local.id);
+    // A relay box shares only the relay's group with this node, and by design refuses accounts
+    // from it (401). Asking every 15 s anyway filled both nodes' logs; send only where the peer
+    // would accept, by the same rule it applies.
+    ensureRelaySharingGroupSchema(db);
+    const peers = presentReplicationPeers(db, local.id).filter((peer) => relayPeerRequestAllowed(db, local.id, peer.nodeId, "/api/cluster/v2/accounts/offline-mfa"));
     for (const due of accountSnapshotsDue(db, local.id, peers.map((peer) => peer.nodeId))) {
       const peer = peers.find((row) => row.nodeId === due.peer)!;
       try {

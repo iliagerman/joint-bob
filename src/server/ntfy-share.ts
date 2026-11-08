@@ -7,6 +7,7 @@ import { getNtfyService, importNewerNtfyService, type NtfyService } from "../ntf
 import { settingsDatabase } from "../settings-store.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
 import { pulledNtfyService } from "./schemas.js";
+import { ensureRelaySharingGroupSchema, relayPeerRequestAllowed } from "../relay/sharing-groups.js";
 
 /**
  * ntfy service sharing is event driven: nothing runs on a timer. The sharing node pushes
@@ -139,7 +140,9 @@ export async function syncNtfyServiceShares(): Promise<void> {
   syncing = true;
   try {
     const cluster = await clusterV2Database(), local = await getClusterNode();
-    await Promise.all(replicationPeers(cluster, local.id).map(async (peer) => {
+    // Only peers that would accept the request: a relay box refuses it by design.
+    ensureRelaySharingGroupSchema(cluster);
+    await Promise.all(replicationPeers(cluster, local.id).filter((peer) => relayPeerRequestAllowed(cluster, local.id, peer.nodeId, "/api/cluster/v2/ntfy/services/pull")).map(async (peer) => {
       try {
         const reply = await signedPeerPost(peer, "/api/cluster/v2/ntfy/services/pull", {}) as { services?: unknown };
         for (const service of Array.isArray(reply.services) ? reply.services : []) {

@@ -11,7 +11,7 @@ import {
   ResourceSharingError, acknowledgeResourcePolicyDelivery, applyResourcePolicy,
   deleteSharedResource, ensureResourceSharingSchema, getResourcePolicyState,
   listResourcePolicyDeliveries, mayForwardResourceContext, queueResourcePolicyBootstrap,
-  registerLocalSharingResource, updateResourceSharing, type PolicyBody,
+  registerLocalSharingResource, resourcePolicyDeliveryIsCurrent, updateResourceSharing, type PolicyBody,
 } from "../src/cluster-sharing.js";
 
 const A="00000000-0000-4000-8000-000000000001", B="00000000-0000-4000-8000-000000000002";
@@ -127,4 +127,17 @@ test("project revocation permanently prunes that context's secret scope",()=>{
     applyResourcePolicy(receiver,B,A,{body,signature:signClusterMessage(owner,A,"resource-policy",JSON.stringify(body))});
     assert.deepEqual(listResourceShares(receiver,"secret","s"),[{clusterId:Y,projectId:null}]);
   } finally { owner.close(); receiver.close(); }
+});
+
+// A revocation that a later statement for the same context replaced was refused by the peer as
+// stale (409) and retried every 2 s for days.
+test("an unshare replaced by a later statement for the same context is no longer delivered",()=>{
+  const value=db(A); try { topology(value); setAutoShareProjects(value,X,A,true);
+    registerLocalSharingResource(value,A,{kind:"project",id:"p"});
+    updateResourceSharing(value,A,"project","p",1,[]);
+    const unshare=delivery(value,B,"project","unshare");
+    assert.equal(resourcePolicyDeliveryIsCurrent(value,A,unshare.statement),true,"the latest statement for its context still needs delivering");
+    updateResourceSharing(value,A,"project","p",2,[{clusterId:X,projectId:null}]);
+    assert.equal(resourcePolicyDeliveryIsCurrent(value,A,unshare.statement),false,"the share that followed replaced it");
+  } finally { value.close(); }
 });

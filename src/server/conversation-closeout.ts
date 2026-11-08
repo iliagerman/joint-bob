@@ -10,7 +10,7 @@ import { listProposals, normalizedRuleText, readNotes, readSubjects, writePropos
 import { withProjectRuntime } from "../project-runtime.js";
 import { listProjects } from "../store.js";
 import type { ProjectRecord } from "../types.js";
-import { closeoutModels } from "./closeout-models.js";
+import { CloseoutUnavailableError, closeoutModels } from "./closeout-models.js";
 import { loadConversationMessages } from "./conversation-turns.js";
 import { harnessSessions, harnessSessionBusy } from "./harness-sessions.js";
 import { broadcastToProject } from "./realtime.js";
@@ -47,6 +47,38 @@ function proposeLessons(project: ProjectRecord, id: string, rules: Awaited<Retur
   }
 }
 
+/**
+ * When the hourly sweep may try a failed closeout again. Each sweep used to retry every failed
+ * one (about 500 on the homeserver), rewriting and replicating its record and logging each
+ * time. A failure now waits an hour, doubling up to a week; one that needs a Settings change
+ * (no decision model or key) waits a day at a time. A new rating or reopen is a new revision
+ * and starts afresh, and a closeout asked for by hand always runs.
+ */
+const RETRY_FIRST_MS = 3_600_000;
+const RETRY_LONGEST_MS = 7 * 86_400_000;
+const RETRY_UNAVAILABLE_MS = 86_400_000;
+const retries = new Map<string, { revision: string; failures: number; nextAt: number; message: string }>();
+function noteFailure(id: string, record: CloseoutRecord, error: unknown, message: string): { first: boolean } {
+  const kept = retries.get(id);
+  const failures = kept?.revision === record.revision ? kept.failures + 1 : 1;
+  const wait = error instanceof CloseoutUnavailableError ? RETRY_UNAVAILABLE_MS : Math.min(RETRY_FIRST_MS * 2 ** (failures - 1), RETRY_LONGEST_MS);
+  retries.set(id, { revision: record.revision, failures, nextAt: Date.now() + wait, message });
+  return { first: kept?.revision !== record.revision || kept.message !== message };
+}
+function retryDue(id: string, record: CloseoutRecord, now: number): boolean {
+  const kept = retries.get(id);
+  if (!kept || kept.revision !== record.revision) {
+    // A failure stored before this process started waits one interval like a fresh one, so a
+    // restart does not retry every failed closeout at once.
+    retries.set(id, { revision: record.revision, failures: 1, nextAt: now + RETRY_FIRST_MS, message: record.error ?? "" });
+    return false;
+  }
+  return kept.nextAt <= now;
+}
+
+/** Clears what the sweep remembers about failures (tests start from a fresh process this way). */
+export function forgetCloseoutRetries(): void { retries.clear(); }
+
 /** Never let an older inference overwrite a new rating or a reopen. Errors remain visible and retryable. */
 export function finishConversationCloseout(project: ProjectRecord, id: string, record: CloseoutRecord, runtime: CloseoutRuntime = realRuntime): Promise<string | undefined> {
   const previous = running.get(id);
@@ -59,6 +91,7 @@ export function finishConversationCloseout(project: ProjectRecord, id: string, r
 
 async function processCloseout(project: ProjectRecord, id: string, record: CloseoutRecord, runtime: CloseoutRuntime): Promise<string | undefined> {
   const current = async () => (await sessionFeedbackOverrides())[id]?.revision === record.revision && Boolean((await sessionDoneOverrides())[id]);
+  let changed = true;
   try {
     if (!await current()) return;
     const transcript = await runtime.load(project, id);
@@ -78,13 +111,16 @@ async function processCloseout(project: ProjectRecord, id: string, record: Close
     }
     if (result.rules.length) proposeLessons(project, id, result.rules);
     await setSessionFeedback(id, { ...record, feedback: { rating: result.rating, description: result.description }, status: "complete", error: undefined });
+    retries.delete(id);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Conversation feedback failed";
-    if (await current()) await setSessionFeedback(id, { ...record, status: "error", error: message });
-    console.warn(`Conversation feedback failed for ${id}: ${message}`);
+    // The same error on the same revision is already stored and shown: writing it again only replicated it.
+    changed = record.status !== "error" || record.error !== message;
+    if (changed && await current()) await setSessionFeedback(id, { ...record, status: "error", error: message });
+    if (noteFailure(id, record, error, message).first) console.warn(`Conversation feedback failed for ${id}: ${message}`);
     return message;
   } finally {
-    broadcastToProject(project.id, { type: "sessionsChanged" });
+    if (changed) broadcastToProject(project.id, { type: "sessionsChanged" });
   }
 }
 
@@ -99,7 +135,9 @@ async function localOwner(projectId: string, engine: string, id: string, nodeId:
 async function closeInactiveProject(project: ProjectRecord, nodeId: string, now: number): Promise<void> {
   const feedback = await sessionFeedbackOverrides();
   for (const [id, record] of Object.entries(feedback)) {
-    if (record.projectId !== project.id || record.status === "complete" || busy(project.id, id) || !await localOwner(project.id, record.engine, id, nodeId)) continue;
+    if (record.projectId !== project.id || record.status === "complete" || busy(project.id, id)) continue;
+    if (record.status === "error" && !retryDue(id, record, now)) continue;
+    if (!await localOwner(project.id, record.engine, id, nodeId)) continue;
     await finishConversationCloseout(project, id, record);
   }
   const done = await sessionDoneOverrides();

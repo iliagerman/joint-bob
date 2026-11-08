@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isInternalSession } from "./internal-sessions.js";
+import { withResourcePass } from "./resource-pass.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { parseJsonlSkippingDamage } from "./jsonl.js";
 import { mkdtemp, open, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
@@ -713,6 +714,8 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
       const blocked = blockedSkillNames("pi", scope);
       const account = actingAccount();
       const policy = account ? await (await import("./personal-assistants.js")).personalAssistantSettings(account.accountId, options.projectId, "pi", conversationId) : undefined;
+      // Everything below is synchronous: one pass reads the shared resource state once.
+      return withResourcePass(() => {
       const native = Object.fromEntries(Object.entries(activeMcpServers("pi", nativeMcpServerConfigs()))
         .filter(([name]) => !policy || policy.mcpServerNames === null || policy.mcpServerNames.includes(name))) as Record<string, ManagedMcpServer>;
       return {
@@ -729,6 +732,7 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
         managedSkillRoot: agentResourcePaths().sharedSkills,
         blockedSkillNames: blocked,
       };
+      });
     },
     guardian: async (conversationId, request) => {
       const { checkGuardian } = await import("./guardian/check.js");

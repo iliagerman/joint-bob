@@ -65,3 +65,30 @@ test("scoped credential sharing accepts every secret provider", async () => {
     assert.ok(parsed.success, `${provider}: ${parsed.success ? "" : parsed.error.message}`);
   }
 });
+
+// A summary or closeout on the conversation's own model ran at the agent's default effort,
+// which that model may not offer (zai/glm-5.3-flash: low, high, max), and failed outright.
+test("a run on another model takes the nearest effort that model offers", async () => {
+  const { nearestReasoning } = await import("../src/server/git-review-run.js");
+  assert.equal(nearestReasoning(["low", "high", "max"], "medium"), "high", "the next higher effort first");
+  assert.equal(nearestReasoning(["off", "low"], "high"), "low", "else the next lower one");
+  assert.equal(nearestReasoning(["low", "medium"], "medium"), "medium", "an offered effort is kept");
+});
+
+// launchd appends to these files and nothing trimmed them: node.error.log reached 240 MB.
+test("a service log past its limit keeps its newest whole lines and starts over", async () => {
+  const { appendFile, mkdtemp, readFile, rm, stat, writeFile } = await import("node:fs/promises");
+  const { trimServiceLogs } = await import("../src/server/service-logs.js");
+  const dir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-service-logs-"));
+  try {
+    await writeFile(path.join(dir, "node.error.log"), Array.from({ length: 400 }, (_, index) => `line ${index}`).join("\n") + "\n");
+    await writeFile(path.join(dir, "node.log"), "short\n");
+    assert.deepEqual(await trimServiceLogs(dir, 1_000, 100), ["node.error.log"]);
+    assert.equal((await stat(path.join(dir, "node.error.log"))).size, 0, "the open log starts over in place");
+    const kept = await readFile(path.join(dir, "node.error.log.1"), "utf8");
+    assert.ok(kept.startsWith("line ") && kept.endsWith("line 399\n"), `the newest whole lines are kept: ${kept}`);
+    assert.equal(await readFile(path.join(dir, "node.log"), "utf8"), "short\n", "a log within its limit is left alone");
+    await appendFile(path.join(dir, "node.error.log"), "after\n");
+    assert.equal(await readFile(path.join(dir, "node.error.log"), "utf8"), "after\n");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

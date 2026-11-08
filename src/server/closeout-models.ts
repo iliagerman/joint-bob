@@ -33,15 +33,21 @@ const draftSchema = z.object({
   rules: z.array(z.object({ subject: z.string().refine(isKnowledgeSlug), text: z.string().trim().min(1).max(320), evidence: z.string().trim().min(1).max(240) }).strict()).max(3),
 }).strict();
 
+/** A closeout that cannot succeed until Settings change (no decision model, no key for it), or
+    ever (too long for it). Retrying it every sweep only repeated the same failure. */
+export class CloseoutUnavailableError extends Error {}
+
 async function decision(project: ProjectRecord, data: object, question: SystemOneQuestion): Promise<string> {
   const config = activeRoutingConfig(routingConfigDatabase(), resourceOwner("project", project.id));
   const classifier = getDifficultyClassifier(config?.policy.classifierId ?? "typesafe");
-  if (!classifier || !["typesafe", "laya"].includes(classifier.id)) throw new Error("No supported decision model configured for conversation feedback");
+  if (!classifier || !["typesafe", "laya"].includes(classifier.id)) throw new CloseoutUnavailableError("No supported decision model configured for conversation feedback");
   const key = genericSecretEnvironment(project.id)[classifier.variableName] ?? "";
+  if (classifier.id === "typesafe" && !key) throw new CloseoutUnavailableError(`Decision model unavailable for conversation feedback: no ${classifier.variableName} secret applies to this project`);
   const target = await decisionModelTarget(classifier.id as "typesafe" | "laya", key);
+  // Laya can be unreachable for a while; that is worth another try later.
   if (!target) throw new Error("Decision model unavailable for conversation feedback");
   const state = JSON.stringify(data);
-  if (state.length > target.target.stateCharacters) throw new Error("Conversation feedback exceeds the decision model's context limit");
+  if (state.length > target.target.stateCharacters) throw new CloseoutUnavailableError("Conversation feedback exceeds the decision model's context limit");
   const answer = await askSystemOneChoices(target.target, state, { verdict: question }, target.apiKey);
   if (!answer) throw new Error("Decision model did not return a conversation feedback verdict");
   return answer.verdict.choice;

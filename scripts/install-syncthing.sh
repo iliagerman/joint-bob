@@ -46,21 +46,56 @@ if [ -z "${managed_binary}" ]; then
   managed_binary="${BINARY}"
 fi
 
+# A Syncthing the person runs themselves (their own systemd unit, or the distribution's
+# syncthing@user unit) uses the same home and lock as ours. Installing ours next to it made
+# the two race for the lock at every boot; the loser restarted every 5 seconds for days.
+syncthing_home="${STHOME:-${XDG_STATE_HOME:-${HOME}/.local/state}/syncthing}"
+unit_dir="${HOME}/.config/systemd/user"
+other_syncthing_unit() {
+  systemctl --user is-enabled --quiet syncthing.service 2>/dev/null && { echo "user:syncthing.service"; return 0; }
+  systemctl is-enabled --quiet "syncthing@$(id -un).service" 2>/dev/null && { echo "system:syncthing@$(id -un).service"; return 0; }
+  return 1
+}
+syncthing_lock_held() {
+  command -v flock >/dev/null 2>&1 && [ -e "${syncthing_home}/syncthing.lock" ] && ! flock -n "${syncthing_home}/syncthing.lock" true
+}
+remove_managed_unit() {
+  [ -f "${unit_dir}/joint-bob-syncthing.service" ] || return 0
+  systemctl --user disable --now joint-bob-syncthing.service >/dev/null 2>&1 || true
+  rm -f "${unit_dir}/joint-bob-syncthing.service"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+}
+if [ "$(uname -s)" = Linux ]; then
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+  # An earlier install may have added ours next to the person's own: theirs stays.
+  if other_syncthing_unit >/dev/null; then remove_managed_unit; fi
+fi
+
+wait_seconds=30
 if ! "${managed_binary}" cli show system >/dev/null 2>&1; then
   case "$(uname -s)" in
     Linux)
-      export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-      export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
-      unit_dir="${HOME}/.config/systemd/user"
-      mkdir -p "${unit_dir}"
-      cat > "${unit_dir}/joint-bob-syncthing.service" <<UNIT
+      if other="$(other_syncthing_unit)" || syncthing_lock_held; then
+        # Theirs may be restarting (a self-upgrade takes about a minute): start it if it is
+        # the person's own unit, and wait for it rather than installing a second one.
+        remove_managed_unit
+        case "${other:-}" in user:*) systemctl --user start "${other#user:}" >/dev/null 2>&1 || true ;; esac
+        wait_seconds=90
+      else
+        mkdir -p "${unit_dir}"
+        cat > "${unit_dir}/joint-bob-syncthing.service" <<UNIT
 [Unit]
 Description=Joint Bob managed Syncthing
 After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 # Joint Bob pins the Syncthing version; a self-upgrade would make the next install reject it.
 Environment=STNOUPGRADE=1
+# Another Syncthing holding this account's lock means ours is not needed: skip, do not fail.
+ExecCondition=/bin/sh -c 'command -v flock >/dev/null || exit 0; lock="${syncthing_home}/syncthing.lock"; [ ! -e "\$\$lock" ] || flock -n "\$\$lock" true'
 ExecStart=${managed_binary} serve --no-browser --no-restart
 Restart=on-failure
 RestartSec=5
@@ -68,8 +103,9 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 UNIT
-      systemctl --user daemon-reload
-      systemctl --user enable --now joint-bob-syncthing.service
+        systemctl --user daemon-reload
+        systemctl --user enable --now joint-bob-syncthing.service
+      fi
       ;;
     Darwin)
       plist="${HOME}/Library/LaunchAgents/com.joint-bob.syncthing.plist"
@@ -84,7 +120,7 @@ PLIST
       launchctl bootstrap "gui/$(id -u)" "${plist}"
       ;;
   esac
-  for _ in {1..30}; do "${managed_binary}" cli show system >/dev/null 2>&1 && break; sleep 1; done
+  for ((waited = 0; waited < wait_seconds; waited++)); do "${managed_binary}" cli show system >/dev/null 2>&1 && break; sleep 1; done
 fi
 "${managed_binary}" cli show system >/dev/null 2>&1 || { echo "Managed Syncthing did not become ready" >&2; exit 1; }
 printf '%s\n' "$(dirname "${managed_binary}")"

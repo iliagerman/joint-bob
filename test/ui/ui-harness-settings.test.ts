@@ -31,15 +31,22 @@ test("slow harness metadata does not hide projects", { timeout: 120_000 }, async
   const { page, environment, node } = await nativeUiFixture(t);
   let releaseHarnesses!: () => void;
   const harnessGate = new Promise<void>((resolve) => { releaseHarnesses = resolve; });
-  const harnessRequest = page.waitForRequest("**/api/harnesses");
+  // The route says when the request reaches the gate. A waitForRequest made here would start its 20 s before the page loads and
+  // the person signs in, which a cold first run can take longer than, though no single step does.
+  let harnessHeld!: () => void;
+  const harnessRequest = new Promise<void>((resolve) => { harnessHeld = resolve; });
   await page.route("**/api/harnesses", async (route) => {
+    harnessHeld();
     await harnessGate;
     await route.continue();
   });
 
   try {
     await signIn(page, node.url, environment.username, environment.password);
-    await harnessRequest;
+    // The list asks for harness metadata as soon as the projects are loaded, so once they show the request is held at the gate.
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([harnessRequest, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("The page never asked for /api/harnesses")), 20_000); })])
+      .finally(() => clearTimeout(timer));
     await page.getByText("Internal Assistant", { exact: true }).waitFor();
   } finally {
     releaseHarnesses();

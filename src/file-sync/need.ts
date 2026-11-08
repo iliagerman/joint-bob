@@ -1112,9 +1112,10 @@ export class NeedEngine {
     if (!limit || !active.size) return result();
     const skip = (row: NeedRow & { share: string }) => !active.has(row.share) || row.nextAt > now || inFlight.has(`${row.share}\n${row.path}`);
     // One priority at a time, so no page ever walks a priority's deletes to reach the next one's creates.
+    const activeShares = [...active.keys()];
     for (let priority = db.nextNeedPriority(Number.MIN_SAFE_INTEGER); priority !== undefined && items.length < limit; priority = db.nextNeedPriority(priority)) {
-      for (let offset = 0; items.length < limit; offset += RECOMPUTE_CHUNK) {
-        const rows = db.needCreates(priority, offset, RECOMPUTE_CHUNK, options.actions);
+      for (let after = { size: Number.MIN_SAFE_INTEGER, share: "", path: "" }; items.length < limit;) {
+        const rows = db.needCreates(priority, after, RECOMPUTE_CHUNK, activeShares, now, options.actions);
         for (const row of rows) {
           if (items.length >= limit) break;
           if (skip(row)) continue;
@@ -1122,6 +1123,8 @@ export class NeedEngine {
           if (item) items.push(item);
         }
         if (rows.length < RECOMPUTE_CHUNK) break;
+        const last = rows.at(-1)!;
+        after = { size: last.target.size, share: last.share, path: last.path };
       }
       // Creates and updates of this priority are all behind us: its deletes go now, a folder's rows before the folder.
       if (items.length >= limit || options.actions === "fetch" || !db.hasNeedDeletes(priority)) continue;

@@ -8,6 +8,7 @@ import { getProject } from "./store.js";
 import { listTasks, updateTask } from "./tasks.js";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { resolveDataDirectory } from "./data-directory.js";
 import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
 import { inBackground, outsideBackground } from "./peer-presence.js";
@@ -28,6 +29,7 @@ import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { syncNtfyServiceShares } from "./server/ntfy-share.js";
 import { scheduleGitSourceUpdateChecks, syncGitResourceShares } from "./server/git-resources.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
+import { flushSharedTranscripts } from "./server/shared-transcripts.js";
 import { flushBudgetPolicies } from "./server/budgets.js";
 import { flushAccountReplication, flushBlockNotices, syncLocalAccountIds } from "./server/account-sync.js";
 import { getClusterNode } from "./cluster.js";
@@ -208,6 +210,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     };
     const flushClusterWork = (): void => {
       flush("administration", flushV2ClusterAdministration, "V2 cluster administration flush failed");
+      flush("transcripts", flushSharedTranscripts, "Shared transcript flush failed");
       flush("replication", flushReplicationOutbox, "Replication flush failed");
       flush("hubs", flushHubDeliveries, "Hub delivery failed");
       flush("succession", flushSuccessionNotices, "Succession notice delivery failed");
@@ -268,6 +271,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const sweepWorktreeFolders = (): void => { sweepWorktrees().catch((error) => console.warn("Worktree sweep failed", error)); };
     setTimeout(sweepWorktreeFolders, 5 * 60_000).unref();
     setInterval(sweepWorktreeFolders, 30 * 60_000).unref();
+    // The Mac's service logs (launchd's StandardOutPath/StandardErrorPath) are trimmed hourly.
+    const trimLogs = (): void => { import("./server/service-logs.js").then(({ trimServiceLogs }) => trimServiceLogs(path.join(resolveDataDirectory(), "logs"))).catch((error) => console.warn("Service log trim failed", error)); };
+    setTimeout(trimLogs, 60_000).unref();
+    setInterval(trimLogs, 60 * 60_000).unref();
     // Timers do not run while a machine sleeps. A tick this late means it slept: its view of
     // its peers is stale and they have stopped sending to it, so it says it is back.
     let lastTick = Date.now();

@@ -6,6 +6,7 @@ import { summaryPolicySchema, type SummaryPolicy } from "../conversation-summary
 import { guardianRelayPolicySchema, type GuardianRelayPolicy } from "../guardian/rules.js";
 import { encodeControl, MAX_FRAME } from "./protocol.js";
 import type { HarnessId } from "../types.js";
+import { readOncePerPass } from "../resource-pass.js";
 
 const rule = z.object({ action: z.enum(["enable", "block"]), name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/), harness: z.enum(["all", "pi", "claude", "kiro"]) }).strict();
 export const relaySkillRulesSchema = z.array(rule).max(512).refine((rules) => new Set(rules.map((item) => `${item.name}\0${item.harness}\0${item.action}`)).size === rules.length, "Duplicate relay rule");
@@ -100,6 +101,14 @@ export function receiveRelayPolicy(db: DatabaseSync, relay: RelayMembership, pub
  * so the legacy opted_in column is ignored.
  */
 export function relayPolicySubscriptions(db: DatabaseSync): Array<{ relay: RelayMembership; statement: SignedRelaySkillPolicy | null; updatedAt: string | null }> {
+  let id = databaseIds.get(db);
+  if (id === undefined) databaseIds.set(db, id = ++lastDatabaseId);
+  return readOncePerPass(`relay-policy-subscriptions:${id}`, () => readRelayPolicySubscriptions(db));
+}
+const databaseIds = new WeakMap<DatabaseSync, number>();
+let lastDatabaseId = 0;
+
+function readRelayPolicySubscriptions(db: DatabaseSync): Array<{ relay: RelayMembership; statement: SignedRelaySkillPolicy | null; updatedAt: string | null }> {
   schema(db);
   const rows = db.prepare("SELECT membership_id,statement,updated_at FROM relay_skill_subscriptions").all() as Array<{ membership_id: string; statement: string | null; updated_at: string | null }>;
   const byId = new Map(rows.map((row) => [row.membership_id, row]));

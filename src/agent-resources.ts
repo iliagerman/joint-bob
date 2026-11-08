@@ -16,6 +16,7 @@ import { allowSkillImport, receivedOwner, skillSuppressed, withSkillMutation } f
 import { emptyResourcePaths, getSettings, type ScopedResourcePaths } from "./settings.js";
 import { agentInstructionFiles, renderInstructions } from "./agent-instructions.js";
 import { projectFolderResources, withProjectFolderResources } from "./project-folder-resources.js";
+import { withResourcePass } from "./resource-pass.js";
 
 export const AGENT_RESOURCES_FOLDER_ID = "joint-bob-agent-resources";
 export const AGENT_RESOURCES_FOLDER_LABEL = "Joint Bob agent resources";
@@ -833,6 +834,10 @@ export function blockedPluginSkill(plugin: string, context: SkillScopeContext = 
 }
 
 export function claudeAgentResourceArgs(root?: string, scoped?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string[] {
+  return withResourcePass(() => claudeAgentResourceArgsNow(root, scoped, extraInstructions, cwd));
+}
+
+function claudeAgentResourceArgsNow(root?: string, scoped?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string[] {
   const strict = getSettings().strictResourceIsolation;
   // Strict launches load no setting source, so the CLI discovers no skill by itself and the app's copy is the only one.
   if (cwd && !strict) assertNoBlockedNativeSkills("claude", cwd, [path.join(getSettings().claude.configPath, "skills"), path.join(os.homedir(), ".agents/skills")], skillScopeContext(scoped));

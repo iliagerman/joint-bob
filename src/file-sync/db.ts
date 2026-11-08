@@ -131,6 +131,7 @@ export const MIGRATIONS: ReadonlyArray<string> = [
     t_sha256 TEXT, t_target TEXT, t_deleted INTEGER NOT NULL, t_version TEXT NOT NULL, t_modified_by TEXT NOT NULL,
     PRIMARY KEY(share, path));
   CREATE INDEX IF NOT EXISTS need_order ON need(blocked, priority, action = 'delete', t_size);
+  CREATE INDEX IF NOT EXISTS need_pick ON need(blocked, priority, action = 'delete', t_size, share, path);
   CREATE INDEX IF NOT EXISTS need_sha ON need(t_sha256);
   CREATE TABLE IF NOT EXISTS held(share TEXT NOT NULL, path TEXT NOT NULL, held_at INTEGER NOT NULL, PRIMARY KEY(share, path)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS expected(share TEXT NOT NULL, prefix TEXT NOT NULL, until INTEGER NOT NULL, PRIMARY KEY(share, prefix));
@@ -765,10 +766,18 @@ export class FileSyncDb {
    * Unblocked creates and updates of one priority, every share, in transfer order: smallest first (need_order).
    * `actions` keeps only downloads ("fetch") or only what is done on this disk ("local": folders, links, renames, metadata).
    */
-  needCreates(priority: number, offset: number, limit: number, actions?: "fetch" | "local"): SharedNeedRow[] {
+  /**
+   * One page of the due creates and updates of `shares`, after the row `after` in transfer order. Rows of
+   * shares that are not handed out right now (mid-pull) and rows waiting for a retry were read and skipped
+   * one page at a time, and every OFFSET page sorted the whole priority again: 112,000 held-back rows
+   * kept the worker busy 13 s per pass, so the peers' requests to it timed out. need_pick serves the
+   * order and the page boundary without sorting.
+   */
+  needCreates(priority: number, after: { size: number; share: string; path: string }, limit: number, shares: readonly string[], now: number, actions?: "fetch" | "local"): SharedNeedRow[] {
     const only = actions === "fetch" ? " AND action = 'fetch'" : actions === "local" ? " AND action <> 'fetch'" : "";
-    return (this.statement(`SELECT share, ${NEED_COLUMNS} FROM need WHERE blocked = 0 AND priority = ? AND (action = 'delete') = 0${only} ORDER BY t_size, share, path LIMIT ? OFFSET ?`)
-      .all(priority, limit, offset) as Row[]).map(toSharedNeed);
+    return (this.statement(`SELECT share, ${NEED_COLUMNS} FROM need INDEXED BY need_pick WHERE blocked = 0 AND priority = ? AND (action = 'delete') = 0${only}
+      AND (t_size, share, path) > (?, ?, ?) AND share IN (SELECT value FROM json_each(?)) AND next_at <= ? ORDER BY t_size, share, path LIMIT ?`)
+      .all(priority, after.size, after.share, after.path, JSON.stringify(shares), now, limit) as Row[]).map(toSharedNeed);
   }
 
   hasNeedDeletes(priority: number): boolean {

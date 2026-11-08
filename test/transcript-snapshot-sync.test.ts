@@ -298,6 +298,31 @@ test("a transcript transfer that is cut off resumes from the bytes already recei
   assert.deepEqual(await partials(f), [], "a finished transfer leaves no partial file");
 });
 
+// A conversation that grew on its owner was downloaded again from its first byte on every pull.
+test("a conversation that grew on its owner fetches only its new bytes, and a rewritten one is fetched whole", async (t) => {
+  const f = await fixture(t);
+  let content = f.content;
+  const ranges: string[] = [];
+  await owner(t, f, () => content, (request, response) => { ranges.push(request.header("range") ?? ""); response.end(ranged(request, response, Buffer.from(content))); });
+  await catchUpSharedTranscript(f.peer, "pi", f.sessionId);
+  assert.equal(await readFile(f.destination, "utf8"), content);
+
+  const installed = Buffer.byteLength(content);
+  content += JSON.stringify({ type: "message", id: "grown", parentId: "first", timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: "Later" }] } }) + "\n";
+  await catchUpSharedTranscript(f.peer, "pi", f.sessionId);
+  assert.equal(ranges.at(-1), `bytes=${installed}-${Buffer.byteLength(content) - 1}`, "only the appended bytes are asked for");
+  assert.equal(await readFile(f.destination, "utf8"), content);
+  assert.deepEqual(await partials(f), []);
+
+  // The owner rewrote its copy: the local one is no prefix of it, so the seeded transfer fails once, then the whole copy is fetched.
+  const local = Buffer.byteLength(content);
+  content = content.replace("Synthetic turn", "Rewritten turn") + JSON.stringify({ type: "message", id: "after", parentId: "grown", timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: "After" }] } }) + "\n";
+  await assert.rejects(catchUpSharedTranscript(f.peer, "pi", f.sessionId));
+  assert.equal(ranges.at(-1), `bytes=${local}-${Buffer.byteLength(content) - 1}`);
+  await catchUpSharedTranscript(f.peer, "pi", f.sessionId).catch(() => undefined);
+  assert.equal(ranges.at(-1), `bytes=0-${Buffer.byteLength(content) - 1}`, "a seed that was no prefix is not used again");
+});
+
 test("a kept partial transfer that no longer matches its owner's copy is dropped and fetched whole", async (t) => {
   const f = await fixture(t);
   const ranges: string[] = [];

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -107,10 +107,14 @@ test("Bob starts a task as a conversation, uses the agent the person names, cont
     assert.equal(withFiles.body.action, "started", JSON.stringify(withFiles.body));
     assert.equal(withFiles.body.user.text, "fix the logo in Joint Bob\n\nAttached: screen.png, notes.txt", "Bob's chat shows what was attached");
     const startedPrompt = await eventually(async () => (await prompts()).find((entry) => entry.prompt.includes("fix the logo")), "the new conversation got the brief");
+    // A queued image reaches the agent by its resolved path (src/queued-attachments.ts), so where the temporary folder is a link
+    // (macOS: /var -> /private/var) it is named under the real folder. Compare real paths.
+    const attachmentsFolder = await realpath(path.join(project.path, ".joint-bob-attachments"));
     for (const [name, bytes] of [["screen.png", "not really a png"], ["notes.txt", "the logo is too small"]]) {
       const saved = savedPath(startedPrompt.prompt, name);
-      assert.ok(saved?.startsWith(path.join(project.path, ".joint-bob-attachments")), `${name} is named in the prompt: ${startedPrompt.prompt}`);
-      assert.equal(await readFile(saved!, "utf8"), bytes, `${name} is saved in the project`);
+      assert.ok(saved, `${name} is named in the prompt: ${startedPrompt.prompt}`);
+      assert.equal(path.dirname(await realpath(saved)), attachmentsFolder, `${name} is in the project's attachments folder: ${saved}`);
+      assert.equal(await readFile(saved, "utf8"), bytes, `${name} is saved in the project`);
     }
     // Bob's agent answers with the stubbed Claude, which needs no model set up.
     assert.equal((await api(node, auth, "PUT", "/control-center/bob/settings", { harnessId: "claude" })).status, 200);

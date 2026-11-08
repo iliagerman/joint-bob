@@ -22,7 +22,16 @@ test.before(() => fs.mkdirSync(project, { recursive: true }));
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 test("only explicit local approvals promote project MCP; rejection and disable always win", (t) => {
-  t.mock.method(childProcess, "spawnSync", () => ({ status: 1, signal: null }));
+  // Whether the local settings are tracked is kept until the git index changes, as `git add` changes it.
+  const gitIndex = path.join(project, ".git", "index");
+  let indexRevision = 0;
+  const gitAnswers = (status: number) => {
+    write(gitIndex, "x".repeat(++indexRevision));
+    let calls = 0;
+    t.mock.method(childProcess, "spawnSync", () => { calls += 1; return { status, signal: null }; });
+    return () => calls;
+  };
+  const untrackedCalls = gitAnswers(1);
   write(path.join(project, ".mcp.json"), { mcpServers: Object.fromEntries(["approved", "pending", "rejected", "disabled"].map((name) => [name, { command: name }])) });
   write(path.join(project, ".claude/settings.json"), { enableAllProjectMcpServers: true });
   assert.deepEqual(supplied(claudeResourceIsolationArgs(project, [])), {});
@@ -33,15 +42,18 @@ test("only explicit local approvals promote project MCP; rejection and disable a
     assert.deepEqual(Object.keys(supplied(claudeResourceIsolationArgs(project, []))), ["approved"]);
     write(path.join(project, ".claude/settings.local.json"), { enableAllProjectMcpServers: true, disabledMcpjsonServers: ["rejected"] });
     assert.deepEqual(Object.keys(supplied(claudeResourceIsolationArgs(project, []))), ["approved", "pending"]);
-    t.mock.method(childProcess, "spawnSync", () => ({ status: 0, signal: null }));
+    const askedBefore = untrackedCalls();
+    assert.deepEqual(Object.keys(supplied(claudeResourceIsolationArgs(project, []))), ["approved", "pending"]);
+    assert.equal(untrackedCalls(), askedBefore, "git is not asked again while the index and the settings file are unchanged");
+    gitAnswers(0);
     assert.deepEqual(supplied(claudeResourceIsolationArgs(project, [])), {}, "tracked local settings cannot approve executables");
-    t.mock.method(childProcess, "spawnSync", () => ({ status: 128, signal: null }));
+    gitAnswers(128);
     assert.deepEqual(supplied(claudeResourceIsolationArgs(project, [])), {}, "indeterminate local settings cannot approve executables");
     const userSettings = path.join(getSettings().claude.configPath, "settings.json");
     write(userSettings, { enabledMcpjsonServers: ["approved", "rejected"] });
     try { assert.deepEqual(Object.keys(supplied(claudeResourceIsolationArgs(project, []))), ["approved"]); }
     finally { fs.rmSync(userSettings); }
-  } finally { fs.rmSync(config); fs.rmSync(path.join(project, ".claude"), { recursive: true }); fs.rmSync(path.join(project, ".mcp.json")); }
+  } finally { fs.rmSync(config); fs.rmSync(path.join(project, ".claude"), { recursive: true }); fs.rmSync(path.join(project, ".mcp.json")); fs.rmSync(path.join(project, ".git"), { recursive: true, force: true }); }
 });
 
 test("managed plugin MCP retains namespace, paths, environment expansion and inventory", async () => {

@@ -20,7 +20,6 @@ import { flushProjectMetadataDeliveries } from "./project-metadata.js";
 import { flushSharingFiles } from "./sharing-files.js";
 import { disconnectRevokedRuntimeSockets } from "./runtime-peers.js";
 import { flushScopedCredentials } from "./scoped-credentials.js";
-import { flushSharedTranscripts } from "./shared-transcripts.js";
 import { announceQuickNoteChanges } from "./shared-quick-notes.js";
 import { flushTwinCredentials } from "./replication-v2.js";
 import { peerAway } from "../peer-presence.js";
@@ -77,7 +76,8 @@ export async function flushV2ClusterAdministration(): Promise<void> {
     await flushProjectMetadataDeliveries();
     await flushSharingFiles();
     await flushTwinCredentials();
-    await flushSharedTranscripts();
+    // Shared transcripts flush on their own (server.ts): downloading them from a twin on a slow
+    // link kept this pass, and every delivery after it, running for minutes.
     await announceQuickNoteChanges();
     await flushScopedCredentials();
   } finally { flushing = false; }

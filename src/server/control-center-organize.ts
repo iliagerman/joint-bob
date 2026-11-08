@@ -144,10 +144,13 @@ async function worldFor(session: AuthSession): Promise<OrganizeWorld> {
     const [workspaces, projects, { cards }, here] = await Promise.all([listWorkspaces(), projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false }), loadBoard(session), getClusterNode()]);
     const onBoard = new Set(cards.map((card) => `${card.projectId}:${card.conversationId}`));
     // Every conversation on the board, and each project's most recent ones, so one the person names is there even when it is idle.
+    // A draft (no transcript listed yet) is left out unless it is on the board: a conversation whose first turn is running before
+    // its transcript is listed already has a card, and the person may name it at once.
     const listed = (await Promise.all(projects.map(async (project) => {
-      const sessions = (await sharedProjectSessions(project, session.userId, session.accountId)).filter((entry) => !entry.draft)
+      const shown = (entry: { id: string; conversationId?: string }) => onBoard.has(`${project.id}:${entry.conversationId ?? entry.id}`);
+      const sessions = (await sharedProjectSessions(project, session.userId, session.accountId)).filter((entry) => !entry.draft || shown(entry))
         .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
-      return sessions.filter((entry, index) => index < RECENT_PER_PROJECT || onBoard.has(`${project.id}:${entry.conversationId ?? entry.id}`))
+      return sessions.filter((entry, index) => index < RECENT_PER_PROJECT || shown(entry))
         .map((entry) => ({ projectId: project.id, projectName: project.name, engine: entry.harnessId, sessionId: entry.id, conversationId: entry.conversationId ?? entry.id, title: entry.title, nodeId: entry.executionNodeId && entry.executionNodeId !== here.id ? entry.executionNodeId : null }));
     }))).flat();
     return {

@@ -10,6 +10,7 @@ import { relaySkillDirective, relayResourceDirective, relayPolicyLabel, relayPol
 import { receivedOwnerSync } from "./skill-sharing-files.js";
 import { unavailableSkillNames, type SkillScopeContext } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
+import { readOncePerPass } from "./resource-pass.js";
 import { withoutReservedMcpServers } from "./assistant-collaboration/bridge-tools.js";
 
 export type ActivatableResource = "skill" | "plugin" | "mcp";
@@ -58,9 +59,10 @@ export function receivedResource(kind: "plugin" | "mcp", name: string): boolean 
   if (settingsDatabase().prepare("SELECT 1 FROM received_resource_activation WHERE kind=? AND name=?").get(kind, name)) return true;
   // Older installations already had received Git resources before this table existed.
   try {
-    const store = JSON.parse(readFileSync(path.join(resolveDataDirectory(), "git-resources", "sources.json"), "utf8")) as {
+    const file = path.join(resolveDataDirectory(), "git-resources", "sources.json");
+    const store = readOncePerPass(`git-resource-sources:${file}`, () => JSON.parse(readFileSync(file, "utf8")) as {
       sources?: Array<{ ownerNodeId?: string | null; installed?: Array<{ kind: string; name: string }> }>;
-    };
+    });
     return store.sources?.some((source) => Boolean(source.ownerNodeId) && source.installed?.some((item) => item.kind === kind && (kind === "plugin" ? item.name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^\.+/, "_") : item.name) === name)) ?? false;
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
 }

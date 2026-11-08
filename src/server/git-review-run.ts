@@ -1,6 +1,6 @@
 import { prepareBackgroundTurn } from "./background-turn.js";
 import { internalSessionId } from "../internal-sessions.js";
-import { getHarness, getHarnessRuntime, listHarnessSessions } from "../harnesses.js";
+import { getHarness, getHarnessRuntime, listHarnessModels, listHarnessSessions } from "../harnesses.js";
 import { listConversationSegments } from "../conversation-records.js";
 import { conversationScopeId, getScopeSecretAccounts } from "../secrets.js";
 import { readOnlyChatTools } from "../read-only-tools.js";
@@ -122,6 +122,33 @@ function collectAnswer(events: HarnessEvent[]): string {
  * returns the model's answer. The session is disposed before returning, so it never joins
  * the project's live conversations.
  */
+const REASONING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * The effort to use when the caller named a model but no effort. The agent's default effort
+ * belongs to its default model; another model may not offer it (zai/glm-5.3-flash has low, high
+ * and max, not medium), and the run then failed outright. The nearest effort the model offers
+ * is used instead, the next higher one first.
+ */
+async function supportedReasoning(input: RunGitReviewInput, fallback: string): Promise<string> {
+  if (!input.modelId || !fallback) return fallback;
+  let levels: string[] | undefined;
+  try {
+    levels = (await listHarnessModels(input.harnessId)).find((model) => model.id === input.modelId && (!input.provider || model.provider === input.provider))?.thinkingLevels;
+  } catch { return fallback; }
+  return levels?.length ? nearestReasoning(levels, fallback) : fallback;
+}
+
+/** The wanted effort when the model offers it, else the nearest one it does, the next higher one first. */
+export function nearestReasoning(levels: string[], wanted: string): string {
+  if (levels.includes(wanted)) return wanted;
+  const at = REASONING_ORDER.indexOf(wanted);
+  if (at < 0) return wanted;
+  return REASONING_ORDER.slice(at + 1).find((level) => levels.includes(level))
+    ?? [...REASONING_ORDER.slice(0, at)].reverse().find((level) => levels.includes(level))
+    ?? wanted;
+}
+
 export async function runGitReview(input: RunGitReviewInput): Promise<RunGitReviewResult> {
   if (input.useTools && input.readOnlyTools) throw new Error("useTools and readOnlyTools are exclusive");
   const adapter = getHarness(input.harnessId);
@@ -151,7 +178,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
       ...base,
       provider: input.provider || base.provider,
       modelId: input.modelId || base.modelId,
-      reasoning: input.thinkingLevel || base.reasoning,
+      reasoning: input.thinkingLevel || await supportedReasoning(input, base.reasoning),
     };
     // Keep restrictions in the settings reapplied to every pool member.
     if (input.readOnlyTools) settings.enabledTools = readOnlyChatTools(input.harnessId);

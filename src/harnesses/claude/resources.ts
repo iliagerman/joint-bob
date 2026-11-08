@@ -32,11 +32,46 @@ function untrackedLocalSettings(cwd: string): boolean {
     catch (error) { if (missing(error)) return false; throw error; }
   }
   if (fs.existsSync(path.join(cwd, ".claude/.git")) || process.platform === "win32") return false;
+  // Whether a path is tracked is decided by the git index alone. Asking git blocked the event
+  // loop (up to 2 s, twice per Claude turn), so the answer is kept until the index or the
+  // settings file changes.
+  const key = trackedCheckKey(cwd);
+  const kept = trackedChecks.get(cwd);
+  if (key && kept?.key === key) return kept.untracked;
   const result = childProcess.spawnSync("/usr/bin/git", ["-c", "core.fsmonitor=false", "--no-optional-locks", "-C", cwd, "ls-files", "--error-unmatch", "--", ":(icase).claude/settings.local.json"], {
     encoding: "utf8", timeout: 2000,
     env: { ...process.env, GIT_LITERAL_PATHSPECS: "", GIT_TRACE2: "", GIT_TRACE2_PERF: "", GIT_TRACE2_EVENT: "" },
   });
-  return !result.error && result.signal === null && result.status === 1;
+  const untracked = !result.error && result.signal === null && result.status === 1;
+  // A timeout or a failed git says nothing about the index: never keep it.
+  if (key && !result.error && result.signal === null) trackedChecks.set(cwd, { key, untracked });
+  return untracked;
+}
+
+const trackedChecks = new Map<string, { key: string; untracked: boolean }>();
+
+/** The git index for a folder: the nearest `.git` folder's, or the one a worktree's `.git` file points at. */
+function gitIndexFor(cwd: string): string | null {
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    const dotGit = path.join(dir, ".git");
+    const entry = fs.statSync(dotGit, { throwIfNoEntry: false });
+    if (entry?.isDirectory()) return path.join(dotGit, "index");
+    if (entry?.isFile()) {
+      const pointer = /^gitdir:\s*(.+)\s*$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1];
+      return pointer ? path.join(path.resolve(dir, pointer), "index") : null;
+    }
+    if (path.dirname(dir) === dir) return null;
+  }
+}
+
+/** Changes whenever the answer could: the settings file itself, or the index that tracks it. Null when it cannot be told. */
+function trackedCheckKey(cwd: string): string | null {
+  if (process.env.GIT_DIR || process.env.GIT_INDEX_FILE || process.env.GIT_WORK_TREE) return null;
+  const local = fs.statSync(path.join(cwd, ".claude/settings.local.json"), { throwIfNoEntry: false });
+  if (!local) return null;
+  const index = gitIndexFor(cwd);
+  const indexStat = index ? fs.statSync(index, { throwIfNoEntry: false }) : undefined;
+  return [local.dev, local.ino, local.mtimeMs, local.size, index ?? "", indexStat?.ino ?? 0, indexStat?.mtimeMs ?? 0, indexStat?.size ?? 0].join(":");
 }
 
 /** Only user decisions can approve repository executables. Repository settings can reject them. */

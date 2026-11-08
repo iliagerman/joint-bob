@@ -3,8 +3,8 @@ import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createP
 import { NotFoundError } from "./not-found.js";
 import { actingAccount, type ActingAccount } from "./account-context.js";
 import { forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,9 @@ function db(): DatabaseSync {
   return database;
 }
 
+// Every signed cluster request decrypts the node's identity with this key; reading the key
+// file each time blocked the event loop for nothing, as the file never changes while it runs.
+let keptFileKey: { path: string; value: Buffer } | undefined;
 function key(): Buffer {
   const configured = process.env.JOINT_BOB_SECRET_KEY ?? process.env.MASTER_BOB_SECRET_KEY;
   if (configured) {
@@ -73,9 +76,11 @@ function key(): Buffer {
     if (value.length !== 32) throw new Error("JOINT_BOB_SECRET_KEY must be a base64-encoded 32-byte key");
     return value;
   }
+  if (keptFileKey?.path === keyPath) return keptFileKey.value;
   try {
     const value = Buffer.from(readFileSync(keyPath, "utf8").trim(), "base64");
     if (value.length !== 32) throw new Error("Joint Bob secret key is invalid");
+    keptFileKey = { path: keyPath, value };
     return value;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -483,27 +488,49 @@ export async function setScopeSecretAccounts(scopeType: SecretScopeType, scopeId
 
 /** Written once per account, then handed to the agent as a path so the value never
     reaches an argument list or an environment dump. */
+// Secret files and the askpass helpers were rewritten on every agent turn and every Pi
+// message. A file this process wrote is left alone while it is unchanged on disk (same size,
+// time and permissions); one that was removed, edited or loosened is written again.
+const writtenFiles = new Map<string, { digest: string; size: number; mtimeMs: number; mode: number }>();
+function alreadyWritten(filePath: string, value: string, mode: number): boolean {
+  const kept = writtenFiles.get(filePath);
+  if (!kept || kept.digest !== createHash("sha256").update(value).digest("hex")) return false;
+  const info = statSync(filePath, { throwIfNoEntry: false });
+  return Boolean(info?.isFile() && info.size === kept.size && info.mtimeMs === kept.mtimeMs && (info.mode & 0o777) === mode);
+}
+function rememberWritten(filePath: string, value: string, mode: number): void {
+  const info = statSync(filePath);
+  writtenFiles.set(filePath, { digest: createHash("sha256").update(value).digest("hex"), size: info.size, mtimeMs: info.mtimeMs, mode });
+}
+
 function secretFilePath(accountId: string, name: string, value: string): string {
   const directory = path.join(dataDir, "secret-files", accountId);
+  const filePath = path.join(directory, name);
+  if (alreadyWritten(filePath, value, 0o600) && ((statSync(directory, { throwIfNoEntry: false })?.mode ?? 0) & 0o777) === 0o700) return filePath;
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
-  const filePath = path.join(directory, name);
   writeFileSync(filePath, value, { mode: 0o600 });
   chmodSync(filePath, 0o600);
+  rememberWritten(filePath, value, 0o600);
+  return filePath;
+}
+
+function writeHelperOnce(filePath: string, script: string): string {
+  if (alreadyWritten(filePath, script, 0o700)) return filePath;
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  writeFileSync(filePath, script, { mode: 0o700 });
+  chmodSync(filePath, 0o700);
+  rememberWritten(filePath, script, 0o700);
   return filePath;
 }
 
 function ensureGitlabAskPassHelper(): string {
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  writeFileSync(gitlabAskPassPath, '#!/bin/sh\ncase "$1" in\n  *Username*) printf "%s\\n" "oauth2" ;;\n  *) printf "%s\\n" "$GITLAB_TOKEN" ;;\nesac\n', { mode: 0o700 });
-  return gitlabAskPassPath;
+  return writeHelperOnce(gitlabAskPassPath, '#!/bin/sh\ncase "$1" in\n  *Username*) printf "%s\\n" "oauth2" ;;\n  *) printf "%s\\n" "$GITLAB_TOKEN" ;;\nesac\n');
 }
 
 /** `git push` cannot read an environment variable, so it gets a helper script that prints one. */
 function ensureAskPassHelper(): string {
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  writeFileSync(askPassPath, '#!/bin/sh\ncase "$1" in\n  *Username*) printf "%s\\n" "x-access-token" ;;\n  *) printf "%s\\n" "$PI_GITHUB_TOKEN" ;;\nesac\n', { mode: 0o700 });
-  return askPassPath;
+  return writeHelperOnce(askPassPath, '#!/bin/sh\ncase "$1" in\n  *Username*) printf "%s\\n" "x-access-token" ;;\n  *) printf "%s\\n" "$PI_GITHUB_TOKEN" ;;\nesac\n');
 }
 
 /** GitHub is a provider, not a code path: this reads the already-resolved variable map and
@@ -537,12 +564,43 @@ function applyGitHubEnvironment(values: NodeJS.ProcessEnv): void {
 }
 
 const appTokens = new Map<string, { token: string; expiresAt: number }>();
+const appTokenRefreshes = new Map<string, Promise<void>>();
+const APP_TOKEN_MIN_LIFE_MS = 5 * 60_000;
+// Installation tokens live an hour. Minting one waits on GitHub, and minting it inline froze
+// the event loop for up to 20 s; a token in its last 20 minutes is replaced in the background
+// while it is still handed out, so only a cold start (or a long idle spell) waits.
+const APP_TOKEN_REFRESH_MS = 20 * 60_000;
+
+function mintInstallationTokenLater(cacheKey: string, account: GithubAccount): void {
+  if (appTokenRefreshes.has(cacheKey)) return;
+  const script = fileURLToPath(new URL("../scripts/github-app-token.mjs", import.meta.url));
+  const refresh = new Promise<void>((resolve) => {
+    const child = spawn(process.execPath, [script], { stdio: ["pipe", "pipe", "ignore"] });
+    let output = "";
+    const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+    child.on("error", () => { clearTimeout(timer); resolve(); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      try {
+        const issued = JSON.parse(output) as { token: string; expiresAt: number };
+        if (code === 0 && typeof issued.token === "string" && issued.expiresAt > Date.now() + APP_TOKEN_MIN_LIFE_MS) appTokens.set(cacheKey, issued);
+      } catch { /* the current token stays until the next attempt */ }
+      resolve();
+    });
+    child.stdin.end(JSON.stringify(account.app));
+  }).finally(() => appTokenRefreshes.delete(cacheKey));
+  appTokenRefreshes.set(cacheKey, refresh);
+}
 
 function installationToken(account: GithubAccount): string {
   const app = account.app!;
   const cacheKey = createHash("sha256").update(JSON.stringify([account.id, app.appId, app.installationId, app.privateKey])).digest("hex");
   const cached = appTokens.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now() + 5 * 60_000) return cached.token;
+  if (cached && cached.expiresAt > Date.now() + APP_TOKEN_MIN_LIFE_MS) {
+    if (cached.expiresAt <= Date.now() + APP_TOKEN_REFRESH_MS) mintInstallationTokenLater(cacheKey, account);
+    return cached.token;
+  }
   const script = fileURLToPath(new URL("../scripts/github-app-token.mjs", import.meta.url));
   let issued: { token: string; expiresAt: number };
   try {
@@ -550,7 +608,7 @@ function installationToken(account: GithubAccount): string {
       input: JSON.stringify(app), encoding: "utf8", timeout: 20_000, stdio: ["pipe", "pipe", "ignore"],
     }));
   } catch { throw new Error(`Could not obtain GitHub App installation token for ${account.label}`); }
-  if (issued.expiresAt <= Date.now() + 5 * 60_000) throw new Error("GitHub App installation token expires too soon");
+  if (issued.expiresAt <= Date.now() + APP_TOKEN_MIN_LIFE_MS) throw new Error("GitHub App installation token expires too soon");
   appTokens.set(cacheKey, issued);
   return issued.token;
 }

@@ -98,7 +98,13 @@ function route(endpoint: FilesEndpoint, method: "GET" | "POST") {
       const controller = new AbortController();
       response.once("close", () => { if (!response.writableFinished) controller.abort(new DOMException("The peer closed the request", "AbortError")); });
       const range = endpoint === "file" ? request.header("range") : undefined;
-      const answer = await bridge.serve({ peer, endpoint, query: query(request), ...(method === "POST" ? { body: request.body ?? {} } : {}), ...(range ? { range } : {}) }, { signal: controller.signal });
+      let answer: Awaited<ReturnType<typeof bridge.serve>>;
+      try { answer = await bridge.serve({ peer, endpoint, query: query(request), ...(method === "POST" ? { body: request.body ?? {} } : {}), ...(range ? { range } : {}) }, { signal: controller.signal }); }
+      catch (error) {
+        // The peer stopped waiting: there is no one to answer, and nothing went wrong here.
+        if (controller.signal.aborted) return;
+        throw error;
+      }
       if (controller.signal.aborted) { if (answer.body) void answer.body[Symbol.asyncIterator]().return?.(); return; }
       await writeAnswer(response, answer);
     })().catch((error) => mapError(error, response, next));

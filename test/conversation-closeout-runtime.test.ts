@@ -131,3 +131,23 @@ test("accepted and dismissed rules are not proposed again", async () => {
     assert.deepEqual(listProposals(project.path), []);
   });
 });
+
+// Each hourly sweep retried every failed closeout (about 500 on the homeserver), rewriting and
+// replicating the same error and logging it every time.
+test("a closeout that fails the same way again is not rewritten or logged again", async () => {
+  await fixture(async (project, id) => {
+    const record = await beginConversationCloseout(project, "pi", id, { rating: "bad", description: "" });
+    const failed = runtime();
+    failed.models = () => ({ ...runtime().models(project, id, { messages: [], lastHarness: "pi" }), select: async () => { throw new Error("Decision model offline"); } });
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+    try {
+      assert.equal(await finishConversationCloseout(project, id, record, failed), "Decision model offline");
+      const stored = (await sessionFeedbackOverrides())[id];
+      assert.equal(await finishConversationCloseout(project, id, stored, failed), "Decision model offline");
+      assert.deepEqual((await sessionFeedbackOverrides())[id], stored, "the stored error is left as it was");
+      assert.equal(warnings.filter((line) => line.includes(id)).length, 1, "logged once");
+    } finally { console.warn = warn; }
+  });
+});

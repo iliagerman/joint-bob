@@ -216,23 +216,56 @@ export function abandonedShellReason(startedAt: string, lastOutputAt: string | u
   return null;
 }
 
-export function readActiveBackgroundTaskIdentities(dataDirectory: string): Set<string> {
-  const db = open(dataDirectory);
-  if (!db) return new Set();
-  try {
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supervisor_tasks'").get()) return new Set();
-    let policy = "";
+/**
+ * The running list, every conversation listing and a 2 s maintenance pass ask which supervised
+ * tasks are active. Each call opened the supervisor database, attached node.db and closed both
+ * again. The read-only connection is now kept while the validated file is the same one (same
+ * device and inode); the ownership checks still run on every call.
+ */
+const identityReaders = new Map<string, { dev: number; ino: number; db: DatabaseSync; attached: boolean }>();
+function identityReader(dataDirectory: string): DatabaseSync | null {
+  const file = supervisorDatabaseFile(dataDirectory);
+  const kept = identityReaders.get(dataDirectory);
+  const entry = file ? lstatSync(file) : undefined;
+  if (kept && (!entry || kept.dev !== entry.dev || kept.ino !== entry.ino)) {
+    identityReaders.delete(dataDirectory);
+    kept.db.close();
+  }
+  if (!file || !entry) return null;
+  let reader = identityReaders.get(dataDirectory);
+  if (!reader) {
+    const db = open(dataDirectory);
+    if (!db) return null;
+    reader = { dev: entry.dev, ino: entry.ino, db, attached: false };
+    identityReaders.set(dataDirectory, reader);
+  }
+  if (!reader.attached) {
     const policyFile = path.join(realpathSync(dataDirectory), "node.db");
     if (existsSync(policyFile)) {
-      db.prepare("ATTACH DATABASE ? AS active_policy").run(`${pathToFileURL(policyFile).href}?mode=ro`);
-      if (db.prepare("SELECT 1 FROM active_policy.sqlite_master WHERE type='table' AND name='supervised_shell_calls'").get()) {
-        policy = " AND NOT EXISTS (SELECT 1 FROM active_policy.supervised_shell_calls p WHERE p.task_id=supervisor_tasks.id AND (p.state='returned' OR (p.state='foreground' AND p.foreground_until > ?)))";
-      }
+      reader.db.prepare("ATTACH DATABASE ? AS active_policy").run(`${pathToFileURL(policyFile).href}?mode=ro`);
+      reader.attached = true;
     }
-    const values: SQLInputValue[] = [...(policy ? [Date.now()] : [])];
-    const rows = db.prepare(`SELECT DISTINCT identity FROM supervisor_tasks WHERE status IN ('starting','running','stopping')${policy}`).all(...values) as Array<{ identity: string }>;
-    return new Set(rows.map((row) => row.identity));
-  } finally { db.close(); }
+  }
+  return reader.db;
+}
+
+export function readActiveBackgroundTaskIdentities(dataDirectory: string): Set<string> {
+  const db = identityReader(dataDirectory);
+  if (!db) return new Set();
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supervisor_tasks'").get()) return new Set();
+  const attached = identityReaders.get(dataDirectory)?.attached;
+  const policy = attached && db.prepare("SELECT 1 FROM active_policy.sqlite_master WHERE type='table' AND name='supervised_shell_calls'").get()
+    ? " AND NOT EXISTS (SELECT 1 FROM active_policy.supervised_shell_calls p WHERE p.task_id=supervisor_tasks.id AND (p.state='returned' OR (p.state='foreground' AND p.foreground_until > ?)))"
+    : "";
+  const values: SQLInputValue[] = [...(policy ? [Date.now()] : [])];
+  const rows = db.prepare(`SELECT DISTINCT identity FROM supervisor_tasks WHERE status IN ('starting','running','stopping')${policy}`).all(...values) as Array<{ identity: string }>;
+  return new Set(rows.map((row) => row.identity));
+}
+
+/** Closes the kept readers (tests that remove a data directory). */
+export function closeBackgroundTaskReaders(): void {
+  for (const reader of identityReaders.values()) reader.db.close();
+  identityReaders.clear();
 }
 
 /** Supervised tasks still alive for a logical conversation, including tool-call shells. */

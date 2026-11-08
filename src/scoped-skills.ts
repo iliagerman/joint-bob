@@ -6,6 +6,7 @@ import { resolveDataDirectory } from "./data-directory.js";
 import { activationDecision } from "./resource-activation.js";
 import { settingsDatabase } from "./settings-store.js";
 import type { HarnessId } from "./types.js";
+import { readOncePerPass } from "./resource-pass.js";
 
 /** A received skill that loads only in some projects' or conversations' sessions on this node. */
 export interface ScopedSkillEntry {
@@ -30,8 +31,11 @@ export function writeScopedSkillIndex(entries: ScopedSkillEntry[]): void {
 }
 
 export function readScopedSkillIndex(): ScopedSkillEntry[] {
-  try { return JSON.parse(readFileSync(indexFile(), "utf8")) as ScopedSkillEntry[]; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  const file = indexFile();
+  return readOncePerPass(`scoped-skill-index:${file}`, () => {
+    try { return JSON.parse(readFileSync(file, "utf8")) as ScopedSkillEntry[]; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  });
 }
 
 export interface SkillScopeContext { projectId?: string; conversationId?: string; ignoreAssistantPreferences?: boolean }

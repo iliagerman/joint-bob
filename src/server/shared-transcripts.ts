@@ -261,6 +261,7 @@ function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,en
 function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry,signal?:AbortSignal):Promise<void>{
  return withProjectRuntime(projectId,()=>receiveTranscriptInRuntime(db,peer,projectId,entry,signal));
 }
+const refusedSeeds=new Set<string>();
 async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry,signal?:AbortSignal):Promise<void>{
  signal?.throwIfAborted();
  const adapter=getHarness(entry.engine),root=path.resolve(adapter.sync.transcriptRoot()),destination=path.resolve(root,entry.relativePath);
@@ -288,7 +289,16 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
  // check below and is dropped.
  const partial=`${destination}.${peer.nodeId}.part`,guard=stallGuard();
  let hash=createHash('sha256'),bytes=0,keep=false;
+ // A conversation that grew on its owner was downloaded again from its first byte on every
+ // pull. When the local copy is still the one installed from this peer, it seeds the transfer
+ // and only the new bytes are asked for. The digest covers every byte; a seed that turns out
+ // not to be a prefix of the owner's copy is not used again for that snapshot.
+ const seedKey=`${peer.nodeId}\0${entry.engine}\0${entry.sessionId}\0${entry.hash}`;
+ let seeded=false;
  try{
+  if(existing&&receipt?.path===destination&&receipt.hash===localHash&&existing.size<entry.size&&!refusedSeeds.has(seedKey)&&!await lstat(partial).catch(()=>undefined)){
+   await copyFile(destination,partial,constants.COPYFILE_EXCL);seeded=true;
+  }
   const held=await lstat(partial).catch(()=>undefined);
   if(held?.isFile()&&held.size>0&&held.size<=entry.size)for await(const chunk of createReadStream(partial,{start:0,end:held.size-1})){bytes+=chunk.length;hash.update(chunk);}
   if(bytes===0||bytes!==held?.size){await rm(partial,{force:true});hash=createHash('sha256');bytes=0;}
@@ -311,7 +321,7 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
    keep=bytes<=entry.size;
    throw signal?.aborted?signal.reason:guard.signal.aborted?guard.signal.reason:error;
   }
-  if(bytes!==entry.size||hash.digest('hex')!==entry.hash)throw new Error('Transcript changed during transfer');
+  if(bytes!==entry.size||hash.digest('hex')!==entry.hash){if(seeded)refusedSeeds.add(seedKey);throw new Error('Transcript changed during transfer');}
   // A local copy changed since the last receipt may contain unsent work. Repair
   // truncated copies, but never overwrite divergent bytes without review.
   if(existing&&(!ownership||receipt?.hash!==localHash)){

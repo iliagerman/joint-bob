@@ -897,6 +897,17 @@ export function resourcePolicyDeliveryIsCurrent(
   if (body.ownerNodeId !== local || body.writerNodeId !== local) {
     throw new Error("Foreign resource policy delivery invariant");
   }
+  if (body.operation === "unshare") {
+    // A later statement for the same context and recipient replaced this revocation. The peer
+    // refuses the older one as stale (409) and the queue kept retrying it every pass.
+    const [ownerAdmission, recipientAdmission] = admissions(body.context);
+    const latest = db.prepare(`
+      SELECT generation FROM cluster_v2_resource_contexts
+      WHERE kind=? AND resource_id=? AND context_kind=? AND context_id=?
+        AND owner_admission=? AND recipient_admission=? AND recipient_id=?
+    `).get(body.kind, body.resourceId, body.context.kind, body.context.id, ownerAdmission, recipientAdmission, body.recipientNodeId) as { generation: number } | undefined;
+    return !latest || latest.generation <= body.generation;
+  }
   if (body.operation !== "upsert") return true;
   const state = policyRow(db, body.kind, body.resourceId);
   if (!state || state.deleted || state.owner_node_id !== local || state.generation !== body.generation) return false;

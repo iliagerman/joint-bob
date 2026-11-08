@@ -204,8 +204,9 @@ export class WorkerBridge {
         cancel: () => { if (this.serveStreams.delete(id)) post({ serveCancel: id }); },
       }));
     }, (requestId) => {
-      // Gone before the answer: the worker drops the answer's body instead of streaming it.
-      const onAbort = () => post({ serveCancel: requestId });
+      // Gone before the answer: the worker drops the answer's body instead of streaming it, and the
+      // call ends now. It used to wait out its 60 s timer, long after the peer (30 s) had given up.
+      const onAbort = () => { post({ serveCancel: requestId }); this.release(requestId)?.reject(options.signal?.reason); };
       options.signal?.addEventListener("abort", onAbort, { once: true });
       return () => options.signal?.removeEventListener("abort", onAbort);
     }) as ServeHead;
