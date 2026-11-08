@@ -11,10 +11,18 @@ let database: DatabaseSync | undefined;
 // Listings need numeric totals, not skill evidence or pricing metadata. SQLite maintains
 // these expression values on writes, so a cold total need not decode every historical payload.
 const totalFields = ["apiCostUsd", "usageStatus", "input", "output", "cacheRead", "cacheWrite5m", "cacheWrite1h", "cacheWriteUnknown", "reasoning", "toolCalls", "toolErrors"];
+/**
+ * usage_events_session_totals: a conversation listed from another machine is read-only here and
+ * takes its usage by session alone. No index began with (project, session), so each lookup read
+ * the project's whole history (124,000 events for Contigos, 144 ms), up to 50 per list: lists and
+ * opens took seconds. It also carries the summed fields, like usage_events_totals, so the rows are
+ * never read.
+ */
 export function ensureUsageSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS model_usage_events(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,conversation_id TEXT NOT NULL,session_id TEXT NOT NULL,engine TEXT NOT NULL,occurred_at TEXT NOT NULL,payload TEXT NOT NULL,origin_node_id TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS usage_events_project ON model_usage_events(project_id); CREATE INDEX IF NOT EXISTS usage_events_conversation ON model_usage_events(project_id,conversation_id); CREATE INDEX IF NOT EXISTS usage_events_time ON model_usage_events(occurred_at);
 CREATE INDEX IF NOT EXISTS usage_events_totals ON model_usage_events(project_id,conversation_id,session_id,engine,${totalFields.map(field => `json_extract(payload,'$.${field}')`).join(",")});
+CREATE INDEX IF NOT EXISTS usage_events_session_totals ON model_usage_events(project_id,session_id,engine,${totalFields.map(field => `json_extract(payload,'$.${field}')`).join(",")});
 CREATE TABLE IF NOT EXISTS usage_difficulty(turn_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,conversation_id TEXT NOT NULL,session_id TEXT NOT NULL,engine TEXT NOT NULL,occurred_at TEXT NOT NULL,payload TEXT NOT NULL,origin_node_id TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS usage_difficulty_scope ON usage_difficulty(project_id,conversation_id,session_id,engine,occurred_at);
 CREATE INDEX IF NOT EXISTS usage_difficulty_interval ON usage_difficulty(project_id,conversation_id,occurred_at DESC);

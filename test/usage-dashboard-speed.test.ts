@@ -3,7 +3,7 @@
 // indexed lookup, and the revision a viewer polls instead of re-reading every grouping.
 import assert from "node:assert/strict";
 import test, { beforeEach } from "node:test";
-import { clearUsageTotalsCache, saveDifficulty, saveUsageEvent, usageBreakdown, usageBreakdownPlan, usageDatabase, usageLedgerRevision } from "../src/usage-ledger.js";
+import { clearUsageTotalsCache, saveDifficulty, saveUsageEvent, usageBreakdown, usageBreakdownPlan, usageDatabase, usageLedgerRevision, usageTotals } from "../src/usage-ledger.js";
 import type { UsageDifficulty, UsageEvent } from "../src/usage-types.js";
 
 const db = usageDatabase();
@@ -66,4 +66,17 @@ test("the ledger revision moves only when saved usage changes", () => {
   assert.ok(afterTurn > afterEvent, "a classified turn regroups requests");
   saveDifficulty(turn("easy", 2, 0, 9), "node");
   assert.equal(usageLedgerRevision(), afterTurn);
+});
+
+// A conversation listed from another machine takes its usage by session. Without an index that
+// begins with (project, session), each lookup read the project's whole history: on the
+// homeserver 144 ms each, up to 50 per conversation list.
+test("a read-only conversation's usage is looked up by its session, not by scanning the project", () => {
+  for (let index = 0; index < 30; index += 1) saveUsageEvent(event(`other-${index}`, index % 60, { sessionId: `other-${index}`, conversationId: `other-${index}` }), "node");
+  saveUsageEvent(event("mine-1", 1, { sessionId: "mine", conversationId: "mine-chat", input: 7 }), "node");
+  saveUsageEvent(event("mine-2", 2, { sessionId: "mine", conversationId: "mine-chat", input: 3 }), "node");
+  const plan = (db.prepare("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM model_usage_events e WHERE 1=1 AND e.project_id IN (?) AND e.session_id=?").all("project", "mine") as Array<{ detail: string }>).map((row) => row.detail).join(" ");
+  assert.match(plan, /COVERING INDEX usage_events_session_totals \(project_id=\? AND session_id=\?\)/, plan);
+  const totals = usageTotals({ projectIds: ["project"], projectId: "project", sessionId: "mine" });
+  assert.equal(totals.input, 10);
 });
