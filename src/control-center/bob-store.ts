@@ -194,7 +194,8 @@ function insertMessage(db: DatabaseSync, accountId: string, message: BobMessage,
 
 /**
  * A message written on the person's other machine. New ones join the timeline and are announced like any message; a newer copy
- * of one already here (its buttons were used there, or it was cleared) replaces this one's buttons and state. Nothing is sent on again from here.
+ * of one already here (its buttons were used there, it was cleared, or it says more now) replaces this one's text, buttons and state.
+ * Nothing is sent on again from here.
  */
 export function storeReplicatedBobMessage(db: DatabaseSync, accountId: string, message: BobMessage, updatedAt: string, originNodeId: string): "added" | "changed" | "stale" {
   const held = db.prepare("SELECT updated_at FROM control_center_bob_messages WHERE account_id = ? AND id = ?").get(accountId, message.id) as { updated_at: string | null } | undefined;
@@ -204,8 +205,8 @@ export function storeReplicatedBobMessage(db: DatabaseSync, accountId: string, m
     return "added";
   }
   if (held.updated_at !== null && updatedAt <= held.updated_at) return "stale";
-  db.prepare("UPDATE control_center_bob_messages SET actions = ?, resolved_at = ?, resolution = ?, updated_at = ? WHERE account_id = ? AND id = ?")
-    .run(JSON.stringify(message.actions), message.resolvedAt, message.resolution, updatedAt, accountId, message.id);
+  db.prepare("UPDATE control_center_bob_messages SET text = ?, actions = ?, resolved_at = ?, resolution = ?, updated_at = ? WHERE account_id = ? AND id = ?")
+    .run(message.text, JSON.stringify(message.actions), message.resolvedAt, message.resolution, updatedAt, accountId, message.id);
   for (const listener of changeTimelineListeners) listener(accountId);
   return "changed";
 }
@@ -304,6 +305,11 @@ function changeMessage(db: DatabaseSync, accountId: string, id: string, assignme
 /** Sets the buttons on a message this machine wrote (none, once one was pressed), and tells the person's other machines. */
 export function setBobActions(db: DatabaseSync, accountId: string, id: string, actions: BobAction[]): void {
   changeMessage(db, accountId, id, "actions = ?", [JSON.stringify(actions)]);
+}
+
+/** Rewrites what a message this machine wrote says, and its buttons, and tells the person's other machines. */
+export function reviseBobMessage(db: DatabaseSync, accountId: string, id: string, text: string, actions: BobAction[]): void {
+  changeMessage(db, accountId, id, "text = ?, actions = ?", [text, JSON.stringify(actions)]);
 }
 
 /** Clears an item that no longer waits for the person: its buttons go, and the chat shows it only among the cleared ones, with why. */

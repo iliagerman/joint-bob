@@ -115,9 +115,8 @@ function renderCard(card) {
   if (card.column === "running") top.append(runningBadge(card));
   if (card.column === "review") top.append(element("span", "control-badge review", "To review"));
   top.append(element("span", "control-spacer"));
-  // Any card whose agent is not working can be closed; its row of buttons has no room left, so Done sits up here.
-  if (card.column !== "running" && !card.turnRunning) top.append(doneButton(card));
-  top.append(picker);
+  // Every card can be closed; its row of buttons has no room left, so Done sits up here.
+  top.append(doneButton(card), picker);
 
   // A step waiting for the person takes the status's place, so every card keeps the same size.
   const body = element("div", "control-card-body");
@@ -392,12 +391,12 @@ export function focusProject(projectId) {
   render();
 }
 
-/** Closes a finished conversation as its project's list does: the same question about what to learn, and the same request. */
+/** Closes a conversation as its project's list does, with the same question about what to learn; a working one is stopped first. */
 async function markDone(card) {
   const feedback = await chooseConversationFeedback(card);
   if (!feedback) return;
-  await api(`/api/projects/${encodeURIComponent(card.projectId)}/sessions/done`, {
-    method: "PUT", body: JSON.stringify({ sessionId: card.conversationId, engine: card.harnessId, done: true, feedback }),
+  await api("/api/control-center/cards/done", {
+    method: "POST", body: JSON.stringify({ projectId: card.projectId, conversationId: card.conversationId, feedback }),
   });
   settledHere.set(cardKey(card), "Done");
   await refreshControlCenter();
@@ -406,7 +405,9 @@ async function markDone(card) {
 function doneButton(card) {
   const button = element("button", "control-card-action control-card-done", "✓ Done");
   button.type = "button";
-  button.title = "Close it: it leaves the board, and you can open it again from its project";
+  button.title = card.turnRunning
+    ? "Stop it and close it: it leaves the board, and you can open it again from its project"
+    : "Close it: it leaves the board, and you can open it again from its project";
   button.dataset.testid = "control-card-action-done";
   button.addEventListener("click", (event) => {
     event.stopPropagation();

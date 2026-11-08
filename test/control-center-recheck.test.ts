@@ -52,10 +52,10 @@ test("the facts settle an item when its conversation was closed, answered or mov
   assert.equal(settle(item(), conversation("waiting", later(90))), "It moved on since.");
   assert.equal(settle(item(), conversation("missing")), null, "a conversation not found is left to the decision model");
   assert.equal(settle(item(), undefined, true), "A newer message about it replaced it.");
-  // Bob's note that he pushed it on is about the turn he pushed: it lasts while that turn runs, and goes once he checked the
-  // conversation again as it ended, or the person looked at it.
+  // Bob's note that he pushed it on goes as soon as the conversation runs again: the board shows who drives it. Otherwise it
+  // goes once he checked the conversation again as the turn ended, or the person looked at it.
   const pushed = item({ importance: "fyi" });
-  assert.equal(settle(pushed, conversation("running", later(600))), null, "the turn he pushed runs");
+  assert.equal(settle(pushed, conversation("running", later(600))), "It is running again.", "the turn he pushed runs");
   assert.equal(settle(pushed, conversation("waiting", later(600))), null, "it ended, and Bob has not checked it yet");
   assert.equal(settle(pushed, conversation("waiting", later(600), later(-1))), null, "the check that pushed it is not a new one");
   assert.equal(settle(pushed, conversation("waiting", later(600), later(620))), "Bob checked it again when the turn he pushed ended.");

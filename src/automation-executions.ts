@@ -29,6 +29,19 @@ export function createAutomationExecution(db: DatabaseSync, raw: AutomationExecu
   if (stored.requestId !== execution.requestId || stored.sourceId !== execution.sourceId || stored.sourceName !== execution.sourceName || stored.tags !== JSON.stringify(execution.tags)) throw new Error("Conflicting automation execution identity");
 }
 
+/** Where the run a call or a schedule started stands, and the conversation it runs in once it started. */
+export function automationRunOf(db: DatabaseSync, requestId: string): Pick<AutomationExecution, "status" | "sessionId" | "error"> | undefined {
+  ensureAutomationExecutionSchema(db);
+  return db.prepare("SELECT status, session_id sessionId, error FROM automation_executions WHERE request_id=?").get(requestId) as Pick<AutomationExecution, "status" | "sessionId" | "error"> | undefined;
+}
+
+/** The runs webhooks started since a time, to match calls stored before their run was kept with them. */
+export function webhookRunsSince(db: DatabaseSync, since: string): Array<{ requestId: string; sourceId: string; acceptedAt: string }> {
+  ensureAutomationExecutionSchema(db);
+  return db.prepare("SELECT request_id requestId, source_id sourceId, accepted_at acceptedAt FROM automation_executions WHERE source_kind = 'webhook' AND accepted_at >= ? ORDER BY accepted_at")
+    .all(since) as Array<{ requestId: string; sourceId: string; acceptedAt: string }>;
+}
+
 export function transitionAutomationExecution(db: DatabaseSync, requestId: string, status: AutomationExecution["status"], error: string | null = null, sessionId: string | null = null, engine?: string): void {
   ensureAutomationExecutionSchema(db);
   const current = db.prepare("SELECT status,started_at startedAt FROM automation_executions WHERE request_id=?").get(requestId) as { status: AutomationExecution["status"]; startedAt: string | null } | undefined;

@@ -70,14 +70,14 @@ export function settledByFacts(item: BobMessage, facts: ItemFacts): string | nul
   const now = facts.conversation;
   if (!now) return null;
   if (now.state === "done") return "It was marked done.";
-  // A note that Bob pushed it on lasts as long as the turn he pushed: it goes once he checked the conversation again as that
-  // turn ended (what it came to is his next message, or the board), or the person looked. An item that asks the person is
-  // settled only by their answer.
+  // Running again, whoever drives it (the person, auto respond, or Bob's push): the board shows it, so the chat lets it go.
+  if (now.state === "running") return "It is running again.";
+  // A note that Bob pushed it on goes once he checked the conversation again as that turn ended (what it came to is his next
+  // message, or the board), or the person looked. An item that asks the person is settled only by their answer.
   if (item.importance === "fyi") {
     if (now.state === "reviewed") return "You looked at it.";
     return now.checkedAt && Date.parse(now.checkedAt) > Date.parse(item.createdAt) ? "Bob checked it again when the turn he pushed ended." : null;
   }
-  if (now.state === "running") return "It is running again.";
   if (now.updatedAt && Date.parse(now.updatedAt) > Date.parse(item.createdAt) + MOVED_ON_MS) return "It moved on since.";
   return null;
 }

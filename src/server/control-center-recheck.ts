@@ -15,6 +15,7 @@ import { storedDigest } from "../conversation-digest.js";
 import { allPendingGuardianReviews, onGuardianEvent } from "../guardian/reviews.js";
 import { getProject, projectVisible } from "../store.js";
 import { bobDecisionModel } from "./bob.js";
+import { isAlert } from "./control-center-alerts.js";
 import { bobSessionFor } from "./control-center-session.js";
 import { onConversationTurn } from "./harness-sessions.js";
 import { projectsWithSharedNames } from "./projects.js";
@@ -65,7 +66,8 @@ async function askAboutTheRest(db: DatabaseSync, accountId: string, settings: Bo
   if (!settings.monitoring) return;
   const timeline = listBobMessages(db, accountId, { limit: 300 });
   const due = items.flatMap((item) => {
-    if (item.originNodeId || Date.now() - Date.parse(item.createdAt) < modelAfterMs) return [];
+    // An alert has its own checks (control-center-alerts.ts), and keeps its own judged evidence.
+    if (item.originNodeId || isAlert(item) || Date.now() - Date.parse(item.createdAt) < modelAfterMs) return [];
     const subject = subjectOf(item);
     const later = timeline.filter((message) => message.createdAt > item.createdAt && message.id !== item.id && (!message.projectId || message.projectId === item.projectId));
     const evidence = relevanceEvidence(item, subject?.kind === "conversation" ? conversations.get(subjectKey(subject)) ?? null : null, later);

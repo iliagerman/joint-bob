@@ -7,14 +7,17 @@ import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import { bobSays, registerBobAction } from "../control-center/bob-actions.js";
 import { appendBobMessage, askBobRecheck, bobDatabase, listBobAccounts, readBobSettings, type BobAction, type BobSettings } from "../control-center/bob-store.js";
 import { isLeased } from "../control-center/leases.js";
+import { createMoveEnvironment } from "../control-center/moves-runtime.js";
 import { bobStarter } from "../control-center/started.js";
 import {
   answerHash, latestRequest, MAX_PUSHES, nextStep, PUSH_PREFIX, parseAgentVerdict, pushesSoFar, readReviewCheck, reasonFromAnswer, REVIEW_INSTRUCTIONS, REVIEW_QUESTION, reviewState,
   verdictOf, writeReviewCheck, type ReviewCheck, type ReviewVerdict,
 } from "../control-center/review-check.js";
 import { getAutoRespond } from "../conversation-auto-respond.js";
+import type { CloseoutFeedback } from "../conversation-closeout.js";
+import { NotFoundError } from "../not-found.js";
 import { storedDigest } from "../conversation-digest.js";
-import { sessionTitleOverrides } from "../names.js";
+import { sessionDoneOverrides, sessionTitleOverrides } from "../names.js";
 import { listQueuedPrompts } from "../prompt-queue.js";
 import { getProject, projectVisible } from "../store.js";
 import { bobDecisionModel } from "./bob.js";
@@ -82,6 +85,9 @@ async function check(shared: SharedHarnessSession, actor: ActingAccount, turnEnd
   const settings = readBobSettings(db, actor.accountId);
   if (!settings.monitoring || settings.reviewCheck === "off") return;
   if (shared.turnInFlight > 0 || harnessSessionBusy(shared)) return "busy";
+  // Closed while its last turn ended (Done on its card stops it first): nothing to judge, and it must not be pushed on.
+  const done = await sessionDoneOverrides();
+  if (done[shared.conversationId] || done[shared.session.id]) return;
   // Something else is moving it, or the person is in it: nothing to judge.
   if (listQueuedPrompts(`${shared.projectId}:${shared.conversationId}`).length) return;
   if (isLeased(shared.projectId, shared.conversationId)) return;
@@ -194,6 +200,25 @@ export async function closeConversation(session: AuthSession, db: DatabaseSync, 
   });
   const previous = readReviewCheck(db, conversation.projectId, conversation.conversationId);
   if (previous) writeReviewCheck(db, { ...previous, verdict: "done", reason: abandoned ? "You abandoned it." : "You marked it done.", by: "you", needsYou: false, pushPending: false });
+  broadcastToAllClients({ type: "controlCenterChanged" }, session.accountId);
+  askBobRecheck(session.accountId);
+}
+
+/**
+ * Done on a card on the board: a conversation that is working is stopped first, on whichever machine runs it, then it is
+ * closed with the person's feedback, as its project's list does. Bob's check of it ends, and his items about it are cleared.
+ */
+export async function closeFromBoard(session: AuthSession, ref: { projectId: string; conversationId: string }, feedback: CloseoutFeedback): Promise<void> {
+  const env = createMoveEnvironment(session);
+  const conversation = await env.resolve(ref);
+  if (!conversation) throw new NotFoundError("Conversation not found");
+  await runAsAccount(actingAccountFromSession(session), async () => {
+    if (conversation.turnRunning) await env.stopTurn(conversation, (await env.nodes()).find((node) => node.id === conversation.ownerNodeId) ?? null);
+    await markConversationDoneAsActor(ref.projectId, { engine: conversation.harnessId, sessionId: ref.conversationId, done: true, feedback });
+  });
+  const db = await bobDatabase();
+  const previous = readReviewCheck(db, ref.projectId, ref.conversationId);
+  if (previous) writeReviewCheck(db, { ...previous, verdict: "done", reason: "You marked it done.", by: "you", needsYou: false, pushPending: false });
   broadcastToAllClients({ type: "controlCenterChanged" }, session.accountId);
   askBobRecheck(session.accountId);
 }

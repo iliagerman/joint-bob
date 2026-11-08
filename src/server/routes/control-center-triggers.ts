@@ -4,7 +4,8 @@ import type { AuthSession } from "../../auth.js";
 import { triageQuestion } from "../../control-center/triggers-brief.js";
 import { dismissTriggers, getTrigger, listTriggers, markTriggersSeen, publicTrigger, type Trigger } from "../../control-center/triggers-store.js";
 import { projectVisible } from "../../store.js";
-import { isBeingRated, rearmSnoozeTimer, triggerDatabase } from "../control-center-triggers.js";
+import { isBeingRated, rearmSnoozeTimer, startAlertSweep, triggerDatabase } from "../control-center-triggers.js";
+import { startOutcomeChecks } from "../control-center-outcomes.js";
 import { sendError } from "../http-auth.js";
 import { broadcastToAllClients } from "../realtime.js";
 import { app, server } from "../state.js";
@@ -78,3 +79,7 @@ app.post("/api/control-center/triggers/dismiss", route(async (request, response)
 
 // Snoozed triggers come back on one timer that starts when the server starts listening, like Bob's reports.
 server.once("listening", rearmSnoozeTimer);
+// Alerts that no longer need the person leave Bob's chat on their own timer.
+server.once("listening", startAlertSweep);
+// Each call is followed to the conversation its run started, and settled by how that ended.
+server.once("listening", startOutcomeChecks);

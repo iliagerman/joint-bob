@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
+import { recordConversationStart } from "../conversation-starts.js";
 import { ensureConversationRecord } from "../conversation-records.js";
 import { githubAccountFor } from "../github-credentials.js";
 import { ensureSessionTitle } from "../names.js";
@@ -77,6 +79,11 @@ async function startConversation(identity: WorktreeAgentIdentity, project: Proje
   } catch (error) {
     throw new ProjectWorktreeError(502, `Conversation ${sessionId} did not start: ${error instanceof Error ? error.message : String(error)}`);
   }
+  // Kept so what a run started can be followed: Bob settles a webhook's alert by how the conversation it started ended.
+  recordConversationStart(await clusterV2Database(), {
+    projectId: project.id, parentSessionId: identity.sessionId, parentConversationId: identity.conversationId, childSessionId: sessionId,
+    engine: identity.engine, worktreeId: worktree.id, startedAt: new Date().toISOString(),
+  });
   broadcastToProject(project.id, { type: "sessionsChanged" });
   return { conversationId: sessionId, engine: identity.engine, worktreeId: worktree.id, secretAccounts: accountIds.length };
 }

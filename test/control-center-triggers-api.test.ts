@@ -23,7 +23,7 @@ async function listen(app: Express) {
 
 interface Shown { id: string; title: string; summary: string; state: string; urgency: string; projectName: string; webhookName: string; rating: { by: string; confidence: number | null; label: string; reason: string } }
 interface Listed { triggers: Shown[]; total: number; newCount: number }
-interface Message { id: string; role: string; text: string; via: string | null; importance: string; projectName: string | null; actions: Array<{ id: string; label: string; style?: string; data?: Record<string, unknown> }> }
+interface Message { id: string; role: string; text: string; via: string | null; importance: string; projectName: string | null; resolvedAt: string | null; resolution: string | null; actions: Array<{ id: string; label: string; style?: string; data?: Record<string, unknown> }> }
 
 const until = async <T>(check: () => Promise<T | undefined | false>, what: string, seconds = 20): Promise<T> => {
   const deadline = Date.now() + seconds * 1000;
@@ -75,13 +75,15 @@ test("incoming webhook calls become triggers: rated, posted or kept in the bell,
 
     // A synthetic /ws endpoint stands in for the node's chat socket: it refuses the webhook's own delivery, and takes the investigation.
     const prompts: string[] = [];
+    // Until a step says so, the webhook's own run for a call cannot start, so nobody is on it.
+    let webhookRunsStart = false;
     endpoint.on("connection", (socket: WebSocket) => {
       socket.send(JSON.stringify({ type: "ready", status: { model: { provider: "zai", id: "glm-5.3-flash" }, thinkingLevel: "low", isStreaming: false } }));
       socket.on("message", (raw) => {
         const message = JSON.parse(raw.toString()) as { type: string; message: string; requestId: string };
         if (message.type !== "prompt") return;
         prompts.push(message.message);
-        if (message.message.includes("[Joint Bob webhook")) { socket.send(JSON.stringify({ type: "error", error: "No model sign-in on this test node" })); return; }
+        if (message.message.includes("[Joint Bob webhook") && !webhookRunsStart) { socket.send(JSON.stringify({ type: "error", error: "No model sign-in on this test node" })); return; }
         const queueId = randomUUID();
         socket.send(JSON.stringify({ type: "userMessage", queued: true, requestId: message.requestId, queueId }));
         socket.send(JSON.stringify({ type: "promptStarted", queueId }));
@@ -132,7 +134,8 @@ test("incoming webhook calls become triggers: rated, posted or kept in the bell,
     await send({ AlarmName: "api-5xx", NewStateValue: "ALARM", NewStateReason: "5xx at 14% for 3 datapoints" });
     const urgent = await until(async () => (await timeline()).find((message) => message.importance === "urgent"), "the urgent message");
     assert.deepEqual([urgent.role, urgent.importance, urgent.projectName, urgent.via], ["system", "urgent", "Joint Bob", "Webhook · GitHub · decision model 95%"]);
-    assert.equal(urgent.text, "Alarm ALARM: api-5xx\n5xx at 14% for 3 datapoints");
+    // Its webhook could not start its own conversation for it, so nobody is on it, and the alert says why.
+    assert.match(urgent.text, /^Alarm ALARM: api-5xx\n5xx at 14% for 3 datapoints\nIts webhook could not start a conversation for it/);
     assert.deepEqual(urgent.actions.map((action) => [action.id, action.label, action.style ?? null]), [
       ["trigger.investigate", "Investigate (read-only)", "primary"], ["trigger.open", "Open", null], ["trigger.snooze", "Snooze 1h", null],
     ]);
@@ -289,6 +292,63 @@ test("incoming webhook calls become triggers: rated, posted or kept in the bell,
     assert.equal(peak, 3);
     sent += 6;
     await until(async () => webhookDeliveries(db, webhook.id).length >= sent, "the six deliveries");
+
+    // 12. An urgent call is compared, in one request, with the project's open alerts, its working conversations and today's
+    // cleared alerts. The stand-in decision model answers what each step sets.
+    const relating: Record<string, string> = {};
+    model = { stateCharacters: 100_000, ask: async (state, questions) => {
+      asked.push(state);
+      return Object.fromEntries(Object.keys(questions).map((id) => [id, { choice: id === "urgency" ? "urgent" : relating[id] ?? "none", confidence: 0.97 }]));
+    } };
+    const latency = (reason: string) => send({ AlarmName: "db-latency", NewStateValue: "ALARM", NewStateReason: reason });
+    const alarms = async () => (await urgentMessages()).filter((message) => message.text.startsWith("Alarm ALARM: db-latency"));
+    const inBell = (label: string) => until(async () => (await bell()).triggers.find((trigger) => trigger.rating.label === label), `a call in the bell: ${label}`);
+    // Nothing like it is open, in hand or known, and its webhook's run did not start: a new alert.
+    await latency("p99 at 2.4s");
+    const posted = await until(async () => (await alarms()).find((message) => message.actions.length), "the new alert");
+    // The same problem again adds to that alert instead of a second one, and its buttons act on the newest call.
+    relating.same_alert = "a1";
+    await latency("p99 at 2.9s");
+    const repeated = await until(async () => (await alarms()).find((message) => message.text.endsWith("Happened 2 times so far.")), "the repeat counted");
+    assert.equal(repeated.id, posted.id);
+    assert.equal((await alarms()).length, 1, "no second alert");
+    assert.notEqual(repeated.actions[0].data!.triggerId, posted.actions[0].data!.triggerId);
+    // A conversation in the project already works on it: the call waits in the bell, and the open alert leaves the chat.
+    relating.being_fixed = "w1";
+    await latency("p99 at 3.1s");
+    const handed = await until(async () => (await timeline()).find((message) => message.id === posted.id && message.resolvedAt), "the alert handed to a conversation");
+    assert.match(handed.resolution!, /^“.+” is working on it\.$/);
+    const fixing = await until(async () => (await bell()).triggers.find((trigger) => /^urgent, but “.+” is working on it$/.test(trigger.rating.label)), "the call in the bell");
+    assert.deepEqual([fixing.urgency, fixing.state], ["not-urgent", "new"]);
+    // The same problem as an alert cleared today waits in the bell too.
+    delete relating.same_alert;
+    relating.being_fixed = "none";
+    relating.already_cleared = "c1";
+    await latency("p99 at 3.3s");
+    await inBell("urgent, but the same problem as an alert you had earlier today");
+    // A call whose webhook started its own conversation for it is in hand: the bell, not the chat.
+    relating.already_cleared = "none";
+    webhookRunsStart = true;
+    await latency("p99 at 3.5s");
+    await inBell("urgent, but its webhook started a conversation on it");
+    assert.equal((await alarms()).filter((message) => message.actions.length).length, 0, "nothing new in the chat");
+    webhookRunsStart = false;
+    // The sweep: an alert whose webhook's run started after it was posted leaves the chat, and so does one nobody acted on.
+    const { setAlertTiming } = await import("../src/server/control-center-alerts.js");
+    const openAlarm = async (reason: string) => { await latency(reason); return until(async () => (await alarms()).find((message) => message.actions.length && message.text.includes(reason)), `the alert for ${reason}`); };
+    const late = await openAlarm("p99 at 4.0s");
+    const lateCall = store.getTrigger(await bobDatabase(), accountId, late.actions[0].data!.triggerId as string)!;
+    (await bobDatabase()).prepare("UPDATE automation_executions SET status = 'running' WHERE request_id = ?").run(lateCall.requestId);
+    await triggers.sweepAlertsNow();
+    assert.equal((await timeline()).find((message) => message.id === late.id)!.actions.length, 0);
+    assert.equal((await timeline()).find((message) => message.id === late.id)!.resolution, "Its webhook started a conversation on it.");
+    const stale = await openAlarm("p99 at 4.4s");
+    setAlertTiming({ lifetimeMs: 0 });
+    await triggers.sweepAlertsNow();
+    setAlertTiming({ lifetimeMs: 6 * 3_600_000 });
+    assert.equal((await timeline()).find((message) => message.id === stale.id)!.resolution, "No one acted on it for 6 hours, so it moved to the bell.");
+    const expired = (await bell()).triggers.find((trigger) => trigger.id === stale.actions[0].data!.triggerId)!;
+    assert.deepEqual([expired.urgency, expired.state, expired.rating.label], ["not-urgent", "seen", "urgent; nobody acted on it in the chat for 6 hours"], "in the bell, not counted as new");
   } finally {
     stopTimer?.();
     for (const socket of endpoint.clients) socket.terminate();

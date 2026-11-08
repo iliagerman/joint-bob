@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.245.0 — 2026-11-08
 
 - API errors now identify the failed request, distinguish timeouts from unexplained interruptions, and keep diagnostics in Settings logs without request query values, headers or bodies. Only confirmed caller cancellations are hidden; interrupted writes warn that the change may already have taken effect.
+- Bob follows each webhook call to the conversation working on it and clears the call from the bell and the chat once that conversation settled it (fixed it, found an existing fix, or found nothing wrong). What still needs you becomes one item in Bob's chat about that conversation, and a call whose work is still going waits in the bell saying which conversation is on it. Calls already waiting are matched to their runs and checked once after this update.
+- An urgent webhook call that is already in hand no longer posts a new alert: its webhook started a conversation on it, another conversation works on it, or it repeats an open alert, which counts it instead. An alert nobody acted on for 6 hours moves to the bell.
+- Bob's note that he told a conversation to go on leaves the chat as soon as the conversation runs again; the board shows who drives it.
+- ✓ Done is on every card on the board, running ones too: a working conversation is stopped first, on whichever machine runs it, then closed. Bob no longer pushes on a conversation that was marked done.
 
 ## 2.244.0 — 2026-11-08
 

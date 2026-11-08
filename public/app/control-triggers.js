@@ -55,7 +55,7 @@ const head = makeNode("div", "control-triggers-head");
 head.append(makeNode("b", "", "Incoming · can wait"), makeNode("span", "control-spacer"), dismissAll);
 const list = testid(makeNode("div", "control-triggers-list"), "control-triggers-list");
 const pager = testid(makeNode("div", "control-triggers-pager"), "control-triggers-pager");
-const hint = testid(makeNode("p", "control-triggers-hint", "Everything the decision model rates urgent shows in Bob's chat instead. Below your confidence threshold, Bob's agent rates it."), "control-triggers-hint");
+const hint = testid(makeNode("p", "control-triggers-hint", "Bob follows each call to the conversation working on it: settled ones clear themselves, and what needs you goes to his chat."), "control-triggers-hint");
 panel.append(head, list, pager, hint);
 elements.controlChat.append(panel);
 

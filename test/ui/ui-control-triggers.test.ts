@@ -108,10 +108,18 @@ test("the bell counts new triggers that can wait, lists them a page at a time, a
   assert.equal(await page.getByTestId("control-triggers-page-previous").isDisabled(), true);
   await page.getByTestId("control-triggers-page-next").click();
   await page.waitForFunction((count) => document.querySelector('[data-testid="control-trigger"]')?.getAttribute("data-id") === `t${count + 1}`, firstPage);
-  // A trigger that arrived while Bob was paused was not rated; the list says so.
-  while (await page.locator('[data-testid="control-trigger"][data-urgency="unrated"]').count() === 0) await page.getByTestId("control-triggers-page-next").click();
+  // A trigger that arrived while Bob was paused was not rated; the list says so. Which page holds it depends on how many fit,
+  // so it is looked for from the first page. The pager is drawn anew on each page: each turn waits for the new one.
+  const pageLabel = page.getByTestId("control-triggers-page-label");
+  const turnPage = async (direction: "previous" | "next") => {
+    const was = await pageLabel.innerText();
+    await page.getByTestId(`control-triggers-page-${direction}`).click();
+    await page.waitForFunction((label) => document.querySelector('[data-testid="control-triggers-page-label"]')?.textContent !== label, was);
+  };
+  while (!(await pageLabel.innerText()).startsWith("1–")) await turnPage("previous");
+  while (await page.locator('[data-testid="control-trigger"][data-urgency="unrated"]').count() === 0) await turnPage("next");
   assert.match(await page.locator('[data-testid="control-trigger"][data-urgency="unrated"] [data-testid="control-trigger-meta"]').innerText(), /not rated yet: Bob was paused/);
-  while (await page.getByTestId("control-triggers-page-previous").isEnabled()) await page.getByTestId("control-triggers-page-previous").click();
+  while (!(await pageLabel.innerText()).startsWith("1–")) await turnPage("previous");
   await page.waitForFunction(() => document.querySelector('[data-testid="control-trigger"]')?.getAttribute("data-id") === "t1");
 
   // Closing the panel marks what it showed as seen, and the count follows.

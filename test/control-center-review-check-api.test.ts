@@ -95,9 +95,11 @@ test("a conversation that stops before its task is done is told to go on, one th
     const card = await eventually(async () => (await api<{ cards: Array<{ column: string; reviewCheck: { verdict: string } | null }> }>(node, auth, "GET", "/control-center/board")).body.cards.find((entry) => entry.reviewCheck), "the board shows the check");
     assert.equal(card.reviewCheck?.verdict, "done");
     assert.notEqual(card.column, "needs-you");
-    // Bob's note was about the turn he pushed: once he checked that turn, it leaves the chat at once, not at the next sweep.
+    // Bob's note was about the turn he pushed: it leaves the chat as soon as the conversation runs again (the board shows it),
+    // or, when that turn already ended, once he checked it; at once either way, not at the next sweep.
     const noted = await eventually(async () => (await timeline()).find((message) => message.id === said.id && message.resolvedAt), "Bob's note left the chat");
-    assert.deepEqual([noted.resolution, noted.actions], ["Bob checked it again when the turn he pushed ended.", []]);
+    assert.ok(["It is running again.", "Bob checked it again when the turn he pushed ended."].includes(noted.resolution ?? ""), noted.resolution ?? "");
+    assert.deepEqual(noted.actions, []);
 
     // Abandon stops a conversation if it still runs and closes it as marking it done does: it leaves the board, and Bob's
     // check ends. The pressed message leaves the chat, which says it: nothing new is written.
@@ -113,6 +115,17 @@ test("a conversation that stops before its task is done is told to go on, one th
     const board = (await api<{ cards: Array<{ title: string }> }>(node, auth, "GET", "/control-center/board")).body.cards;
     assert.equal(board.some((entry) => entry.title === "fix the login page in Joint Bob"), false, "it left the board");
     assert.deepEqual((await timeline()).find((message) => message.id === waits.id)?.actions, [], "the buttons ran once");
+
+    // Done on a card closes its conversation with the person's feedback, as its project's list does: it leaves the board.
+    const settings = await api<{ action: string }>(node, auth, "POST", "/control-center/bob/message", { message: "fix the settings page in Joint Bob" });
+    assert.equal(settings.body.action, "started", JSON.stringify(settings.body));
+    const settingsCard = await eventually(async () => (await api<{ cards: Array<{ title: string; projectId: string; conversationId: string }> }>(node, auth, "GET", "/control-center/board")).body.cards.find((entry) => entry.title === "fix the settings page in Joint Bob"), "the card is on the board");
+    const closed = await api(node, auth, "POST", "/control-center/cards/done", { projectId: settingsCard.projectId, conversationId: settingsCard.conversationId, feedback: { rating: "unimportant", description: "" } });
+    assert.equal(closed.status, 200, JSON.stringify(closed.body));
+    const afterDone = (await api<{ sessions: Array<{ title: string; doneAt?: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`)).body.sessions;
+    assert.ok(afterDone.find((session) => session.title === "fix the settings page in Joint Bob")?.doneAt, "the conversation is marked done");
+    await eventually(async () => (await api<{ cards: Array<{ title: string }> }>(node, auth, "GET", "/control-center/board")).body.cards.every((entry) => entry.title !== "fix the settings page in Joint Bob") || undefined, "the card left the board");
+    assert.equal((await api(node, auth, "POST", "/control-center/cards/done", { projectId: project.id, conversationId: "no-such-conversation", feedback: { rating: "unimportant", description: "" } })).status, 404);
   } finally {
     if (child) await stopDevNode(child);
     classifier.server.close();

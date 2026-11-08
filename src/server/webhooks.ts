@@ -212,10 +212,11 @@ export const webhookDeliveryPending = (id: string): boolean => pendingWebhookDel
 
 /** Accepts a call for delivery; the outcome lands in the webhook's call history. */
 export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): void {
-  announceWebhookCall(webhook, call);
-  pendingWebhookDeliveries.set(webhook.id, (pendingWebhookDeliveries.get(webhook.id) ?? 0) + 1);
   const requestId = randomUUID();
   call = { ...call, requestId };
+  // Announced with its request, so the control center can follow the run it starts.
+  announceWebhookCall(webhook, call);
+  pendingWebhookDeliveries.set(webhook.id, (pendingWebhookDeliveries.get(webhook.id) ?? 0) + 1);
   void (async () => {
     const db = await clusterV2Database();
     const project = await getProject(webhook.target.projectId);

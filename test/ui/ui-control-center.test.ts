@@ -83,6 +83,13 @@ test("the control center shows the live board, filters by project, colors cards 
         Object.assign(item, { actions: [], resolvedAt: new Date().toISOString(), resolution });
         return new Response(JSON.stringify({ pressed: item }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
+      if (path === '/api/control-center/cards/done') {
+        // As the server does: a working conversation is stopped, then closed; it leaves the board.
+        const body = JSON.parse(args[1].body);
+        window.__closed = [...(window.__closed || []), body];
+        window.__board.cards = window.__board.cards.filter((card) => card.conversationId !== body.conversationId);
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
       if (path !== '/api/control-center/board') return originalFetch(...args);
       return new Response(JSON.stringify(window.__board), { status: 200, headers: { 'content-type': 'application/json' } });
     };
@@ -297,7 +304,7 @@ test("the control center shows the live board, filters by project, colors cards 
   }, column);
   await moveCard("running");
   await page.waitForFunction(() => document.querySelector('[data-id="check"] [data-testid="control-chat-now"]')?.textContent === "Running now");
-  assert.equal(await page.locator('[data-key="p1:c3"]').getByTestId("control-card-action-done").count(), 0, "a running card cannot be closed");
+  assert.equal(await page.locator('[data-key="p1:c3"]').getByTestId("control-card-action-done").count(), 1, "a running card can be closed too");
   // A card that waits for the person can be closed from the board too, in its top row; every button stays whole on the card.
   await moveCard("needs-you");
   await page.locator('[data-key="p1:c3"][data-column="needs-you"]').waitFor();
@@ -411,6 +418,14 @@ test("the control center shows the live board, filters by project, colors cards 
     const saved = await (await fetch("/api/preferences")).json();
     return saved.controlCenter.chatRight === true && saved.controlCenter.chatWidth > 450;
   });
+
+  // A running card is closed from the board too: the same question as the project's list, then it is stopped and closed.
+  const runningCard = page.locator('[data-key="p1:c1"]');
+  assert.match(await runningCard.getByTestId("control-card-action-done").getAttribute("title") ?? "", /^Stop it and close it/);
+  await runningCard.getByTestId("control-card-action-done").click();
+  await page.getByTestId("conversation-feedback-submit").click();
+  await runningCard.waitFor({ state: "detached" });
+  assert.deepEqual(await page.evaluate(() => (window as unknown as { __closed: unknown[] }).__closed), [{ projectId: "p1", conversationId: "c1", feedback: { rating: "unimportant", description: "" } }]);
 
   // Exit and Esc both leave.
   await page.getByTestId("control-center-close-button").click();

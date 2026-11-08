@@ -21,12 +21,14 @@ import { agentFor } from "../background-agent.js";
 import { assertProjectEditable, ProjectLockedError, projectsWithSharedNames } from "./projects.js";
 import { launchQuickNote, QuickNoteLaunchError } from "./quick-note-dispatch.js";
 import { broadcastToAllClients } from "./realtime.js";
+import { placeUrgent, runNote, runOf, sweepAlerts } from "./control-center-alerts.js";
 
 /**
  * Incoming triggers. Each call a webhook accepts becomes a trigger for every person who uses Bob and can see the
- * webhook's project. Unless that person paused Bob, it is rated urgent or not: urgent ones are posted in Bob's chat with
- * buttons, the rest wait in the bell. Bob does nothing else with a trigger; the one thing it can start, when the person
- * presses the button, is a read-only investigation. The payload is outside text and is only ever read as data.
+ * webhook's project. Unless that person paused Bob, it is rated urgent or not: the rest wait in the bell, and an urgent one
+ * becomes an alert in Bob's chat with buttons, unless it is already in hand (see control-center-alerts.ts). Bob does nothing
+ * else with a trigger; the one thing it can start, when the person presses the button, is a read-only investigation. The
+ * payload is outside text and is only ever read as data.
  */
 
 export const INVESTIGATE = "trigger.investigate";
@@ -67,16 +69,19 @@ let ratingDeps: typeof bobRatingDeps = bobRatingDeps;
 /** For tests: what rates a trigger, instead of the decision model and Bob's agent. */
 export function setTriggerRatingDeps(build: typeof bobRatingDeps): void { ratingDeps = build; }
 
+/** What judges a trigger now: the decision model and Bob's agent, or what a test put in their place. */
+export const triggerRatingDeps: typeof bobRatingDeps = (actor, settings, project) => ratingDeps(actor, settings, project);
+
 /** The line under a trigger's message in the chat: where it came from and who rated it. */
 function viaFor(trigger: Trigger): string {
   const by = trigger.ratedBy === "decision-model" ? `decision model ${Math.round((trigger.confidence ?? 0) * 100)}%` : trigger.label;
   return `Webhook · ${trigger.webhookName} · ${by}`;
 }
 
-function postUrgent(db: DatabaseSync, trigger: Trigger, via: string): void {
+function postUrgent(db: DatabaseSync, trigger: Trigger, via: string, note: string | null = null): void {
   appendBobMessage(db, trigger.accountId, {
     role: "system", importance: "urgent", projectId: trigger.projectId, projectName: trigger.projectName,
-    text: [trigger.title, trigger.summary, trigger.reason ? `Why: ${trigger.reason}` : ""].filter(Boolean).join("\n"), via,
+    text: [trigger.title, trigger.summary, trigger.reason ? `Why: ${trigger.reason}` : "", note ?? ""].filter(Boolean).join("\n"), via,
     actions: [
       { id: INVESTIGATE, label: "Investigate (read-only)", style: "primary", data: { triggerId: trigger.id } },
       { id: OPEN, label: "Open", data: { triggerId: trigger.id, projectId: trigger.projectId, projectName: trigger.projectName } },
@@ -100,13 +105,28 @@ async function inTurn<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
+/** One person's urgent calls are placed one at a time, so a call that repeats one just placed finds its alert. */
+const placing = new Map<string, Promise<void>>();
+
+function inOrder(accountId: string, work: () => Promise<void>): Promise<void> {
+  const next = (placing.get(accountId) ?? Promise.resolve()).then(work);
+  placing.set(accountId, next.catch(() => undefined));
+  return next;
+}
+
 async function rateAndPost(db: DatabaseSync, actor: ActingAccount, settings: BobSettings, project: ProjectRecord, trigger: Trigger): Promise<void> {
   const paused = (): boolean => !readBobSettings(db, actor.accountId).monitoring;
   // Paused while it waited its turn or was being rated: nothing is rated or posted, and it waits unrated in the bell.
   const result = await inTurn(async () => paused() ? null : rateTrigger(await ratingDeps(actor, settings, project), trigger, settings.threshold));
   if (!result || paused()) return;
   rateStoredTrigger(db, trigger.id, result);
-  if (result.urgency === "urgent") postUrgent(db, getTrigger(db, actor.accountId, trigger.id)!, viaFor({ ...trigger, ...result }));
+  if (result.urgency !== "urgent") return;
+  const rated = getTrigger(db, actor.accountId, trigger.id)!;
+  const run = await runOf(db, rated);
+  await inOrder(actor.accountId, () => inTurn(async () => {
+    if (paused()) return;
+    await placeUrgent({ db, actor, project, trigger: rated, deps: await ratingDeps(actor, settings, project), threshold: settings.threshold, run, post: () => postUrgent(db, rated, viaFor(rated), runNote(run)) });
+  }));
 }
 
 /** Takes in one accepted call: stores it for each person it concerns, and rates it for those who have not paused Bob. */
@@ -119,7 +139,7 @@ export async function receiveWebhookCall({ webhook, call }: AcceptedWebhookCall)
   await Promise.all(listBobAccounts(db).map(async (actor) => {
     const project = await runAsAccount(actor, () => getProject(webhook.target.projectId));
     if (!project) return;
-    const trigger = insertTrigger(db, actor.accountId, { webhookId: webhook.id, webhookName: webhook.name, projectId: project.id, projectName: project.name, receivedAt, ...described });
+    const trigger = insertTrigger(db, actor.accountId, { webhookId: webhook.id, webhookName: webhook.name, projectId: project.id, projectName: project.name, receivedAt, requestId: call.requestId ?? null, ...described });
     const settings = readBobSettings(db, actor.accountId);
     if (!settings.monitoring) { changed(actor.accountId); return; }
     rating.add(trigger.id);
@@ -173,6 +193,30 @@ registerBobAction(SNOOZE, async ({ db, session, action }) => {
   rearmSnoozeTimer();
   return [bobSays(db, session, `Snoozed for an hour: ${trigger.title}. I'll post it here again then.`, { importance: "fyi", projectId: trigger.projectId, projectName: trigger.projectName, via: `Webhook · ${trigger.webhookName}` })];
 });
+
+// ── Alerts that no longer need the person leave the chat ─────────────────────────────────────────────────────
+
+const ALERT_SWEEP_MS = 5 * 60_000;
+
+/** Checks everyone's open alerts once: see `sweepAlerts`. */
+export async function sweepAlertsNow(): Promise<void> {
+  const db = await triggerDatabase();
+  for (const actor of listBobAccounts(db)) {
+    const settings = readBobSettings(db, actor.accountId);
+    if (await sweepAlerts(db, actor, settings, (project) => ratingDeps(actor, settings, project))) changed(actor.accountId);
+  }
+}
+
+let sweeping = false;
+
+/** Starts checking open alerts every few minutes, and once now. Safe to call more than once. */
+export function startAlertSweep(): void {
+  if (sweeping) return;
+  sweeping = true;
+  const sweep = () => void sweepAlertsNow().catch((error) => console.warn("Bob could not check his open alerts", error instanceof Error ? error.message : error));
+  setInterval(sweep, ALERT_SWEEP_MS).unref();
+  sweep();
+}
 
 // ── Snoozes come back ───────────────────────────────────────────────────────────────────────────────────────
 

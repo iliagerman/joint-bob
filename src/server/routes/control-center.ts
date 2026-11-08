@@ -21,7 +21,8 @@ import { sharedProjectSessions } from "../sessions-helpers.js";
 import { startMemorySync } from "../../control-center/memory-sync.js";
 import { loadBoard } from "../control-center-board.js";
 import { startControlCenterWatch } from "../control-center-watch.js";
-import { startReviewChecks } from "../control-center-review-check.js";
+import { closeFromBoard, startReviewChecks } from "../control-center-review-check.js";
+import { closeoutFeedbackSchema } from "../../conversation-closeout.js";
 import { startBobRecheck } from "../control-center-recheck.js";
 import { startBobSync } from "../../control-center/bob-sync.js";
 import { app } from "../state.js";
@@ -111,6 +112,21 @@ app.post("/api/control-center/lease", async (request, response, next) => {
     if (!takeLease(input.projectId, input.conversationId, session.accountId)) { sendError(response, 409, "Someone else is in control of this conversation"); return; }
     broadcastToAllClients({ type: "controlCenterChanged" });
     response.json({ leased: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, "Invalid request"); return; }
+    next(error);
+  }
+});
+
+const cardDoneSchema = z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(300), feedback: closeoutFeedbackSchema }).strict();
+
+/** Done on a card: closes the conversation, stopping it first when it is working. */
+app.post("/api/control-center/cards/done", async (request, response, next) => {
+  try {
+    const input = cardDoneSchema.parse(request.body);
+    if (!await projectVisible(input.projectId)) { sendError(response, 404, "Project not found"); return; }
+    await closeFromBoard(response.locals.authSession as AuthSession, input, input.feedback);
+    response.json({ ok: true });
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, "Invalid request"); return; }
     next(error);
