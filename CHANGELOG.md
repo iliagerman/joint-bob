@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.240.0 — 2026-11-08
+
+- Added opt-in machine-local quality analytics with Claude and Jev, historical backfill, issue drill-down, and retained lessons and metrics without a transcript archive.
+- Fixed learning for Done conversations beyond the history list limit and made error alerts red, stacked in the screen corner, and persistent until dismissed.
+
 ## 2.239.0 — 2026-11-08
 
 - Every running conversation on the control center's board is marked **Running** on top of its card, in green with a ring that turns, so you can see at a glance which ones are still working. It stays while the agent works or its background tasks run, and keeps turning smoothly as the board refreshes.

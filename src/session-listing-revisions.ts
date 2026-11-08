@@ -14,6 +14,13 @@
 const MAX_AGE_MS = 60_000;
 const MAX_ENTRIES = 2_000;
 
+const changeListeners = new Set<(projectId?: string) => void>();
+/** Observe existing local changes without adding a remote synchronization mechanism. */
+export function onSessionListingChange(listener: (projectId?: string) => void): () => void {
+  changeListeners.add(listener);
+  return () => { changeListeners.delete(listener); };
+}
+
 const projects = new Map<string, number>();
 let everywhere = 0;
 interface Held { revision: string; startedAt: number; value: Promise<unknown>; settled: boolean }
@@ -23,6 +30,7 @@ const held = new Map<string, Held>();
 export function sessionListingChanged(projectId?: string): void {
   if (projectId) projects.set(projectId, (projects.get(projectId) ?? 0) + 1);
   else everywhere += 1;
+  for (const listener of changeListeners) listener(projectId);
 }
 
 /**

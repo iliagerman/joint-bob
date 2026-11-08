@@ -771,6 +771,7 @@
           <option value="story">Activity overview</option>
           <option value="classifiers">Classifiers</option>
           <option value="guardian" data-admin-only>Guardian</option>
+          <option value="quality" data-admin-only>Quality</option>
           <option value="resources" data-admin-only>Resources</option>
           <option value="file-sync" data-admin-only>File sync</option>
           <option value="shortcuts">Shortcuts</option>
@@ -803,6 +804,7 @@
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines"><span class="settings-tab-icon" style="--tile:#a855f7" aria-hidden="true">🤖</span><span class="settings-tab-label">Harnesses</span></button>
           <button class="settings-tab" type="button" data-settings-tab="connections" role="tab" id="settingsTab-connections" aria-controls="settingsPanel-connections" aria-selected="false" tabindex="-1" data-testid="settings-tab-connections"><span class="settings-tab-icon" style="--tile:#f59e0b" aria-hidden="true">🔌</span><span class="settings-tab-label">Connections</span></button>
           <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers"><span class="settings-tab-icon" style="--tile:#14b8a6" aria-hidden="true">🧭</span><span class="settings-tab-label">Classifiers</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="quality" role="tab" id="settingsTab-quality" aria-controls="settingsPanel-quality" aria-selected="false" tabindex="-1" data-testid="settings-tab-quality" data-admin-only><span class="settings-tab-icon" style="--tile:#0891b2" aria-hidden="true">📈</span><span class="settings-tab-label">Quality</span></button>
           <button class="settings-tab" type="button" data-settings-tab="guardian" role="tab" id="settingsTab-guardian" aria-controls="settingsPanel-guardian" aria-selected="false" tabindex="-1" data-testid="settings-tab-guardian" data-admin-only><span class="settings-tab-icon" style="--tile:#dc2626" aria-hidden="true">🛡️</span><span class="settings-tab-label">Guardian</span></button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets"><span class="settings-tab-icon" style="--tile:#37cfab" aria-hidden="true">🔑</span><span class="settings-tab-label">Secrets</span></button>
           <button class="settings-tab" type="button" data-settings-tab="browser" role="tab" id="settingsTab-browser" aria-controls="settingsPanel-browser" aria-selected="false" tabindex="-1" data-testid="settings-tab-browser"><span class="settings-tab-icon" style="--tile:#3b82f6" aria-hidden="true">🌐</span><span class="settings-tab-label">Browser</span></button>
@@ -1748,6 +1750,10 @@
             <span id="storySaveStatus" class="settings-hint" role="status" data-testid="story-save-status"></span>
           </div>
         </section>
+        <section class="settings-panel" id="settingsPanel-quality" role="tabpanel" aria-labelledby="settingsTab-quality" tabindex="0" data-testid="settings-panel-quality" data-admin-only hidden>
+          <div class="quality-analytics" id="qualityAnalytics"></div>
+        </section>
+
         <section class="settings-panel" id="settingsPanel-guardian" role="tabpanel" aria-labelledby="settingsTab-guardian" tabindex="0" data-testid="settings-panel-guardian" data-admin-only hidden>
           <div class="guardian-settings" id="guardianSettings"></div>
         </section>

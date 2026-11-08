@@ -5166,3 +5166,17 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .guardian-review pre { max-height: 40vh; margin: 0; padding: 10px 12px; overflow: auto; border-radius: var(--radius-ctl); background: var(--code-bg); color: var(--code-text); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .guardian-review-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .guardian-review-foot .settings-hint { flex: 1 1 200px; }
+
+/* Machine-local quality dashboard: bounded pages, readable on narrow screens. */
+.quality-analytics { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
+.quality-analytics h2, .quality-analytics h3, .quality-analytics p { margin: 0 0 8px; }
+.quality-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 8px; }
+.quality-filters label { display: grid; gap: 4px; min-width: 0; }
+.quality-filters input, .quality-filters select { width: 100%; min-width: 0; }
+.quality-actions, #quality-pager { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.quality-analytics table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
+.quality-analytics th, .quality-analytics td { padding: 6px; border-bottom: 1px solid var(--line); text-align: start; overflow-wrap: anywhere; }
+.quality-analytics td button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.quality-observation { padding: 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.quality-error { color: var(--error, #b91c1c); }
+#quality-summary { font-weight: 600; }

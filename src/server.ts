@@ -69,6 +69,8 @@ import "./server/routes/routing.js";
 import "./server/routes/cluster.js";
 import "./server/routes/cluster-tasks.js";
 import "./server/routes/platform.js";
+import "./server/routes/quality-analytics.js";
+import { startQualityCollection } from "./server/quality-service.js";
 import "./server/routes/secrets.js";
 import "./server/routes/browser.js";
 import "./server/routes/background-tasks.js";
@@ -252,6 +254,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTaskConversationRecords(); })
       // A returning node pulls the dashboards it missed while away; afterwards change notices keep it current.
       .then(() => inBackground(refreshSharedDashboards))
+      .then(() => startQualityCollection())
       .catch((error) => console.warn("Startup recovery failed", error));
     setInterval(() => { if (clusterWorkAllowed()) inBackground(() => pullFromHubs()).catch((error) => console.warn("Hub pull failed", error)); }, 60_000).unref();
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();

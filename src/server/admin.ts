@@ -13,6 +13,8 @@ export function isNodeAdmin(session: Pick<AuthSession, "role" | "isRemoteLogin" 
  * Paths are matched without the `/api` prefix.
  */
 export const ADMIN_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
+  // Analytics are machine-local and never exposed through peer/agent capabilities.
+  { method: "*", path: /^\/quality-analytics(\/|$)/ },
   // Node settings: harness paths, Syncthing, home folder, limits, sync check, skills publishing.
   { method: "PUT", path: /^\/settings$/ },
   { method: "*", path: /^\/settings\/(sync-check|runtime-defaults|runtime-check|skills)(\/|$)/ },
