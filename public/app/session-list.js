@@ -53,7 +53,22 @@ function syncChatFilterChips() {
   }
 }
 
+/** Conversations marked done whose lessons are worked out on the server after the fact: the list says once how it went. */
+const learning = new Map();
+
+function reportLearning() {
+  for (const [id, projectId] of learning) {
+    if (state.activeProjectId !== projectId) continue;
+    const feedback = state.sessions.find((session) => (session.conversationId || session.id) === id)?.feedback;
+    if (feedback?.status === "error") toast.error(`Conversation is done, but learning failed: ${feedback.error}`);
+    else if (feedback?.status === "complete") toast("Feedback reviewed. Any new rule proposals are in Project knowledge.");
+    else continue;
+    learning.delete(id);
+  }
+}
+
 export function renderSessions() {
+  reportLearning();
   syncRecentSessionActivity();
   keepListScroll(elements.sessionList);
   // A background refresh must not leave a menu floating over rows that just moved.
@@ -544,7 +559,7 @@ async function toggleSessionDone(session) {
   const engine = sessionEngine(session);
   const feedback = done ? await chooseConversationFeedback(session) : undefined;
   if (done && !feedback) return;
-  toast(done ? (feedback.rating === "unimportant" ? "Conversation marked done" : "Conversation marked done; reviewing feedback…") : "Conversation reopened");
+  toast(done ? (feedback.rating === "unimportant" ? "Conversation marked done" : "Conversation marked done; learning from it in the background") : "Conversation reopened");
   let result;
   try {
     result = await changeSessionOptimistically(session, { patch: { doneAt: done ? new Date().toISOString() : undefined } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/done`, {
@@ -554,8 +569,7 @@ async function toggleSessionDone(session) {
   } catch (error) {
     throw new Error(`${done ? "Could not mark the conversation done" : "Could not reopen the conversation"}: ${error.message}`);
   }
-  if (result.feedbackError) toast.error(`Conversation is done, but learning failed: ${result.feedbackError}`);
-  else if (done && feedback.rating !== "unimportant") toast("Feedback reviewed. Any new rule proposals are in Project knowledge.");
+  if (done && feedback.rating !== "unimportant") learning.set(session.conversationId || session.id, projectId);
   if (state.activeProjectId !== projectId) return;
   void refreshSessionsQuietly();
   state.worktreeCleanupReasons = result.retainedWorktrees || {};

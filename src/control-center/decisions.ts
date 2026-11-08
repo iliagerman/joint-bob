@@ -15,6 +15,8 @@ export interface BobDecision {
   autoRespond: boolean;
   /** The lowest confidence among the answers this decision rests on. */
   confidence: number;
+  /** How sure the model is of `kind` alone: a task it is sure of can still need the person to say which project. */
+  kindConfidence: number;
 }
 
 /** Sends one batch of Choice questions to the decision model. Null means it could not answer. */
@@ -154,7 +156,7 @@ export async function decideForBob(input: DecideInput): Promise<BobDecision | nu
       confidence = Math.min(confidence, noneConfidence);
     }
   }
-  return { kind: first.kind.choice as BobKind, size: first.size.choice as BobSize, projectId, autoRespond, confidence };
+  return { kind: first.kind.choice as BobKind, size: first.size.choice as BobSize, projectId, autoRespond, confidence, kindConfidence: first.kind.confidence };
 }
 
 /** Bob's own agent decides when the decision model is missing, could not answer, or was not sure enough. */

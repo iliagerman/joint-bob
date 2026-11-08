@@ -56,6 +56,8 @@ function updateFormControls() {
   imageButton.disabled = formSaving || readingImages;
 }
 let preserveView = false;
+/** The form starts a conversation now instead of saving a note (the control center's New conversation). */
+let startingNow = false;
 let availableModels = null;
 let filterProjectId = null;
 let notesRequestId = 0;
@@ -480,12 +482,13 @@ dialog.addEventListener("paste", (event) => {
 
 dialog.addEventListener("close", () => { ++dialogGeneration; ++optionsRequestId; });
 
-export async function openQuickNote(note = null, { chooseProject = false } = {}) {
+export async function openQuickNote(note = null, { chooseProject = false, startNow = false, projectId = null, content = "" } = {}) {
   if (note?.dispatchedAt) {
     await openNoteConversation(note).catch((error) => toast.error(error.message));
     return;
   }
-  const defaultProjectId = state.activeProjectId || (chooseProject ? state.projects[0]?.id : null);
+  startingNow = startNow && !note;
+  const defaultProjectId = projectId || state.activeProjectId || (chooseProject ? state.projects[0]?.id : null);
   if (!defaultProjectId && !note) { toast("Select a project first"); return; }
   preserveView = chooseProject;
   editingId = note?.id || null;
@@ -499,12 +502,17 @@ export async function openQuickNote(note = null, { chooseProject = false } = {})
   deleteButton.hidden = !editingId;
   convertButton.hidden = !editingId;
   saveButton.disabled = true;
-  document.querySelector("#quickNoteDialogTitle").textContent = editingId ? "Edit quick note" : "New quick note";
+  document.querySelector("#quickNoteDialogTitle").textContent = startingNow ? "New conversation" : editingId ? "Edit quick note" : "New quick note";
+  // Starting now: the message is what the agent gets, the title can come from it, and there is nothing to schedule.
+  saveButton.textContent = startingNow ? "Start conversation" : "Save note";
+  titleInput.required = !startingNow;
+  contentInput.required = startingNow;
+  scheduleInput.closest("label").hidden = startingNow;
   const selectedProjectId = note?.projectId || defaultProjectId;
   projectPicker.setOptions(state.projects.map((project) => ({ value: project.id, label: project.name })));
   projectPicker.setValue(selectedProjectId || "");
   titleInput.value = note?.title || "";
-  contentInput.value = note?.content || "";
+  contentInput.value = note?.content || content;
   scheduleInput.value = note?.scheduledAt ? toDatetimeLocal(note.scheduledAt) : "";
   dialogImages = note?.images ? note.images.map((image) => ({ ...image })) : [];
   renderDialogImages();
@@ -556,10 +564,11 @@ async function saveNote(event) {
   event.preventDefault();
   showError();
   if (saveButton.disabled) return;
-  if (!selectedProjectId()) { showError("Choose a project for this note."); return; }
+  if (!selectedProjectId()) { showError(startingNow ? "Choose a project for the conversation." : "Choose a project for this note."); return; }
   formSaving = true;
   updateFormControls();
   try {
+    if (startingNow) { await startNow(); return; }
     await persistNote();
     dialog.close();
     if (preserveView) toast("Note saved");
@@ -571,6 +580,22 @@ async function saveNote(event) {
     formSaving = false;
     updateFormControls();
   }
+}
+
+/**
+ * Saves the form as a note and starts it at once, as Start does on a saved note; the page stays where it is. Who opened the
+ * form hears which conversation started (the control center shows it on the board).
+ */
+async function startNow() {
+  if (!titleInput.value.trim()) titleInput.value = contentInput.value.trim().split("\n")[0].slice(0, 120);
+  const note = await persistNote();
+  let body = null;
+  // 409: the notes queue started it first, which is what was asked.
+  try { body = await api(`/api/quick-notes/${encodeURIComponent(note.id)}/start`, { method: "POST", body: JSON.stringify({}) }); }
+  catch (error) { if (error.status !== 409) throw error; }
+  dialog.close();
+  toast(`Started “${note.title}” in ${state.projects.find((project) => project.id === note.projectId)?.name ?? "its project"}`);
+  window.dispatchEvent(new CustomEvent("conversation-started", { detail: { projectId: note.projectId, sessionId: body?.sessionId ?? null, title: note.title } }));
 }
 
 /** Resolve the existing transcript, never a draft path or a new prompt. */

@@ -14,7 +14,7 @@ export interface WorkspaceRecord {
 }
 
 /** A fixed palette keeps project accents legible in both themes. */
-export const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red"] as const;
+export const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red", "orange", "yellow", "lime", "cyan", "indigo", "purple", "pink", "brown"] as const;
 
 export type ProjectColor = (typeof PROJECT_COLORS)[number];
 

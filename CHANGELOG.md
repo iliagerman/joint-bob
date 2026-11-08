@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.246.0 — 2026-11-08
+
+- Marking a conversation done answers at once, with or without a comment. For Good or Bad, what to learn from it is worked out in the background, and the page says once when that finished or failed; before, the request waited up to a minute for it.
+- The board and Bob's chat draw each project in its own color again: the color chosen in a project's settings is used (the board had dropped it), and projects without one get a color no other project has. Eight more colors (orange, yellow, lime, cyan, indigo, purple, pink and brown) can be chosen for projects, conversations and worktrees.
+- **+ New conversation** on the board opens the quick note form to start a conversation now, in any project, with the agent, model and machine you choose, and you stay on the board.
+- When Bob is sure you asked for work but cannot tell which project, he asks, with a button for each likely project that starts your request as written, and **Another project…** that opens the New conversation form with it.
+
 ## 2.245.0 — 2026-11-08
 
 - API errors now identify the failed request, distinguish timeouts from unexplained interruptions, and keep diagnostics in Settings logs without request query values, headers or bodies. Only confirmed caller cancellations are hidden; interrupted writes warn that the change may already have taken effect.

@@ -17,9 +17,11 @@ Eligible conversations are marked Done and sent for automatic Good/Bad/Not impor
 
 ## Recovery and visibility
 
-Feedback, its source and processing state replicate with conversation metadata. Pending and failed reviews are retried by the owning node on its hourly sweep, including after restart. A missing decision model or failed agent call remains an explicit error rather than an invented classification. The Done badge shows learning failures; its tooltip contains the description and error. A manual Done request also returns the error to the page.
+Feedback, its source and processing state replicate with conversation metadata. Pending and failed reviews are retried by the owning node on its hourly sweep, including after restart. A missing decision model or failed agent call remains an explicit error rather than an invented classification. The Done badge shows learning failures; its tooltip contains the description and error.
 
-Worktree cleanup waits while the project has unfinished feedback, so a failed review does not lose the transcript it needs to retry. Reopening clears the closeout record; marking Done again permits new feedback.
+Marking a conversation Done answers at once, with or without a description: the conversation is done before anything is learned from it. For Good/Bad, the learning (the summary writer's draft, then the decision model's review of lessons) runs after the answer, which can take up to a minute; the badge says *Done · learning…* until it finishes. The page that marked it says once how it went: *Feedback reviewed* or, as an error, *Conversation is done, but learning failed: …*.
+
+Worktree cleanup waits while the project has unfinished feedback, so a failed review does not lose the transcript it needs to retry; it runs once a background review finishes and none is left unfinished. Reopening clears the closeout record; marking Done again permits new feedback.
 
 ## Focused tests
 

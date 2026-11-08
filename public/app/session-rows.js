@@ -8,7 +8,7 @@ import { state } from "./state.js";
 import { openEditTaskDialog } from "./tasks.js";
 
 /** The fixed palette mirrors PROJECT_COLORS in src/types.ts. */
-export const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red"];
+export const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red", "orange", "yellow", "lime", "cyan", "indigo", "purple", "pink", "brown"];
 
 export function isProjectPinned(projectId) {
   return state.pinnedProjectIds.includes(projectId) || state.replicatedPinnedProjectIds.includes(projectId);

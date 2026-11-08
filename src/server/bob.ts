@@ -1,9 +1,12 @@
+import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import type { AuthSession } from "../auth.js";
 import { decisionModelTarget } from "../classifiers/conversation-routing.js";
 import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import { BOB_INSTRUCTIONS, bobContext, bobMaterial } from "../control-center/bob-context.js";
 import { appendBobMessage, bobDatabase, listBobMessages, readBobSettings, rememberBobAccount, type BobMessage, type BobSettings } from "../control-center/bob-store.js";
-import { actingAccountFromSession } from "../account-context.js";
+import { actingAccountFromSession, runAsAccount } from "../account-context.js";
+import { BobActionError, bobSays, registerBobAction } from "../control-center/bob-actions.js";
 import { collectBobContext, notifyBobExchange, type BobTurn } from "../control-center/bob-hooks.js";
 import { harnessFromMessage } from "../control-center/harness-override.js";
 import { listHarnesses } from "../harnesses.js";
@@ -126,6 +129,75 @@ export function jointBobSource(projects: ProjectRecord[]): ProjectRecord | undef
   });
 }
 
+interface TaskRun {
+  session: AuthSession; settings: BobSettings; project: ProjectRecord; message: string; attachments: BobAttachments; recentChat: string[];
+  model: Awaited<ReturnType<typeof bobDecisionModel>>; decision: BobDecision; via: string; turn: BobTurn;
+}
+
+/**
+ * Work for a project: handed to the conversation it belongs to, when the decision model finds one, or started as a new one with
+ * Bob's agent (or the one the message names) and what Bob knows about how the person works. `started` is false when nothing ran.
+ */
+async function runTask(task: TaskRun): Promise<{ text: string; via: string; started: boolean; sessionId: string | null }> {
+  const { session, settings, project, message } = task;
+  await assertProjectEditable(project);
+  // Bob's own agent, unless the person named another in the message ("do it with Pi").
+  const named = harnessFromMessage(message, listHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label })));
+  if (named && !listDiscoveredHarnesses().some((adapter) => adapter.id === named && adapter.runtime)) {
+    return { text: `I cannot run ${named} on this machine, so I did not start anything. Say which agent to use, or leave it to me.`, via: task.via, started: false, sessionId: null };
+  }
+  const harnessId = named ?? (settings.harnessId || iconHarnessId());
+  const continued = task.model ? await continueExisting({ session, settings, project, message, attachments: task.attachments, recentChat: task.recentChat, model: task.model }) : null;
+  if (continued && "text" in continued) return { text: continued.text, via: task.via, started: true, sessionId: null };
+  const skipped = continued && "skipped" in continued ? ` ${continued.skipped}` : "";
+  // What Bob knows about how the person works goes into the brief, the way they would write it themselves.
+  const known = await collectBobContext(task.turn);
+  const brief = known.text ? `${message}\n\n---\nNotes about how I work, kept by my assistant:\n${known.text}` : message;
+  const started = await startBobConversation({ session, settings, project, title: titleOf(message), brief, harnessId, autoRespond: bobWantsAutoRespond(settings, task.decision), attachments: task.attachments });
+  return {
+    text: `Started in ${project.name}. It is on the board now; I'll show what it is doing there.${started.autoRespondNote}${skipped}`,
+    via: [task.via, ...known.via].join(" · "), started: true, sessionId: started.sessionId,
+  };
+}
+
+const START_TASK = "bob.start-task";
+const PROJECTS_OFFERED = 4;
+const QUOTED = 160;
+
+/** "Which project?" with a button for the likeliest projects (the decision model's guess first, then the most recently worked on) and one for any other. */
+function askWhichProject(db: DatabaseSync, session: AuthSession, message: string, decision: BobDecision, options: BobProjectOption[]): BobMessage {
+  const ordered = [...options].sort((left, right) => Number(right.id === decision.projectId) - Number(left.id === decision.projectId));
+  const quoted = message.length > QUOTED ? `${message.slice(0, QUOTED - 1)}…` : message;
+  return appendBobMessage(db, session.accountId, {
+    role: "bob", importance: "needs-you", via: `Decision model ${Math.round(decision.kindConfidence * 100)}% · task · project unclear`,
+    text: `Which project should I start this in?\n“${quoted}”`,
+    actions: [
+      // A message's buttons are told apart by id, so each project's button has its own.
+      ...ordered.slice(0, PROJECTS_OFFERED).map((option, index) => ({ id: `${START_TASK}.${index}`, label: option.name, data: { projectId: option.id, message, autoRespond: decision.autoRespond } })),
+      // Opens the New conversation form in the page, with the request in it: any project, machine and agent.
+      { id: "bob.new-conversation", label: "Another project…", data: { create: { content: message } } },
+    ],
+  });
+}
+
+const startTaskData = z.object({ projectId: z.string().min(1), message: z.string().min(1), autoRespond: z.boolean() });
+
+// The person picked the project: the request starts there as if they had named it.
+const startChosenTask: Parameters<typeof registerBobAction>[1] = async ({ db, session, action }) => runAsAccount(actingAccountFromSession(session), async () => {
+  const { projectId, message, autoRespond } = startTaskData.parse(action.data);
+  const settings = readBobSettings(db, session.accountId);
+  const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
+  const project = projects.find((candidate) => candidate.id === projectId);
+  if (!project) throw new BobActionError(404, "That project is not here anymore");
+  const options = await projectOptions(projects, session);
+  const turn: BobTurn = { session, message, recentChat: [], project: { id: project.id, name: project.name }, options, settings };
+  const decision: BobDecision = { kind: "task", size: "long", projectId, autoRespond, confidence: 1, kindConfidence: 1 };
+  const done = await runTask({ session, settings, project, message, attachments: { images: [], files: [] }, recentChat: [], model: await bobDecisionModel(projects, settings), decision, via: `You chose ${project.name}`, turn });
+  if (done.started) notifyBobExchange(turn, done.text);
+  return [bobSays(db, session, done.text, { importance: done.started ? "done" : "fyi", projectId: project.id, projectName: project.name, via: done.via })];
+});
+for (let index = 0; index < PROJECTS_OFFERED; index += 1) registerBobAction(`${START_TASK}.${index}`, startChosenTask);
+
 /** `appearance` is the page's new display settings, when Bob's display agent changed them; the page applies them. */
 export interface BobReply { action: "started" | "answer"; user: BobMessage; reply: BobMessage; projectId: string | null; sessionId?: string | null; appearance?: AppearanceSettings }
 
@@ -186,32 +258,19 @@ export async function handleBobMessage(session: AuthSession, input: { message: s
   if (organized) return { action: "answer", user, reply: organized, projectId: organized.projectId };
 
   if (!input.answerOnly && sure && sure.kind === "task" && project) {
-    await assertProjectEditable(project);
-    // Bob's own agent, unless the person named another in the message ("do it with Pi").
-    const named = harnessFromMessage(input.message, listHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label })));
-    if (named && !listDiscoveredHarnesses().some((adapter) => adapter.id === named && adapter.runtime)) {
-      const refusal = appendBobMessage(db, session.accountId, { role: "bob", text: `I cannot run ${named} on this machine, so I did not start anything. Say which agent to use, or leave it to me.`, via: viaText(null, sure, project.name), projectId: project.id, projectName: project.name });
-      return { action: "answer", user, reply: refusal, projectId: project.id };
-    }
-    const harnessId = named ?? (settings.harnessId || iconHarnessId());
-    const continued = model ? await continueExisting({ session, settings, project, message: input.message, attachments, recentChat: recent, model }) : null;
-    if (continued && "text" in continued) {
-      const reply = appendBobMessage(db, session.accountId, { role: "bob", text: continued.text, via: viaText(null, sure, project.name), projectId: project.id, projectName: project.name });
-      notifyBobExchange(turn, reply.text);
-      return { action: "started", user, reply, projectId: project.id };
-    }
-    const skipped = continued && "skipped" in continued ? ` ${continued.skipped}` : "";
-    // What Bob knows about how the person works goes into the brief, the way they would write it themselves.
-    const known = await collectBobContext(turn);
-    const brief = known.text ? `${input.message}\n\n---\nNotes about how I work, kept by my assistant:\n${known.text}` : input.message;
-    const started = await startBobConversation({ session, settings, project, title: titleOf(input.message), brief, harnessId, autoRespond: bobWantsAutoRespond(settings, sure), attachments });
-    const autoRespondNote = started.autoRespondNote;
-    const reply = appendBobMessage(db, session.accountId, {
-      role: "bob", text: `Started in ${project.name}. It is on the board now; I'll show what it is doing there.${autoRespondNote}${skipped}`,
-      via: [viaText(null, sure, project.name), ...known.via].join(" · "), projectId: project.id, projectName: project.name,
-    });
+    const done = await runTask({ session, settings, project, message: input.message, attachments, recentChat: recent, model, decision: sure, via: viaText(null, sure, project.name), turn });
+    const reply = appendBobMessage(db, session.accountId, { role: "bob", text: done.text, via: done.via, projectId: project.id, projectName: project.name });
+    if (!done.started) return { action: "answer", user, reply, projectId: project.id };
     notifyBobExchange(turn, reply.text);
-    return { action: "started", user, reply, projectId: project.id, sessionId: started.sessionId };
+    return { action: "started", user, reply, projectId: project.id, sessionId: done.sessionId };
+  }
+
+  // Work Bob is sure was asked for, in a project he cannot tell: he asks where instead of guessing, and the buttons keep the
+  // request, so pressing one starts it as written. Attachments cannot ride on a button, so a message with them is answered.
+  if (!input.answerOnly && !project && !attachedNames.length && decision?.kind === "task" && decision.kindConfidence >= settings.threshold) {
+    const reply = askWhichProject(db, session, input.message, decision, options);
+    notifyBobExchange(turn, reply.text);
+    return { action: "answer", user, reply, projectId: null };
   }
 
   const reason = !model ? "no-decision-model" : !decision ? "no-answer" : sure ? sure.kind : "low-confidence";

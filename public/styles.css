@@ -3406,6 +3406,14 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 [data-color="amber"] { --project-hue: #e0a33a; }
 [data-color="green"] { --project-hue: #46b35e; }
 [data-color="red"] { --project-hue: #e05c4b; }
+[data-color="orange"] { --project-hue: #e8793a; }
+[data-color="yellow"] { --project-hue: #cfb22a; }
+[data-color="lime"] { --project-hue: #8cc63f; }
+[data-color="cyan"] { --project-hue: #2ab3d6; }
+[data-color="indigo"] { --project-hue: #5c6bd6; }
+[data-color="purple"] { --project-hue: #a259d9; }
+[data-color="pink"] { --project-hue: #e86a9a; }
+[data-color="brown"] { --project-hue: #a87a52; }
 
 /* The accent bar makes a row findable by colour before the name is read. */
 .project-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; background: color-mix(in srgb, var(--project-hue) 12%, transparent); }
@@ -4820,6 +4828,14 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 [data-worktree-color="amber"] { --worktree-hue: #e0a33a; }
 [data-worktree-color="green"] { --worktree-hue: #46b35e; }
 [data-worktree-color="red"] { --worktree-hue: #e05c4b; }
+[data-worktree-color="orange"] { --worktree-hue: #e8793a; }
+[data-worktree-color="yellow"] { --worktree-hue: #cfb22a; }
+[data-worktree-color="lime"] { --worktree-hue: #8cc63f; }
+[data-worktree-color="cyan"] { --worktree-hue: #2ab3d6; }
+[data-worktree-color="indigo"] { --worktree-hue: #5c6bd6; }
+[data-worktree-color="purple"] { --worktree-hue: #a259d9; }
+[data-worktree-color="pink"] { --worktree-hue: #e86a9a; }
+[data-worktree-color="brown"] { --worktree-hue: #a87a52; }
 .worktree-subsection-title { display: flex; align-items: center; gap: 8px; margin: 10px 2px 4px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 .worktree-subsection-title:first-child { margin-top: 2px; }
 .worktree-subsection-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }

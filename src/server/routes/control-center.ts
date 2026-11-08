@@ -50,7 +50,8 @@ app.get("/api/control-center/board", async (_request, response, next) => {
     // Opening the control center is how Bob learns who to tell about things that happen later.
     rememberBobAccount(await bobDatabase(), actingAccountFromSession(session));
     const { cards, projects } = await loadBoard(session);
-    response.json({ cards, projects: projects.map((project) => ({ id: project.id, name: project.name })) });
+    // The project's own color goes along: the board and Bob's chat draw each project in it.
+    response.json({ cards, projects: projects.map((project) => ({ id: project.id, name: project.name, color: project.color ?? null })) });
   } catch (error) {
     next(error);
   }

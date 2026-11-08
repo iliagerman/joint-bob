@@ -33,7 +33,8 @@ test("learning failures are red corner alerts, stack without overlap, and persis
     const row = page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first();
     await row.locator("button").first().click();
     await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
-    await page.route("**/api/projects/*/sessions/done", (route) => route.fulfill({ json: { ok: true, feedbackError: "Learning service unavailable" } }));
+    // Marking done answers at once; the lessons are worked out after, and this node has no decision model, so that fails and
+    // the list reports it when it shows the conversation's feedback.
     await page.setViewportSize({ width: 720, height: 900 });
     await page.getByTestId("chat-more-button").click();
     await page.getByTestId("chat-done-button").click();

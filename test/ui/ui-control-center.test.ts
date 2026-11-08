@@ -116,7 +116,26 @@ test("the control center shows the live board, filters by project, colors cards 
   // Each project's group is in the project's color: the one chosen in its settings, or a steady one from the palette.
   const colorOf = (id: string) => page.locator(`[data-testid="control-project-group"][data-project="${id}"]`).first().getAttribute("data-color");
   assert.equal(await colorOf("p1"), "violet", "the color chosen for the project");
-  assert.ok(["teal", "blue", "magenta", "amber", "green", "red"].includes((await colorOf("p2")) ?? ""), "a project without one gets one from the palette");
+  const p2Color = (await colorOf("p2")) ?? "";
+  assert.ok(p2Color && !["slate", "violet"].includes(p2Color), `a project without one gets one from the palette that no other project has, got ${p2Color}`);
+  // Projects without a color of their own never share one while the palette has colors left, whatever their ids hash to.
+  const assigned = await page.evaluate(async () => {
+    const { projectColor } = await import("/app/control-center.js");
+    return ["p1", "p2"].map((id) => projectColor(id));
+  });
+  assert.deepEqual(assigned, ["violet", p2Color]);
+  const many = await page.evaluate(async () => {
+    const fixture = (window as unknown as { __board: { projects: Array<{ id: string; name: string; color?: string }> } }).__board;
+    const kept = fixture.projects;
+    fixture.projects = [...kept, ...Array.from({ length: 12 }, (_, index) => ({ id: `extra-${index}`, name: `Extra ${index}` }))];
+    const { projectColor, refreshControlCenter } = await import("/app/control-center.js");
+    await refreshControlCenter();
+    const colors = fixture.projects.map((project) => projectColor(project.id));
+    fixture.projects = kept;
+    await refreshControlCenter();
+    return colors;
+  });
+  assert.equal(new Set(many).size, 14, `14 projects, 14 colors: ${many.join(", ")}`);
   const tops = await page.getByTestId("control-project-group").evaluateAll((groups) => groups.map((group) => getComputedStyle(group).borderTopColor));
   assert.ok(new Set(tops).size >= 2, `the projects' groups have different colors: ${tops.join(", ")}`);
   assert.equal(await page.getByTestId("control-center-filters").locator('.control-chip.project[data-color="violet"]').textContent(), "Joint Bob", "its filter chip too");
@@ -426,6 +445,30 @@ test("the control center shows the live board, filters by project, colors cards 
   await page.getByTestId("conversation-feedback-submit").click();
   await runningCard.waitFor({ state: "detached" });
   assert.deepEqual(await page.evaluate(() => (window as unknown as { __closed: unknown[] }).__closed), [{ projectId: "p1", conversationId: "c1", feedback: { rating: "unimportant", description: "" } }]);
+
+  // + New conversation opens the quick note form to start one at once, in any project, without leaving the board.
+  await page.getByTestId("control-board-tool-new-conversation").click();
+  const form = page.getByTestId("quick-note-dialog");
+  await form.waitFor({ state: "visible" });
+  assert.equal(await page.locator("#quickNoteDialogTitle").textContent(), "New conversation");
+  assert.equal(await page.getByTestId("quick-note-save-button").textContent(), "Start conversation");
+  assert.equal(await page.getByTestId("quick-note-schedule-input").isVisible(), false, "nothing to schedule");
+  await page.getByTestId("quick-note-content-input").fill("check the login page copy");
+  await page.getByTestId("quick-note-save-button").click();
+  await form.waitFor({ state: "hidden" });
+  await page.locator(".toast", { hasText: /^Started “check the login page copy” in / }).waitFor();
+  assert.equal(await page.locator("body.view-control").count(), 1, "the board stays");
+  // Bob's "Another project…" opens the same form with the request in it.
+  await page.evaluate(() => {
+    (window as unknown as { __timeline: unknown[] }).__timeline.push({ id: "where", role: "bob", text: "Which project should I start this in?\n“fix the sidebar spacing”", via: null, projectId: null, projectName: null, importance: "needs-you", createdAt: new Date().toISOString(),
+      actions: [{ id: "bob.new-conversation", label: "Another project…", data: { create: { content: "fix the sidebar spacing" } } }] });
+    window.dispatchEvent(new CustomEvent("control-center-changed"));
+  });
+  await page.getByTestId("control-chat-entry").filter({ hasText: "Which project should I start this in?" }).getByRole("button", { name: "Another project…" }).click();
+  await form.waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("quick-note-content-input").inputValue(), "fix the sidebar spacing");
+  await page.keyboard.press("Escape");
+  await form.waitFor({ state: "hidden" });
 
   // Exit and Esc both leave.
   await page.getByTestId("control-center-close-button").click();

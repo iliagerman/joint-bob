@@ -6,8 +6,10 @@ import { formatDate, toast } from "./shell.js";
 import { state } from "./state.js";
 import { registerControlView } from "./control-views.js";
 import { chooseConversationFeedback } from "./conversation-feedback.js";
-import { boardTools, briefStatus, cardActionList, decorateCard, projectActionList, registerCardAction } from "./control-cards.js";
+import { boardTools, briefStatus, cardActionList, decorateCard, projectActionList, registerBoardTool, registerCardAction } from "./control-cards.js";
+import { openQuickNote } from "./quick-notes.js";
 import { glide, positions, vanish } from "./control-vanish.js";
+import { PROJECT_COLORS } from "./session-rows.js";
 
 const DEFAULT_COLOR = "#3a3f46";
 const COLUMNS = [
@@ -30,19 +32,45 @@ function save() {
 
 const cardKey = (card) => `${card.projectId}:${card.conversationId}`;
 
-/** The palette a project without a color of its own is given a steady color from; slate is left for what belongs to no project. */
-const PROJECT_PALETTE = ["teal", "blue", "violet", "magenta", "amber", "green", "red"];
-
 /**
- * A project's color, on the board and in Bob's chat: the one chosen in the project's settings, as its project list shows it,
- * or a steady one from its id (FNV-1a, so like ids get unlike colors).
+ * The palette a project without a color of its own is given a color from; slate is left for what belongs to no project.
+ * Read when used: the color list's module imports back into this one, so it is not ready while this one loads.
  */
-export function projectColor(projectId) {
-  const chosen = board.projects.find((project) => project.id === projectId)?.color;
-  if (chosen) return chosen;
+const palette = () => PROJECT_COLORS.filter((color) => color !== "slate");
+
+/** A steady start in the palette from a project's id (FNV-1a, so like ids get unlike colors). */
+function paletteStart(projectId) {
   let hash = 0x811c9dc5;
   for (const character of projectId) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
-  return PROJECT_PALETTE[(hash >>> 0) % PROJECT_PALETTE.length];
+  return (hash >>> 0) % palette().length;
+}
+
+/**
+ * Each project's color, worked out once per set of projects: the one chosen in its settings, as its project list shows it;
+ * the others, in id order, take the first color from their steady start that no other project has, so no two share one
+ * until the palette runs out.
+ */
+let colorsOf = { key: "", colors: new Map() };
+function projectColors() {
+  const key = JSON.stringify(board.projects.map((project) => [project.id, project.color ?? null]));
+  if (key === colorsOf.key) return colorsOf.colors;
+  const colors = new Map(board.projects.filter((project) => project.color).map((project) => [project.id, project.color]));
+  const taken = new Set(colors.values());
+  for (const project of [...board.projects].filter((candidate) => !candidate.color).sort((left, right) => left.id.localeCompare(right.id))) {
+    const choices = palette();
+    const start = paletteStart(project.id);
+    const free = choices.map((_, step) => choices[(start + step) % choices.length]).find((color) => !taken.has(color));
+    const color = free ?? choices[start];
+    colors.set(project.id, color);
+    taken.add(color);
+  }
+  colorsOf = { key, colors };
+  return colors;
+}
+
+/** A project's color, on the board and in Bob's chat. One the board does not list yet keeps its steady start. */
+export function projectColor(projectId) {
+  return projectColors().get(projectId) ?? palette()[paletteStart(projectId)];
 }
 
 function element(tag, className, text) {
@@ -430,6 +458,15 @@ export function seeCardOff(projectId, conversationId, label) {
 window.addEventListener("control-bob-action", ({ detail }) => {
   if (detail.actionId === "conversation.done" || detail.actionId === "conversation.abandon") seeCardOff(detail.data.projectId, detail.data.conversationId, detail.label);
 });
+
+/** A new conversation from the board: the quick note form, started at once, in the project the board is focused on. */
+export function newConversation(content = "") {
+  const focused = state.controlCenter.filter.length === 1 ? state.controlCenter.filter[0] : null;
+  return openQuickNote(null, { chooseProject: true, startNow: true, projectId: focused, content });
+}
+registerBoardTool({ id: "new-conversation", label: "+ New conversation", title: "Start a conversation in any project, on any machine, with the agent you choose", order: 10, run: () => newConversation() });
+// The card shows up as soon as the conversation has started, not at the next refresh.
+window.addEventListener("conversation-started", () => { if (document.body.classList.contains("view-control")) void refreshControlCenter().catch(() => undefined); });
 
 function resetBoard() {
   const { chatRight, chatWidth } = state.controlCenter;

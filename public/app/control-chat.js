@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { appearanceContext, applyAppearance } from "./appearance.js";
 import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
-import { focusProject, openConversation, projectColor, refreshControlCenter, saveControlCenter, seeCardOff } from "./control-center.js";
+import { focusProject, newConversation, openConversation, projectColor, refreshControlCenter, saveControlCenter, seeCardOff } from "./control-center.js";
 import { takeControl } from "./control-lease.js";
 import { vanish } from "./control-vanish.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
@@ -395,9 +395,11 @@ function loadMessages() {
 }
 
 async function runAction(message, action, button) {
-  // Opening a conversation and undoing a display change happen in the page; every other button is answered by the server.
+  // Opening a conversation, undoing a display change and the New conversation form happen in the page; every other button is
+  // answered by the server.
   if (action.data?.open) { openFrom(message, action.data.open).catch((error) => toast.error(error.message)); return; }
   if (action.data?.appearance) { applyAppearance(action.data.appearance); toast("Display settings put back"); return; }
+  if (action.data?.create) { newConversation(action.data.create.content).catch((error) => toast.error(error.message)); return; }
   button.disabled = true;
   try {
     const result = await api("/api/control-center/bob/action", { method: "POST", body: JSON.stringify({ messageId: message.id, actionId: action.id }) });

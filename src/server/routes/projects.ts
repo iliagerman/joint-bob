@@ -7,6 +7,7 @@ import { actorOwns } from "../../ownership.js";
 import { grantProjectFolder } from "../multi-user-setup.js";
 import { actingAccount, asNode } from "../../account-context.js";
 import { listHarnessSessions } from "../../harnesses.js";
+import type { CloseoutRecord } from "../../conversation-closeout.js";
 import type { HarnessId, ProjectRecord } from "../../types.js";
 import { terminalAccessSettings, terminalAllowedFor } from "../../settings.js";
 import { cleanupDoneWorktrees } from "../worktree-cleanup.js";
@@ -320,21 +321,36 @@ export async function markConversationDoneAsActor(projectId: string, raw: unknow
   const payload = sessionDoneSchema.parse(raw);
   if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) throw new NotFoundError("Conversation not found");
   // Like classification, a conversation can be closed out before its transcript exists.
-  let feedbackError: string | undefined;
   if (payload.done) {
     const record = await beginConversationCloseout(project, payload.engine, payload.sessionId, payload.feedback ?? { rating: "unimportant", description: "" });
-    feedbackError = await finishConversationCloseout(project, payload.sessionId, record);
+    if (record.status === "pending") learnInBackground(project, payload.sessionId, record);
   } else {
     await setSessionFeedback(payload.sessionId, null);
     await setSessionDone(payload.sessionId, false);
   }
-  const pendingFeedback = Object.values(await sessionFeedbackOverrides()).some((record) => record.projectId === project.id && record.status !== "complete");
-  const cleanup = payload.done && !feedbackError && !pendingFeedback ? await cleanupDoneWorktrees(project).catch((error) => {
-    console.warn("Done worktree cleanup failed", error);
-    return undefined;
-  }) : undefined;
+  const cleanup = payload.done && !await feedbackPending(project.id) ? await cleanupDone(project) : undefined;
   broadcastToProject(project.id, { type: "sessionsChanged" });
-  return { ...cleanup, ...(feedbackError ? { feedbackError } : {}) };
+  return { ...cleanup };
+}
+
+const feedbackPending = async (projectId: string): Promise<boolean> => Object.values(await sessionFeedbackOverrides()).some((record) => record.projectId === projectId && record.status !== "complete");
+
+const cleanupDone = (project: ProjectRecord) => cleanupDoneWorktrees(project).catch((error) => {
+  console.warn("Done worktree cleanup failed", error);
+  return undefined;
+});
+
+/**
+ * The conversation is done at once. What to learn from a good or bad one takes up to a minute (an agent describes it and the
+ * decision model picks lessons), so it runs after the answer; the list shows how it went (Done · learning…, then the result),
+ * and its worktree is cleaned up once nothing is left to learn.
+ */
+function learnInBackground(project: ProjectRecord, sessionId: string, record: CloseoutRecord): void {
+  void finishConversationCloseout(project, sessionId, record).then(async () => {
+    if (await feedbackPending(project.id)) return;
+    await cleanupDone(project);
+    broadcastToProject(project.id, { type: "sessionsChanged" });
+  }).catch((error) => console.warn(`Learning from conversation ${sessionId} failed`, error));
 }
 
 app.put("/api/projects/:projectId/sessions/done", async (request, response, next) => {

@@ -125,6 +125,26 @@ test("Bob starts a task as a conversation, uses the agent the person names, cont
     assert.equal(answerPrompt.images, 1, "and is handed the image itself");
     const tooMany = await api(node, auth, "POST", "/control-center/bob/message", { message: "fix it in Joint Bob", images: [image, image, image, image, image] });
     assert.equal(tooMany.status, 400, "the message box's limits hold");
+
+    // 6. Work with no project Bob can tell: he asks which, with the request kept in the buttons, and starts nothing yet.
+    const unclear = await api<{ action: string; reply: { id: string; text: string; importance: string; actions: Array<{ id: string; label: string; data: Record<string, unknown> }> } }>(node, auth, "POST", "/control-center/bob/message", { message: "fix the sidebar spacing" });
+    assert.equal(unclear.body.action, "answer", JSON.stringify(unclear.body));
+    assert.equal(unclear.body.reply.text, "Which project should I start this in?\n“fix the sidebar spacing”");
+    assert.equal(unclear.body.reply.importance, "needs-you");
+    const choices = unclear.body.reply.actions;
+    assert.ok(choices.length >= 2 && choices.length <= 5, `a few projects and one for any other: ${JSON.stringify(choices)}`);
+    assert.deepEqual(choices.at(-1), { id: "bob.new-conversation", label: "Another project…", data: { create: { content: "fix the sidebar spacing" } } });
+    assert.equal(new Set(choices.map((choice) => choice.id)).size, choices.length, "each button has its own id");
+    const jointBob = choices.find((choice) => choice.label === "Joint Bob")!;
+    assert.ok(jointBob, "the project is offered");
+    const beforeChoice = (await runs()).length;
+    const chosen = await api<{ messages: Array<{ text: string; via: string | null }> }>(node, auth, "POST", "/control-center/bob/action", { messageId: unclear.body.reply.id, actionId: jointBob.id });
+    assert.equal(chosen.status, 200, JSON.stringify(chosen.body));
+    assert.match(chosen.body.messages[0].text, /^Started in Joint Bob\./);
+    assert.match(chosen.body.messages[0].via ?? "", /^You chose Joint Bob/);
+    const sidebarPrompt = await eventually(async () => (await prompts()).find((entry) => entry.prompt.includes("fix the sidebar spacing")), "the conversation got the request as written");
+    assert.ok(sidebarPrompt);
+    await eventually(async () => (await runs()).length > beforeChoice ? true : undefined, "the chosen project's conversation ran");
   } finally {
     if (server) await stopDevNode(server);
     await new Promise<void>((resolve) => classifier.server.close(() => resolve()));

@@ -33,7 +33,7 @@ function fakeModel(options: { confidence?: number; kind?: string; size?: string;
 test("one batched request decides the kind, the size and the project", async () => {
   const model = fakeModel();
   const decision = await decideForBob({ message: "fix the mobile menu", recentChat: [], projects, ask: model.ask, stateCharacters: 120_000 });
-  assert.deepEqual(decision, { kind: "task", size: "long", projectId: "jb", autoRespond: true, confidence: 0.95 });
+  assert.deepEqual(decision, { kind: "task", size: "long", projectId: "jb", autoRespond: true, confidence: 0.95, kindConfidence: 0.95 });
   assert.equal(model.requests.length, 1, "everything fits one request");
   assert.deepEqual(model.requests[0].questions.sort(), ["autorespond", "kind", "project", "size"]);
 });
