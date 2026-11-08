@@ -89,6 +89,22 @@ async function activeScope(page: Awaited<ReturnType<typeof nativeUiFixture>>["pa
   });
 }
 
+test("unexpected task-request aborts remain visible instead of looking like intentional cancellation", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await loginAndOpenShortOne(page, environment, node);
+  await page.evaluate(() => {
+    const originalFetch = window.fetch;
+    window.fetch = (input, options) => {
+      if (String(input).startsWith("/api/background-tasks")) return Promise.reject(new DOMException("This operation was aborted", "AbortError"));
+      return originalFetch(input, options);
+    };
+  });
+  await page.getByTestId("background-tasks-open").click();
+  const summary = page.locator("#backgroundTasksSummary");
+  await summary.getByText("Tasks unavailable", { exact: false }).waitFor();
+  assert.match(await summary.textContent() || "", /GET \/api\/background-tasks.*interrupted/);
+});
+
 test("task scope clears while another session is connecting", { timeout: 180_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const diagnostics = attachDiagnostics(page);

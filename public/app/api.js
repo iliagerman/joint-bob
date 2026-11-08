@@ -9,49 +9,76 @@ function headers() {
   return state.csrfToken ? { "X-CSRF-Token": state.csrfToken, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
 
-// Safari's stack for a failed fetch names only api.js; the request makes an unhandled rejection traceable.
-async function send(path, options) {
+function requestFailure(error, path, options, status) {
+  const cause = error instanceof Error ? error : new Error(String(error));
   const method = (options.method || "GET").toUpperCase();
-  let response;
+  // Query strings contain search text, local paths and sometimes credentials.
+  const requestPath = path.split(/[?#]/)[0];
+  const cancelled = cause.name === "AbortError" && Boolean(options.signal?.aborted) && options.signal.reason?.name === "AbortError" && status < 400;
+  const timedOut = cause.name === "TimeoutError" || (cause.name === "AbortError" && options.signal?.reason?.name === "TimeoutError") || status === 408 || status === 504;
+  const interrupted = cause.name === "AbortError" || cause.message === "This operation was aborted";
+  let reason = cause.message;
+  if (cancelled) reason = "The request was cancelled.";
+  else if (timedOut) reason = "The request timed out.";
+  else if (interrupted) reason = "The request was interrupted before completion. No reason was provided.";
+  else if (status === 0 && cause.name === "TypeError") reason = "No response was received. Check your connection.";
+  else if (cause.name === "SyntaxError") reason = "The server returned an unreadable response.";
+  const uncertainWrite = !["GET", "HEAD"].includes(method) && (interrupted || timedOut || status < 400);
+  const message = `Could not complete ${method} ${requestPath}: ${reason}${uncertainWrite ? " Check whether the change took effect before trying again." : ""}`;
+  const failure = Object.assign(new Error(message, { cause }), {
+    name: cause.name, method, path: requestPath, status, details: cause.details, cancelled,
+  });
+  // Most callers catch and toast only the message, so record diagnostics here.
+  // Never log request headers, bodies or query values.
+  if (!cancelled) console.warn("API request failed", { method, path: requestPath, status, name: cause.name, message: reason });
+  return failure;
+}
+
+async function send(path, options, consume) {
+  let status = 0;
   try {
-    response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
+    const response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
+    status = response.status;
+    if (!response.ok) {
+      if (status === 401 && !["/api/auth/status", "/api/auth/login", "/api/auth/login/mfa"].includes(path)) showSignedOut();
+      const body = await response.json().catch((error) => {
+        if (error.name !== "SyntaxError") throw error;
+        return { error: response.statusText || `HTTP ${status}` };
+      });
+      throw Object.assign(new Error(body.error || response.statusText || `HTTP ${status}`), { details: body.details });
+    }
+    // Reading a JSON, file or streamed body can fail after fetch has succeeded.
+    return await consume(response);
   } catch (error) {
-    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { method, path, status: 0 });
+    throw requestFailure(error, path, options, status);
   }
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: response.statusText }));
-    if (response.status === 401 && !["/api/auth/status", "/api/auth/login", "/api/auth/login/mfa"].includes(path)) showSignedOut();
-    throw Object.assign(new Error(body.error || response.statusText), { method, path, status: response.status, details: body.details });
-  }
-  return response;
 }
 
 export async function api(path, options = {}) {
-  const response = await send(path, options);
-  if (response.status === 204) return null;
-  return response.json();
+  return send(path, options, (response) => response.status === 204 ? null : response.json());
 }
 
 /** For a route that replies with a file, such as audio. */
 export async function apiBlob(path, options = {}) {
-  return (await send(path, options)).blob();
+  return send(path, options, (response) => response.blob());
 }
 
 const NDJSON = "application/x-ndjson";
 
 /** Calls a route that streams JSON lines, handing each line to onLine. A plain JSON reply arrives as one "done" line. */
 export async function apiLines(path, options, onLine) {
-  const response = await send(path, { ...options, headers: { Accept: `${NDJSON}, application/json`, ...(options.headers || {}) } });
-  if (!response.headers.get("content-type")?.startsWith(NDJSON)) { onLine({ type: "done", ...await response.json() }); return; }
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = "";
-  for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
-    buffer += chunk.value;
-    const lines = buffer.split("\n");
-    buffer = lines.pop();
-    for (const line of lines) if (line.trim()) onLine(JSON.parse(line));
-  }
-  if (buffer.trim()) onLine(JSON.parse(buffer));
+  return send(path, { ...options, headers: { Accept: `${NDJSON}, application/json`, ...(options.headers || {}) } }, async (response) => {
+    if (!response.headers.get("content-type")?.startsWith(NDJSON)) { onLine({ type: "done", ...await response.json() }); return; }
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+      buffer += chunk.value;
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) if (line.trim()) onLine(JSON.parse(line));
+    }
+    if (buffer.trim()) onLine(JSON.parse(buffer));
+  });
 }
 
 export async function savePreferences(partial) {

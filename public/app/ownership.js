@@ -138,7 +138,7 @@ async function takeLockedConversationOwnership(force = false) {
   try { await transfer(); }
   catch (error) {
     resetOwnershipWait();
-    if (error.name === "AbortError") { toast("Cancellation requested. Reopen the conversation to check which machine owns it; the transfer may already have completed.", 12000); return; }
+    if (error.cancelled) { toast("Cancellation requested. Reopen the conversation to check which machine owns it; the transfer may already have completed.", 12000); return; }
     if (!await reconcileTranscriptConflict(error, { projectId, engine: session.harnessId, sessionId: session.id,
       transfer: { ownerName: owner.nodeName, destinationName: destination.name, accept: () => transfer(owner.nodeId) },
     })) throw error;

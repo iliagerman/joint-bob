@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- API errors now identify the failed request, distinguish timeouts from unexplained interruptions, and keep diagnostics in Settings logs without request query values, headers or bodies. Only confirmed caller cancellations are hidden; interrupted writes warn that the change may already have taken effect.
+
 ## 2.244.0 — 2026-11-08
 
 - Allowed webhooks to run on and transfer to machines sharing their project through a cluster, workspace or project grant, including relay hosts, while keeping unrelated projects and private credentials inaccessible.

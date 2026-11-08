@@ -33,6 +33,30 @@ test("Settings keeps client console diagnostics across a PWA reload", { timeout:
   assert.match(await output.textContent() || "", /No client logs captured/);
 });
 
+test("caught API failures identify the request in the alert and survive in client logs", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.route("**/api/preferences?diagnostic=*", (route) => route.fulfill({ status: 500, json: { error: "This operation was aborted" } }));
+  await page.evaluate(`(async () => {
+    const { api } = await import("/app/api.js");
+    const { toast } = await import("/app/shell.js");
+    try { await api("/api/preferences?diagnostic=private-query", { method: "PUT", body: JSON.stringify({ privateBody: "private-body" }) }); }
+    catch (error) { toast.error(error.message); }
+  })()`);
+  const alert = page.locator('.toast[role="alert"]').filter({ hasText: "PUT /api/preferences" });
+  await alert.waitFor();
+  assert.match(await alert.textContent() || "", /interrupted/);
+  assert.match(await alert.textContent() || "", /check.*before.*try/i);
+  assert.doesNotMatch(await alert.textContent() || "", /private-query|private-body/);
+  await page.reload();
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-logs").click();
+  const logs = await page.getByTestId("settings-client-logs-output").textContent() || "";
+  assert.match(logs, /API request failed.*PUT.*\/api\/preferences/);
+  assert.match(logs, /"status":500/);
+  assert.doesNotMatch(logs, /private-query|private-body/);
+});
+
 test("agent switch waits for server confirmation before changing conversation identity", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await signIn(page, node.url, environment.username, environment.password);

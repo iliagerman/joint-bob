@@ -262,7 +262,7 @@ async function requestOutput(task, capturedGeneration) {
     if (outputText.length > 131072) outputText = `[Earlier output truncated]\n${outputText.slice(-131072)}`;
     output.textContent = outputText || "No output yet.";
   } catch (error) {
-    if (error.name !== "AbortError" && generation === capturedGeneration && selectionEpoch === capturedEpoch) {
+    if (!error.cancelled && generation === capturedGeneration && selectionEpoch === capturedEpoch) {
       showError(output, "Output unavailable", error);
     }
   } finally {
@@ -354,7 +354,7 @@ async function refresh() {
     render();
     if (selected) await requestOutput(tasks.get(taskKey(selected)) || selected, capturedGeneration);
   } catch (error) {
-    if (error.name !== "AbortError" && capturedGeneration === generation) {
+    if (!error.cancelled && capturedGeneration === generation) {
       showError(el("backgroundTasksSummary"), "Tasks unavailable", error);
     }
   } finally {
