@@ -74,7 +74,7 @@ async function runtimeAllowed(request:Request,db:DatabaseSync,local:string,peer:
  if(request.path.startsWith('/browser/'))return request.path==='/browser/config'?isTrustedTwin(db,local,peer):true;
  if(request.path==='/background-tasks')return true;
  // A press of Bob's button comes only from the person's own machines; the route checks the person and the message.
- if(request.path==='/control-center/bob/action'||request.path==='/control-center/live'||request.path==='/control-center/summarize')return isTrustedTwin(db,local,peer);
+ if(request.path==='/control-center/bob/action'||request.path==='/control-center/bob/reply'||request.path==='/control-center/live'||request.path==='/control-center/summarize')return isTrustedTwin(db,local,peer);
  if(request.path==='/resources/manage-inventory'||/^\/resources\/activation(?:\/(?:item|bulk))?$/.test(request.path))return isTrustedTwin(db,local,peer);
  // Node-wide inventories carry only skill and MCP names; a project inventory needs that project shared.
  if(request.path==='/resources/inventory')return body?.projectId===undefined||typeof body.projectId==='string'&&mayShareProject(db,local,peer,body.projectId);
@@ -100,7 +100,7 @@ export function dispatchSignedRuntime(request:Request,response:Response,next:Nex
  const prefix='/api/cluster/v2/runtime/';
  if(!request.path.startsWith(prefix)){next();return;}
  const suffix=request.path.slice(prefix.length),target='/cluster/'+suffix;
- if(!/^(tasks\/|sessions\/|browser\/|git\/|projects\/presence$|project-file|project-files$|cron$|quick-notes\/prepare$|background-tasks$|control-center\/(?:bob\/action|live|summarize)$|resources\/(?:inventory|manage-inventory|activation(?:\/(?:item|bulk))?)$)/.test(suffix)||!machineRoutes.has(`${request.method} ${target}`)){
+ if(!/^(tasks\/|sessions\/|browser\/|git\/|projects\/presence$|project-file|project-files$|cron$|quick-notes\/prepare$|background-tasks$|control-center\/(?:bob\/(?:action|reply)|live|summarize)$|resources\/(?:inventory|manage-inventory|activation(?:\/(?:item|bulk))?)$)/.test(suffix)||!machineRoutes.has(`${request.method} ${target}`)){
   response.status(404).json({error:'Unsupported signed runtime route'});return;
  }
  // A handoff source says how far its files reached (design §6.5); the handlers' schemas drop the part, so it is taken here,

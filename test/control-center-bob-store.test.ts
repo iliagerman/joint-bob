@@ -103,3 +103,17 @@ test("a cleared item loses its buttons, says why, leaves the open items and the 
   assert.equal(countBobMessages(db, "ilia", "important"), 0, "the badge no longer counts it");
   assert.deepEqual(listBobMessages(db, "ilia", { cleared: true }).map((message) => message.id), [ask.id], "only cleared items in the cleared view");
 });
+
+test("a notice whose buttons an older version took away without clearing it is settled; messages that never had buttons stay", async () => {
+  const { settleButtonlessItems, setBobActions } = await import("../src/control-center/bob-store.js");
+  const db = database();
+  const stuck = appendBobMessage(db, "ilia", { role: "bob", text: "\"build search bar\" waits for you.", importance: "needs-you", via: "Review check · Decision model 98%", projectId: "p1", projectName: "DAK", actions: [{ id: "conversation.done", label: "Done" }] });
+  setBobActions(db, "ilia", stuck.id, []);
+  const waiting = appendBobMessage(db, "ilia", { role: "system", text: "Allow this?", importance: "needs-ok", via: "Guardian · production steps ask you", actions: [{ id: "guardian.allow", label: "Allow once" }] });
+  const told = appendBobMessage(db, "ilia", { role: "bob", text: "Told \"build search bar\" to go on.", importance: "done", via: "Review check · you pressed the button" });
+  const failed = appendBobMessage(db, "ilia", { role: "bob", text: "The dashboard agent stopped.", importance: "needs-you", via: "Dashboards · agent failed" });
+  assert.equal(settleButtonlessItems(db, "ilia", "Settled before."), 1);
+  const after = new Map(listBobMessages(db, "ilia").map((message) => [message.id, message.resolution]));
+  assert.deepEqual([after.get(stuck.id), after.get(waiting.id), after.get(told.id), after.get(failed.id)], ["Settled before.", null, null, null]);
+  assert.equal(settleButtonlessItems(db, "ilia", "Settled before."), 0, "once is enough");
+});

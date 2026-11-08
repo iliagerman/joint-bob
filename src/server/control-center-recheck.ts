@@ -3,7 +3,8 @@ import type { AuthSession } from "../auth.js";
 import { runAsAccount } from "../account-context.js";
 import { askSystemOneChoices } from "../classifiers/typesafe.js";
 import {
-  bobDatabase, listBobAccounts, listBobMessages, listOpenBobMessages, noteBobRecheck, onBobMessage, onBobRecheckAsked, readBobSettings, resolveBobMessage, type BobMessage, type BobSettings,
+  bobDatabase, listBobAccounts, listBobMessages, listOpenBobMessages, noteBobRecheck, onBobMessage, onBobRecheckAsked, readBobSettings, resolveBobMessage, settleButtonlessItems,
+  type BobMessage, type BobSettings,
   type OpenBobMessage,
 } from "../control-center/bob-store.js";
 import {
@@ -87,6 +88,7 @@ async function recheck(accountId: string): Promise<void> {
   const actor = listBobAccounts(db).find((candidate) => candidate.accountId === accountId);
   const session = bobSessionFor(accountId, "recheck");
   if (!actor || !session) return;
+  settleButtonlessItems(db, accountId, "Its buttons were used, or it was cleared on another machine, before this version kept that.");
   const items = listOpenBobMessages(db, accountId).filter(isOpenItem);
   if (!items.length) return;
   await runAsAccount(actor, async () => {

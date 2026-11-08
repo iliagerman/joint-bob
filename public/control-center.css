@@ -257,3 +257,10 @@ button.control-entry-conversation::after { content: " ↗"; color: var(--muted);
 /* In the cleared view: when an item was cleared and why. */
 .control-cleared { font-size: 11.5px; color: var(--live); }
 .control-entry:has(> .control-cleared) .control-msg { opacity: .75; }
+/* What can be done with any message besides its own buttons (reply, done, dismiss): quieter than the message's own. */
+.control-action.quiet { background: none; color: var(--muted); }
+.control-action.quiet:hover { color: var(--text); border-color: var(--accent); }
+/* A quick reply under a message. */
+.control-reply { display: flex; flex-direction: column; gap: 6px; }
+.control-reply textarea { width: 100%; min-height: 54px; resize: vertical; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 13px; }
+.control-reply textarea:focus { outline: none; border-color: var(--accent); }

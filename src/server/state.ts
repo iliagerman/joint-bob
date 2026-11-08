@@ -82,6 +82,7 @@ export const machineRoutes = new Set([
   "POST /cluster/sessions/take-ownership",
   "POST /cluster/sessions/move-check",
   "POST /cluster/control-center/bob/action",
+  "POST /cluster/control-center/bob/reply",
   "POST /cluster/control-center/live",
   "POST /cluster/control-center/summarize",
   "POST /cluster/sessions/queue-transfer",

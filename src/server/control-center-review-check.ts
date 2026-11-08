@@ -40,7 +40,7 @@ const pushText = (reason: string): string => [
   "Keep going until it is done, then say what you did. If you need something only I can decide, ask me.",
 ].join(" ");
 
-interface Conversation { projectId: string; projectName: string; conversationId: string; engine: string; sessionId: string; title: string }
+export interface Conversation { projectId: string; projectName: string; conversationId: string; engine: string; sessionId: string; title: string }
 
 async function decide(actor: ActingAccount, settings: BobSettings, conversation: Conversation, cwd: string, input: { request: string; summary: string | null; answer: string }): Promise<{ verdict: ReviewVerdict; reason: string; by: string } | null> {
   return runAsAccount(actor, async () => {
@@ -187,7 +187,7 @@ registerBobAction("review.push", async ({ db, session, action }) => {
  * respond, a step waiting for an answer). Bob's check of it ends either way, and his other items about it are cleared. The
  * pressed item leaves the chat, which says it all: nothing new is written.
  */
-async function closeConversation(session: AuthSession, db: DatabaseSync, conversation: Conversation, abandoned: boolean): Promise<void> {
+export async function closeConversation(session: AuthSession, db: DatabaseSync, conversation: Conversation, abandoned: boolean): Promise<void> {
   await runAsAccount(actingAccountFromSession(session), async () => {
     if (abandoned) await stopConversationTurn({ projectId: conversation.projectId, engine: conversation.engine, sessionId: conversation.sessionId, label: "Bob" });
     await markConversationDoneAsActor(conversation.projectId, { engine: conversation.engine, sessionId: conversation.sessionId, done: true });

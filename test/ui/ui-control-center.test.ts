@@ -74,6 +74,15 @@ test("the control center shows the live board, filters by project, colors cards 
         window.__board.cards = window.__board.cards.filter((card) => card.conversationId !== action.data.conversationId);
         return new Response(JSON.stringify({ messages: [], pressed }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
+      if (path === '/api/control-center/bob/reply' || path === '/api/control-center/bob/item') {
+        // As the server does: the message is cleared, with why.
+        const body = JSON.parse(args[1].body);
+        window.__settled = [...(window.__settled || []), { path, ...body }];
+        const item = window.__timeline.find((message) => message.id === body.messageId);
+        const resolution = path.endsWith('/reply') ? 'You replied: ' + body.text : { dismiss: 'You dismissed it.', done: 'You marked it done.', answered: 'You answered it.' }[body.how];
+        Object.assign(item, { actions: [], resolvedAt: new Date().toISOString(), resolution });
+        return new Response(JSON.stringify({ pressed: item }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
       if (path !== '/api/control-center/board') return originalFetch(...args);
       return new Response(JSON.stringify(window.__board), { status: 200, headers: { 'content-type': 'application/json' } });
     };
@@ -264,7 +273,7 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.notEqual(await check.evaluate((card) => getComputedStyle(card).borderLeftColor), await page.getByTestId("control-chat-entry").filter({ hasText: "Morning report" }).evaluate((entry) => getComputedStyle(entry).borderLeftColor), "drawn in its project's color");
   assert.equal(await check.getByTestId("control-chat-about").evaluate((link) => link.tagName), "BUTTON", "the conversation opens from its name");
   assert.equal(await check.locator(".control-via").textContent(), "Decision model 96%");
-  assert.deepEqual(await check.locator(".control-action").allTextContents(), ["Push it on", "Done", "Abandon", "Open"]);
+  assert.deepEqual(await check.locator(".control-action").allTextContents(), ["Push it on", "Done", "Abandon", "Open", "Reply", "Dismiss"], "its own buttons, then reply and dismiss; it has its own Done");
   // A finished card can be closed from the board too.
   assert.equal(await page.locator('[data-key="p1:c3"]').getByTestId("control-card-action-done").isVisible(), true);
 
@@ -285,6 +294,39 @@ test("the control center shows the live board, filters by project, colors cards 
   assert.match(await page.getByTestId("control-chat-cleared").innerText(), /^✓ Cleared .+ · You chose “Done”\.$/);
   await page.getByTestId("control-chat-importance-all").click();
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="control-chat-entry"]').length > 1);
+
+  // Any message of Bob's can be answered or cleared besides its own buttons; a reply goes into the conversation it is about.
+  await page.evaluate(() => {
+    const timeline = (window as unknown as { __timeline: unknown[] }).__timeline;
+    const open = { projectId: "p2", conversationId: "c2", title: "Slice 7" };
+    timeline.push({ id: "ask2", role: "bob", text: '"Slice 7" waits for you.\nWhere should I build it?', via: "Review check · Decision model 98%", projectId: "p2", projectName: "DAK Live", importance: "needs-you", createdAt: new Date().toISOString(), actions: [{ id: "open", label: "Open", data: { open } }] },
+      { id: "plain", role: "bob", text: "Two agents run now.", via: null, projectId: null, projectName: null, importance: "fyi", createdAt: new Date().toISOString(), actions: [] });
+    window.dispatchEvent(new CustomEvent("control-center-changed"));
+  });
+  const asking = page.getByTestId("control-chat-entry").filter({ hasText: "Where should I build it?" });
+  await asking.waitFor();
+  assert.deepEqual(await asking.locator(".control-action").allTextContents(), ["Open", "Reply", "Done", "Dismiss"]);
+  await asking.getByTestId("control-item-reply").click();
+  const replyBox = asking.getByTestId("control-chat-reply").locator("textarea");
+  await replyBox.waitFor();
+  assert.equal(await replyBox.evaluate((box) => document.activeElement === box), true, "the reply box takes the focus");
+  await replyBox.pressSequentially("in the admin");
+  // Something new comes in while the reply is written: what is typed, and the focus, stay.
+  await page.evaluate(() => {
+    (window as unknown as { __timeline: unknown[] }).__timeline.push({ id: "late", role: "bob", text: "Evening report", via: null, projectId: null, projectName: null, importance: "report", createdAt: new Date().toISOString(), actions: [] });
+    window.dispatchEvent(new CustomEvent("control-center-changed"));
+  });
+  await page.getByTestId("control-chat-entry").filter({ hasText: "Evening report" }).waitFor();
+  await replyBox.pressSequentially(" console");
+  assert.equal(await replyBox.inputValue(), "in the admin console");
+  await replyBox.press("Enter");
+  await asking.waitFor({ state: "detached" });
+  assert.deepEqual(await page.evaluate(() => (window as unknown as { __settled: unknown[] }).__settled.at(-1)), { path: "/api/control-center/bob/reply", messageId: "ask2", text: "in the admin console" });
+  // Dismiss clears a message; it is then among the cleared.
+  const plain = page.getByTestId("control-chat-entry").filter({ hasText: "Two agents run now." });
+  await plain.getByTestId("control-item-dismiss").click();
+  await plain.waitFor({ state: "detached" });
+  assert.deepEqual(await page.evaluate(() => (window as unknown as { __settled: unknown[] }).__settled.at(-1)), { path: "/api/control-center/bob/item", messageId: "plain", how: "dismiss" });
 
   // Bob's settings are saved with the account; pausing shows a banner with a way back.
   await page.getByTestId("control-chat-settings-button").click();

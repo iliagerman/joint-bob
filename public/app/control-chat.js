@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { appearanceContext, applyAppearance } from "./appearance.js";
 import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
-import { focusProject, openConversation, refreshControlCenter, saveControlCenter } from "./control-center.js";
+import { focusProject, openConversation, refreshControlCenter, saveControlCenter, seeCardOff } from "./control-center.js";
 import { vanish } from "./control-vanish.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { state } from "./state.js";
@@ -95,7 +95,44 @@ function renderBody(message, text) {
   return body;
 }
 
-function renderActions(message) {
+/** The quick reply being written: to which message, and what is typed so far, so drawing the chat again keeps it. */
+let replying = null;
+
+function openReply(message) {
+  replying = { id: message.id, text: "", focus: true };
+  renderMessages();
+}
+
+function closeReply() {
+  replying = null;
+  renderMessages();
+}
+
+/**
+ * What the person can do with any message of Bob's besides its own buttons: reply (into the conversation it is about, or to
+ * Bob), close that conversation, or clear the message. A Guardian step is answered only with its own buttons.
+ */
+function itemControls(message, about) {
+  const control = (label, title, run) => {
+    const button = element("button", "control-action quiet", label);
+    button.type = "button";
+    button.title = title;
+    button.dataset.testid = `control-item-${label.toLowerCase()}`;
+    button.addEventListener("click", () => run(button));
+    return button;
+  };
+  const conversation = about?.open ? about : null;
+  const controls = [control("Reply", conversation ? `Answer “${conversation.title}” in the conversation, as you` : "Answer Bob about this", () => openReply(message))];
+  if (conversation && message.importance !== "report" && !message.actions.some((action) => action.id === "conversation.done")) {
+    controls.push(control("Done", "Close this conversation, as marking it done in its project does, and clear the message", (button) => settle(message, conversation, "done", button)));
+  }
+  controls.push(control("Dismiss", "Clear it from the chat; it stays under ✓ Cleared", (button) => settle(message, conversation, "dismiss", button)));
+  return controls;
+}
+
+function renderActions(message, about) {
+  const settleable = message.role !== "user" && !message.resolvedAt && !message.actions.some((action) => action.id.startsWith("guardian."));
+  if (!message.actions.length && !settleable) return null;
   const actions = element("div", "control-actions");
   for (const action of message.actions) {
     const button = element("button", `control-action ${action.style ?? ""}`, action.label);
@@ -103,7 +140,45 @@ function renderActions(message) {
     button.addEventListener("click", () => runAction(message, action, button));
     actions.append(button);
   }
+  if (settleable) actions.append(...itemControls(message, about));
   return actions;
+}
+
+/** The quick reply box under a message: Enter sends, Shift+Enter starts a new line, Esc closes it. */
+function renderReply(message, about) {
+  const form = element("form", "control-reply");
+  form.dataset.testid = "control-chat-reply";
+  const box = element("textarea");
+  box.rows = 2;
+  box.value = replying.text;
+  box.placeholder = about?.open ? `Reply to “${about.title}”. It goes into the conversation, as you.` : "Reply to Bob about this";
+  box.addEventListener("input", () => { replying.text = box.value; });
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    else if (event.key === "Escape") { event.preventDefault(); closeReply(); }
+  });
+  const send = element("button", "control-action primary", "Send");
+  send.type = "submit";
+  const cancel = element("button", "control-action", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", closeReply);
+  const row = element("div", "control-actions");
+  row.append(send, cancel);
+  form.append(box, row);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = box.value.trim();
+    if (text) void sendReply(message, about, text, send);
+  });
+  return form;
+}
+
+/** Buttons, the cleared line and the quick reply, in that order, under a message. */
+function appendControls(wrap, message, about) {
+  const actions = renderActions(message, about);
+  if (actions) wrap.append(actions);
+  if (message.resolvedAt) wrap.append(renderCleared(message));
+  if (replying?.id === message.id) wrap.append(renderReply(message, about));
 }
 
 function entry(message, className) {
@@ -145,8 +220,7 @@ function renderConversationNotice(message, about) {
   const raised = element("div", "control-entry-event");
   raised.append(importanceLabel(message), element("span", "control-entry-raised", SOURCE_WORDS[label] ?? label), timeOf(message));
   wrap.append(source, raised, renderBody(message, withoutTitle(message.text, about.title)));
-  if (message.actions?.length) wrap.append(renderActions(message));
-  if (message.resolvedAt) wrap.append(renderCleared(message));
+  appendControls(wrap, message, about);
   if (detail) wrap.append(element("div", "control-via", detail));
   return wrap;
 }
@@ -160,8 +234,7 @@ function renderChatMessage(message) {
   wrap.append(head, renderBody(message, message.text));
   // How it was decided goes under the message, small: the head already says where it came from.
   if (detail) wrap.append(element("div", "control-via", detail));
-  if (message.actions?.length) wrap.append(renderActions(message));
-  if (message.resolvedAt) wrap.append(renderCleared(message));
+  appendControls(wrap, message, null);
   return wrap;
 }
 
@@ -200,12 +273,25 @@ function tickPending() {
   for (const time of elements.controlChatMessages.querySelectorAll(".control-pending-time")) time.textContent = elapsed(Number(time.dataset.since));
 }
 
+// The chat is drawn again only when what it shows changed: it is read again whenever anything changes, and drawing it anew
+// would take the focus and the scroll away from a reply being written.
+let drawnMessages = "";
+
 function renderMessages() {
+  const visible = messages.filter(matchesFilter);
+  const drawing = JSON.stringify([visible, [...pending.keys()], sendError, replying?.id ?? null, filter.importance]);
+  if (drawing === drawnMessages) return;
+  drawnMessages = drawing;
+  const writing = Boolean(document.activeElement?.closest?.(".control-reply"));
   const extra = [...[...pending.values()].map(renderPending), ...(sendError ? [element("div", "control-msg error", sendError)] : [])];
-  const shown = messages.filter(matchesFilter).map(renderMessage);
+  const shown = visible.map(renderMessage);
   const empty = !shown.length && filter.importance === "cleared" ? [element("p", "control-empty", "Nothing was cleared yet.")] : [];
   elements.controlChatMessages.replaceChildren(...shown, ...empty, ...extra);
-  elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
+  const box = elements.controlChatMessages.querySelector(".control-reply textarea");
+  if (box) {
+    if (writing || replying.focus) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); replying.focus = false; }
+    box.closest(".control-entry").scrollIntoView({ block: "nearest" });
+  } else elements.controlChatMessages.scrollTop = elements.controlChatMessages.scrollHeight;
   clearInterval(pendingTicker);
   pendingTicker = pending.size ? setInterval(tickPending, 1000) : null;
 }
@@ -266,6 +352,51 @@ async function runAction(message, action, button) {
     // A settled item leaves, while the board changes beside it.
     if (message.resolvedAt && entryOf(message.id)) await vanish(entryOf(message.id), settledWord(message), { collapse: true });
     renderMessages();
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
+}
+
+/** Dismiss clears a message; Done also closes the conversation it is about, whose card leaves the board with the same check. */
+async function settle(message, conversation, how, button) {
+  button.disabled = true;
+  try {
+    const result = await api("/api/control-center/bob/item", { method: "POST", body: JSON.stringify({ messageId: message.id, how }) });
+    Object.assign(message, result.pressed);
+    if (replying?.id === message.id) replying = null;
+    if (how === "done") {
+      seeCardOff(conversation.open.projectId, conversation.open.conversationId, "Done");
+      void refreshControlCenter().catch(() => undefined);
+    }
+    if (entryOf(message.id)) await vanish(entryOf(message.id), how === "done" ? "Done" : "Dismissed", { collapse: true });
+    renderMessages();
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
+}
+
+/**
+ * Sends a quick reply. About a conversation, it goes into that conversation as the person, and the message is cleared. About
+ * anything else, it is a message to Bob that says what it answers, and the message is marked answered.
+ */
+async function sendReply(message, about, text, button) {
+  button.disabled = true;
+  try {
+    if (about?.open) {
+      Object.assign(message, (await api("/api/control-center/bob/reply", { method: "POST", body: JSON.stringify({ messageId: message.id, text }) })).pressed);
+      toast(`Sent to “${about.title}”`);
+    } else {
+      Object.assign(message, (await api("/api/control-center/bob/item", { method: "POST", body: JSON.stringify({ messageId: message.id, how: "answered" }) })).pressed);
+    }
+    replying = null;
+    if (message.resolvedAt && entryOf(message.id)) await vanish(entryOf(message.id), "Replied", { collapse: true });
+    renderMessages();
+    if (!about?.open) {
+      const asked = message.text.split("\n")[0].trim();
+      void send(`About “${asked.length > 120 ? `${asked.slice(0, 117)}…` : asked}”: ${text}`, [], false);
+    }
   } catch (error) {
     toast(error.message);
     button.disabled = false;

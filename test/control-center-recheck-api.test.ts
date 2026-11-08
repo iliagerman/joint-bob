@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -42,7 +42,7 @@ async function decisionModel(): Promise<{ server: Server; url: string; relevance
 async function startNode(environment: DevEnvironment, node: SeededNode, root: string, endpoint: string): Promise<ChildProcess> {
   const env: NodeJS.ProcessEnv = {
     ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_SESSION_COOKIE: node.cookieName,
-    JOINT_BOB_INSECURE_COOKIE: "1", JOINT_BOB_RELEASE: "development", JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log"), JOINT_BOB_TEST_AUTOMATION_DIR: path.join(root, "stubs"),
+    JOINT_BOB_INSECURE_COOKIE: "1", JOINT_BOB_RELEASE: "development", JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log"), JOINT_BOB_TEST_ENGINE_DETAIL_LOG: path.join(root, "prompts.log"), JOINT_BOB_TEST_AUTOMATION_DIR: path.join(root, "stubs"),
     JOINT_BOB_TEST_REVIEW_CHECK_MS: "300", JOINT_BOB_TEST_RECHECK_MODEL_AFTER_MS: "0", JOINT_BOB_TYPESAFE_ENDPOINT: endpoint,
   };
   delete env.TYPESAFE_AI_API_KEY;
@@ -61,7 +61,7 @@ async function eventually<T>(read: () => Promise<T | undefined>, label: string):
 
 interface Listed { title: string; path: string; updatedAt?: string; doneAt?: string }
 
-test("Bob clears what no longer waits for the person: a pressed item, one about a conversation they looked at, and one the log settles", { timeout: 240_000 }, async () => {
+test("Bob clears what no longer waits for the person: a pressed item, a reply, Done and Dismiss, one about a conversation they looked at, and one the log settles", { timeout: 240_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-recheck-"));
   const classifier = await decisionModel();
   let child: ChildProcess | undefined;
@@ -78,6 +78,7 @@ test("Bob clears what no longer waits for the person: a pressed item, one about 
     const sessions = async () => (await api<{ sessions: Listed[] }>(node, auth, "GET", `/projects/${project.id}/sessions`)).body.sessions;
     const itemAbout = (title: string) => eventually(async () => (await timeline()).find((message) => message.text.startsWith(`"${title}" waits for you`) && message.actions.length), `Bob brought "${title}" to the person`);
     const start = async (text: string) => assert.equal((await api<{ action: string }>(node, auth, "POST", "/control-center/bob/message", { message: text })).body.action, "started");
+    const prompts = async () => (await readFile(path.join(root, "prompts.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).map((line) => (JSON.parse(line) as { prompt: string }).prompt);
 
     // Pressed: Done closes the conversation and clears the item, and nothing new is written: the item leaving says it.
     await start("fix the mobile menu in Joint Bob");
@@ -101,6 +102,26 @@ test("Bob clears what no longer waits for the person: a pressed item, one about 
     assert.deepEqual([looked.resolution, looked.actions], ["You looked at it.", []]);
     assert.equal((await api<{ waiting: number }>(node, auth, "GET", "/control-center/summary")).body.waiting, 0);
 
+    // Answered in place: a quick reply goes into the conversation as the person, and clears the item.
+    await start("fix the search page in Joint Bob");
+    const search = await itemAbout("fix the search page in Joint Bob");
+    const replied = await api<{ pressed: BobMessage }>(node, auth, "POST", "/control-center/bob/reply", { messageId: search.id, text: "use the admin console" });
+    assert.equal(replied.status, 200, JSON.stringify(replied.body));
+    assert.deepEqual([replied.body.pressed.resolution, replied.body.pressed.actions], ["You replied: use the admin console", []]);
+    await eventually(async () => (await prompts()).includes("use the admin console") ? true : undefined, "the reply reached the conversation");
+
+    // Dismiss only clears a message; Done, on any message about a conversation, also closes the conversation.
+    const again = await eventually(async () => (await timeline()).find((message) => message.text.startsWith('"fix the search page in Joint Bob" waits for you') && message.id !== search.id && !message.resolvedAt), "the answered conversation stopped for the person again");
+    const dismissed = await api<{ pressed: BobMessage }>(node, auth, "POST", "/control-center/bob/item", { messageId: again.id, how: "dismiss" });
+    assert.equal(dismissed.body.pressed.resolution, "You dismissed it.");
+    assert.equal((await sessions()).find((entry) => entry.title === "fix the search page in Joint Bob")?.doneAt, undefined, "dismissing leaves the conversation open");
+    await start("fix the footer in Joint Bob");
+    const footer = await itemAbout("fix the footer in Joint Bob");
+    const closed = await api<{ pressed: BobMessage }>(node, auth, "POST", "/control-center/bob/item", { messageId: footer.id, how: "done" });
+    assert.equal(closed.body.pressed.resolution, "You marked it done.");
+    assert.ok((await sessions()).find((entry) => entry.title === "fix the footer in Joint Bob")?.doneAt, "the conversation is marked done");
+    assert.equal((await api(node, auth, "POST", "/control-center/bob/item", { messageId: footer.id, how: "dismiss" })).status, 404, "a cleared message cannot be settled again");
+
     // Settled by the log: a question with no conversation stays while nothing settles it, and goes when the person says to drop it.
     await writeFile(path.join(root, "stubs", "organize.json"), JSON.stringify({ intent: "create-workspace", name: "Clients" }));
     const ask = (await api<{ reply: BobMessage }>(node, auth, "POST", "/control-center/bob/message", { message: "create a workspace called Clients" })).body.reply;
@@ -118,7 +139,7 @@ test("Bob clears what no longer waits for the person: a pressed item, one about 
     assert.ok(judged.log.some((entry) => entry.from === "user" && entry.text === "never mind, forget about that one"));
 
     // Every cleared item is listed in the cleared view, with why.
-    assert.deepEqual((await timeline("?cleared=1")).map((message) => message.id), [menu.id, login.id, ask.id]);
+    assert.deepEqual((await timeline("?cleared=1")).map((message) => message.id), [menu.id, login.id, search.id, again.id, footer.id, ask.id]);
   } finally {
     if (child) await stopDevNode(child);
     classifier.server.close();

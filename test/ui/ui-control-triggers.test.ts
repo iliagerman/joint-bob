@@ -175,7 +175,7 @@ test("the bell counts new triggers that can wait, lists them a page at a time, a
 
   // An urgent one is a message in Bob's chat; its Open button is answered by the server and opens the same screen.
   const urgent = page.getByTestId("control-chat-entry").filter({ hasText: "Alarm ALARM: api-5xx" });
-  assert.deepEqual(await urgent.getByRole("button").allTextContents(), ["Investigate (read-only)", "Open", "Snooze 1h"]);
+  assert.deepEqual(await urgent.getByRole("button").allTextContents(), ["Investigate (read-only)", "Open", "Snooze 1h", "Reply", "Dismiss"], "its own buttons, then reply and dismiss");
   // The message's head names where it came from; how it was decided is the line under it.
   assert.match(await urgent.innerText(), /^Webhook[\s\S]*Urgent[\s\S]*GitHub · decision model 95%/);
   await urgent.getByRole("button", { name: "Open" }).click();

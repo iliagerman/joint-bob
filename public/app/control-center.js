@@ -367,9 +367,14 @@ registerCardAction({
   id: "review", label: "Review", style: "primary", order: 1, title: "Open it to read what it did; once you have looked, it leaves Done · ready for review",
   visible: (card) => card.column === "review", run: (card) => openConversation(card),
 });
-// Done or Abandon pressed in Bob's chat: the conversation's card goes with the same check as the message.
+/** A conversation closed from Bob's chat: its card goes with the same check as the message, the next time the board is drawn. */
+export function seeCardOff(projectId, conversationId, label) {
+  settledHere.set(`${projectId}:${conversationId}`, label);
+}
+
+// Done or Abandon pressed in Bob's chat.
 window.addEventListener("control-bob-action", ({ detail }) => {
-  if (detail.actionId === "conversation.done" || detail.actionId === "conversation.abandon") settledHere.set(`${detail.data.projectId}:${detail.data.conversationId}`, detail.label);
+  if (detail.actionId === "conversation.done" || detail.actionId === "conversation.abandon") seeCardOff(detail.data.projectId, detail.data.conversationId, detail.label);
 });
 registerCardAction({ id: "done", label: "Done", order: 2, title: "Close it: it leaves the board, and you can open it again from its project", visible: (card) => card.column === "review", run: markDone });
 

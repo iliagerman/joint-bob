@@ -7,6 +7,7 @@ import { sendError } from "../http-auth.js";
 import { QuickNoteLaunchError } from "../quick-note-dispatch.js";
 import { fileAttachmentSchema, imageAttachmentSchema } from "../schemas.js";
 import { appearanceContextSchema } from "../control-center-display.js";
+import { replyToItem, settleItem } from "../control-center-items.js";
 import { app } from "../state.js";
 // A press of a message another of the person's machines wrote is run there.
 import "../control-center-bob-remote.js";
@@ -85,6 +86,30 @@ app.post("/api/control-center/bob/action", async (request, response, next) => {
     response.json({ messages, pressed: getBobMessage(db, session.accountId, messageId) });
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, "Invalid action"); return; }
+    if (error instanceof BobActionError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+/** Any message of Bob's, settled by the person: dismissed, done (its conversation closed), or answered by a message to Bob. */
+app.post("/api/control-center/bob/item", async (request, response, next) => {
+  try {
+    const { messageId, how } = z.object({ messageId: z.string().min(1).max(100), how: z.enum(["dismiss", "done", "answered"]) }).strict().parse(request.body);
+    response.json({ pressed: await settleItem(await bobDatabase(), response.locals.authSession as AuthSession, messageId, how) });
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, "Invalid request"); return; }
+    if (error instanceof BobActionError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+/** A quick reply to a message about a conversation: it goes into that conversation as the person. */
+app.post("/api/control-center/bob/reply", async (request, response, next) => {
+  try {
+    const { messageId, text } = z.object({ messageId: z.string().min(1).max(100), text: z.string().trim().min(1).max(20_000) }).strict().parse(request.body);
+    response.json({ pressed: await replyToItem(await bobDatabase(), response.locals.authSession as AuthSession, messageId, text) });
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, "Invalid reply"); return; }
     if (error instanceof BobActionError) { sendError(response, error.status, error.message); return; }
     next(error);
   }

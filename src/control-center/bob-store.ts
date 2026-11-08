@@ -268,6 +268,19 @@ export function listOpenBobMessages(db: DatabaseSync, accountId: string): OpenBo
   return rows.map((row) => ({ ...fromRow(row), originNodeId: row.origin_node_id, recheckHash: row.recheck_hash }));
 }
 
+/**
+ * Items whose buttons are gone but that were never cleared: an older version on one of the person's machines took the buttons
+ * off when one was pressed, or when the item was cleared on another machine, and did not keep that it was settled. Only Bob's
+ * notices that always carry buttons are such items. Each machine settles its own copy; returns how many were settled.
+ */
+export function settleButtonlessItems(db: DatabaseSync, accountId: string, resolution: string): number {
+  const settled = db.prepare(`UPDATE control_center_bob_messages SET resolved_at = ?, resolution = ? WHERE account_id = ? AND resolved_at IS NULL AND actions = '[]' AND role <> 'user'
+    AND importance IN ('needs-ok', 'urgent', 'needs-you', 'fyi') AND (via LIKE 'Review check%' OR via LIKE 'Guardian%' OR via LIKE 'Auto respond ended%')`)
+    .run(new Date().toISOString(), resolution, accountId).changes;
+  if (settled) for (const listener of changeTimelineListeners) listener(accountId);
+  return Number(settled);
+}
+
 /** Remembers the evidence Bob judged an item on, so it is asked about again only when something changed. Stays on this machine. */
 export function noteBobRecheck(db: DatabaseSync, accountId: string, id: string, hash: string): void {
   db.prepare("UPDATE control_center_bob_messages SET recheck_hash = ? WHERE account_id = ? AND id = ?").run(hash, accountId, id);
