@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.238.0 — 2026-11-08
+
+- Bob's chat keeps up with what each conversation does now. A message about a conversation shows where it stands, as on the board: **Running now**, **Waits for you** or **Done · ready for review**. It changes as soon as the board does, so a conversation that started again after an update no longer looks stopped.
+- Bob checks his open items again as soon as a conversation starts or ends a turn, and after each of his own checks, instead of only every 2 minutes. His note that he told a conversation to go on now leaves once he has checked the turn he pushed; his next message or the board says how it went.
+- A conversation that waits for you stays under **Needs you** on the board, and its item stays in Bob's chat, until you answer it, close it or dismiss it. Opening it to look no longer takes it away. Clicking a waiting card, or a message that asks you something, opens the conversation with you in control, ready to answer, with no separate **Take control** step.
+- Scheduled tasks work like meetings in a calendar. A task can run **Once** on a date and time, or repeat every hour, day, week or month, from a first day until an optional last one. A monthly task repeats on its first day's date and skips months without that day. Set this in the scheduled tasks editor or the Automations tab, or ask Bob, for example "add a scheduled task to send the invoice report on the 1st of every month at 9:00 until June". The list shows a task's first and last day, and a one-time task that already ran says it has no more runs.
+
 ## 2.237.0 — 2026-11-08
 
 - File sync between your machines no longer stalls when another project has a large backlog of files waiting for a peer. Its worker spent about 13 seconds on every pass walking that backlog, so the other machine's requests timed out and changed files stopped arriving.
