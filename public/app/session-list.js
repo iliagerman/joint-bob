@@ -7,7 +7,7 @@ import { clearChat } from "./chat-transcript.js";
 import { createMultiSelect } from "./multi-select.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
-import { filteredSessions, normalizedQuery, selectedProject, sessionDisplayState, setMobileView, shortSessionTitle, updateChatFilterCounts } from "./layout.js";
+import { filteredSessions, normalizedQuery, selectedProject, sessionDisplayState, sessionDisplayTitle, setMobileView, shortSessionTitle, updateChatFilterCounts } from "./layout.js";
 import { toggleSessionNtfy } from "./ntfy.js";
 import { changeSessionOptimistically } from "./optimistic-sessions.js";
 import { keepListScroll } from "./list-scroll.js";
@@ -155,7 +155,7 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
   if (session.color) button.dataset.color = session.color;
   if (session.worktree) button.dataset.worktreeColor = session.worktree.color;
   const sessionName = document.createElement("strong");
-  const title = shortSessionTitle({ ...session, title: session.displayTitle ?? session.title });
+  const title = sessionDisplayTitle(session);
   sessionName.textContent = title;
   const meta = document.createElement("span");
   meta.textContent = formatDate(session.updatedAt || session.createdAt);

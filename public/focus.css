@@ -148,7 +148,7 @@ body.booting :is(#focusControlsButton, #focusControls) { visibility: hidden; }
   body.focus-ui .done-filter { font-size: 14px; }
   body.focus-ui .project-group-summary { font-size: 15px; }
   body.focus-ui .project-card strong, body.focus-ui .session-card strong { font-size: 17px; }
-  body.focus-ui .project-card span, body.focus-ui .session-card span { font-size: 13.5px; }
+  body.focus-ui .project-card span:not(strong span), body.focus-ui .session-card span:not(strong span) { font-size: 13.5px; }
   body.focus-ui .project-card .project-sync-status, body.focus-ui .project-card .project-lock-badge, body.focus-ui .project-card .project-cluster-badge { font-size: 12px; }
   body.focus-ui .session-card .chat-badge, body.focus-ui .session-card .session-done-badge { font-size: 12px; padding: 3px 8px; }
   body.focus-ui .chat-topbar .chat-title-block > h2 { font-size: 20px; }

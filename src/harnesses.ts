@@ -358,8 +358,8 @@ function groupConversation(conversationId: string, segments: Array<{ session: Se
     // A switched conversation keeps the title of its first real segment; a fresh
     // segment's own title may be derived from the handoff envelope.
     title: overrides[conversationId] ?? generatedTitle,
-    // Titles the agent named read in title case; titles the user typed stay as written.
-    displayTitle: overrides[conversationId] ?? titleCase(generatedTitle),
+    // The list shows every title in title case; the stored title stays exactly as named.
+    displayTitle: titleCase(overrides[conversationId] ?? generatedTitle),
     ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
     ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
     ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),

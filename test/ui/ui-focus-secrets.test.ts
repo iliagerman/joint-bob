@@ -30,7 +30,8 @@ test("mobile Add secret searches existing accounts and attaches only to the open
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.getByText("Internal Assistant", { exact: true }).click();
-  await page.getByText("Short one", { exact: true }).click();
+  // The list shows titles in title case; the stored title above stays "Short one".
+  await page.getByText("Short One", { exact: true }).click();
   await page.getByTestId("focus-controls-button").click();
   await page.getByTestId("focus-add-secret").click();
   assert.equal(await page.locator("#secretAccountDialog").isVisible(), false, "does not open account creation");

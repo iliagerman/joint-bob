@@ -14,7 +14,7 @@ import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } 
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { syncQuickActionLabels } from "./focus-ui.js";
-import { setMobileView, shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
+import { sessionDisplayTitle, setMobileView, syncChatTitleFromSessions } from "./layout.js";
 import { withPendingSessionChanges } from "./optimistic-sessions.js";
 import { refreshProjectsQuietly } from "./project-selection.js";
 import { loadRecentSessions } from "./recents.js";
@@ -370,7 +370,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     elements.sessionTitle.textContent = pendingTitle
       ? pendingTitle
       : matchingSession
-        ? shortSessionTitle(matchingSession)
+        ? sessionDisplayTitle(matchingSession)
         : openingDraft
           ? `New ${harnessLabel(state.harnesses, state.engine)} conversation`
           : `${harnessLabel(state.harnesses, state.engine)} conversation`;
@@ -799,7 +799,7 @@ async function refreshSessionSnapshot(projectId) {
     const activeSession = state.sessions.find((session) => session.id === state.activeSessionId || session.path === state.activeSessionPath);
     // The list can arrive after the conversation opened, so the header takes the
     // list's name as soon as it exists rather than keeping its harness fallback.
-    if (activeSession && !state.pendingSessionTitle) elements.sessionTitle.textContent = shortSessionTitle(activeSession);
+    if (activeSession && !state.pendingSessionTitle) elements.sessionTitle.textContent = sessionDisplayTitle(activeSession);
     if (newlyNeedsReview) playCompletionSound().catch((error) => console.warn("Completion sound failed", error));
     const activeNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
     const activeSessionExists = state.sessions.some((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);

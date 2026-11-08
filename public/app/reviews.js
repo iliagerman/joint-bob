@@ -4,7 +4,7 @@ import { loadHarnesses, loadSessionNodes } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
-import { selectedProject, sessionIsVisible, shortSessionTitle } from "./layout.js";
+import { selectedProject, sessionDisplayTitle, sessionIsVisible } from "./layout.js";
 import { changeSessionOptimistically } from "./optimistic-sessions.js";
 import { renderProjects } from "./project-list.js";
 import { selectProject } from "./project-selection.js";
@@ -298,7 +298,7 @@ export async function openListedSession(session) {
     state.activeNodeId = destinationId;
     if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destinationId });
   }
-  const title = shortSessionTitle(session);
+  const title = sessionDisplayTitle(session);
   openSession(session.path, title, false, Boolean(state.activeTaskId), reviewHighlightAfter);
   if (!local) return;
   try {

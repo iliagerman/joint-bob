@@ -15,6 +15,11 @@ export function shortSessionTitle(session) {
   return `Conversation • ${formatDate(session.updatedAt || session.createdAt)}`;
 }
 
+/** The title as the list and chat header show it. Moves, recents and references keep the stored title. */
+export function sessionDisplayTitle(session) {
+  return shortSessionTitle({ ...session, title: session.displayTitle ?? session.title });
+}
+
 /**
  * The chat header must agree with the conversations list. Status updates and
  * sessionInfoChanged carry the engine's own live session name (for example a
@@ -23,7 +28,7 @@ export function shortSessionTitle(session) {
 export function syncChatTitleFromSessions(engineName) {
   const session = state.sessions.find((item) => item.id === state.activeSessionId)
     || state.sessions.find((item) => item.path === state.activeSessionPath);
-  elements.sessionTitle.textContent = session ? shortSessionTitle(session) : engineName;
+  elements.sessionTitle.textContent = session ? sessionDisplayTitle(session) : engineName;
 }
 
 /**
@@ -62,9 +67,30 @@ export function toggleControlView() {
   setMobileView("control");
 }
 
+/** The view one level up: a conversation or the board returns to its project's list, the list to the projects, and the control center to where it was opened from. */
+function parentView(view) {
+  if (view === "chat" || view === "board") return state.activeProjectId ? "sessions" : "projects";
+  if (view === "sessions") return "projects";
+  if (view === "control") return controlExitView();
+  return null;
+}
+function controlExitView() {
+  return state.viewBeforeControl || (state.activeProjectId ? "sessions" : "projects");
+}
+
+// History holds the projects view as its base entry and at most one entry above it for the current
+// view, so Back always climbs one level instead of replaying every place visited.
+let skipNextPop = false;
+function recordView(view) {
+  const onTop = Boolean(history.state?.appTop);
+  if (view === "projects") {
+    if (onTop) { skipNextPop = true; history.back(); }
+  } else if (onTop) history.replaceState({ ...history.state, mobileView: view, appTop: true }, "");
+  else history.pushState({ ...history.state, mobileView: view, appTop: true }, "");
+}
+
 export function setMobileView(view, updateHistory = true) {
   if (state.keepControlView && view !== "control") return;
-  const currentView = history.state?.mobileView;
   if (view === "control" && currentMobileView() !== "control") state.viewBeforeControl = currentMobileView();
   if (state.preferencesLoaded) savePreferencesInBackground({ mobileView: view });
 
@@ -79,13 +105,24 @@ export function setMobileView(view, updateHistory = true) {
     navButton.classList.toggle("active", name === view);
   }
   if (view === "control") activateControlCenter().catch((error) => toast(error.message, 8000));
-  if (updateHistory && currentView !== view) history.pushState({ ...history.state, mobileView: view }, "");
+  if (updateHistory) recordView(view);
   window.dispatchEvent(new CustomEvent("app-view-changed"));
 }
 
-history.replaceState({ ...history.state, mobileView: "projects" }, "");
+history.replaceState({ ...history.state, mobileView: "projects", appTop: false }, "");
 window.addEventListener("popstate", (event) => {
-  if (event.state?.mobileView) setMobileView(event.state.mobileView, false);
+  if (skipNextPop) {
+    skipNextPop = false;
+    // A view chosen while the step back to the base was pending still needs its entry above the base.
+    if (currentMobileView() !== "projects") history.pushState({ ...history.state, mobileView: currentMobileView(), appTop: true }, "");
+    return;
+  }
+  if (event.state?.appTop) { setMobileView(event.state.mobileView, false); return; }
+  // Back from any deeper view lands on the base entry: show the parent, and keep an entry above the base until the top.
+  const parent = parentView(currentMobileView());
+  if (!parent) return;
+  setMobileView(parent, false);
+  if (currentMobileView() !== "projects") history.pushState({ ...history.state, mobileView: currentMobileView(), appTop: true }, "");
 });
 
 export function selectedProject() {
@@ -193,7 +230,7 @@ function hideExitPrompt() {
 
 function leaveControlCenter() {
   hideExitPrompt();
-  setMobileView(state.viewBeforeControl || (state.activeProjectId ? "sessions" : "projects"));
+  setMobileView(controlExitView());
 }
 elements.controlCenterCloseButton.addEventListener("click", leaveControlCenter);
 elements.controlExitConfirm.addEventListener("click", leaveControlCenter);
