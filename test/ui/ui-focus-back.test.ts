@@ -28,6 +28,19 @@ test("phone titles read in title case at one size, and Back climbs a level inste
     if (title.tailSize) assert.equal(title.tailSize, title.size, `the last word is the same size as the title: ${title.text}`);
   }
 
+  // Labelled titles split their last word into its own span; that word must stay the title's size.
+  const sized = await page.evaluate(`(async () => {
+    const { state } = await import("/app/state.js");
+    const { renderSessions } = await import("/app/session-list.js");
+    state.sessions[0].classification = "ux";
+    renderSessions();
+    const card = document.querySelector("#sessionList .session-card");
+    const tail = card.querySelector(".session-title-tail");
+    return { title: getComputedStyle(card.querySelector("strong")).fontSize, tail: tail ? getComputedStyle(tail).fontSize : null };
+  })()`) as { title: string; tail: string | null };
+  assert.ok(sized.tail, "a labelled title has a last-word span");
+  assert.equal(sized.tail, sized.title, "the last word is the same size as the rest of the title");
+
   const back = async (view: string) => {
     await page.evaluate(() => history.back());
     await page.locator(`body.view-${view}`).waitFor();

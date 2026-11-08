@@ -112,6 +112,7 @@ function renderCard(card) {
     ribbon.dataset.testid = "control-card-driver";
     top.append(ribbon);
   }
+  if (card.column === "running") top.append(runningBadge(card));
   if (card.column === "review") top.append(element("span", "control-badge review", "To review"));
   top.append(element("span", "control-spacer"), picker);
 
@@ -154,6 +155,22 @@ function renderCard(card) {
     Promise.resolve(take ? take.run(card) : openCard(card)).catch((error) => toast.error(error.message));
   });
   return root;
+}
+
+const SPIN_MS = 1_000;
+
+/**
+ * A running card says so on top, with a ring that turns. The board is drawn anew every few seconds while agents run; the ring
+ * starts each time where the clock says it is, so it keeps turning smoothly through those redraws.
+ */
+function runningBadge(card) {
+  const badge = element("span", "control-badge running");
+  badge.dataset.testid = "control-card-running";
+  badge.title = card.turnRunning ? "Its agent is working now" : "Its background tasks are still running";
+  const ring = element("span", "control-running-ring");
+  ring.style.animationDelay = `-${Date.now() % SPIN_MS}ms`;
+  badge.append(ring, element("span", "", "Running"));
+  return badge;
 }
 
 /**

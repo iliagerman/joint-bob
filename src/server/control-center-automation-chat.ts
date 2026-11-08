@@ -8,7 +8,6 @@ import { REPORT_ITEM_ACTIONS, reportItemSchema } from "../control-center/bob-rep
 import { appendBobMessage, bobDatabase, type BobAction, type BobMessage, type BobSettings } from "../control-center/bob-store.js";
 import type { BobDecision } from "../control-center/decisions.js";
 import { storedDigest } from "../conversation-digest.js";
-import type { HarnessId } from "../types.js";
 import {
   collectAutomations, createReport, createScheduledTask, deleteAutomation, entriesMatching, reportChangeSchema, reportInputSchema, scheduledTaskChangeSchema,
   scheduledTaskInputSchema, setAutomationEnabled, updateReport, updateScheduledTask, updateWebhookCompact, webhookChangeSchema, type Collected,

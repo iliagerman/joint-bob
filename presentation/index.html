@@ -6,6 +6,7 @@
   <title>Joint Bob · Cost control for coding agents</title>
   <link rel="icon" href="../promo-video/landing/media/icon.svg">
   <link rel="stylesheet" href="deck.css">
+  <link rel="stylesheet" href="scenes.css">
 </head>
 <body>
   <canvas id="sky" aria-hidden="true"></canvas>
@@ -62,30 +63,103 @@
           <p class="eyebrow"><span class="chip">1</span> Smart model selection</p>
           <h2>The right model <em>for every message.</em></h2>
         </header>
-        <div class="router">
-          <div class="prompt-col">
-            <p class="label">Incoming message</p>
+        <!-- Shared paint for the cabs. -->
+        <svg class="defs" width="0" height="0" aria-hidden="true">
+          <defs>
+            <linearGradient id="cabBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a424c"/><stop offset="0.55" stop-color="#1c2127"/><stop offset="1" stop-color="#0f1215"/></linearGradient>
+            <linearGradient id="cabGlass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#bff6ff" stop-opacity="0.9"/><stop offset="0.5" stop-color="#4fb3c9" stop-opacity="0.55"/><stop offset="1" stop-color="#173540" stop-opacity="0.9"/></linearGradient>
+            <radialGradient id="thrustTeal"><stop offset="0" stop-color="#5ff5d0"/><stop offset="1" stop-color="#37cfab" stop-opacity="0"/></radialGradient>
+            <radialGradient id="thrustPurple"><stop offset="0" stop-color="#d6c8ff"/><stop offset="1" stop-color="#b39bff" stop-opacity="0"/></radialGradient>
+            <radialGradient id="thrustAmber"><stop offset="0" stop-color="#ffe29a"/><stop offset="1" stop-color="#d0a63c" stop-opacity="0"/></radialGradient>
+            <linearGradient id="beamGrad" x1="1" y1="0" x2="0" y2="0"><stop offset="0" stop-color="#fff6d0" stop-opacity="0.7"/><stop offset="1" stop-color="#fff6d0" stop-opacity="0"/></linearGradient>
+            <linearGradient id="scanGrad" x1="1" y1="0" x2="0" y2="0"><stop offset="0" stop-color="#37cfab" stop-opacity="0.55"/><stop offset="1" stop-color="#37cfab" stop-opacity="0"/></linearGradient>
+            <radialGradient id="honey" cx="0.4" cy="0.35" r="0.8"><stop offset="0" stop-color="#ffe9a8"/><stop offset="0.55" stop-color="#f4b93a"/><stop offset="1" stop-color="#b9770e"/></radialGradient>
+            <linearGradient id="botBody" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f363e"/><stop offset="1" stop-color="#14181c"/></linearGradient>
+          </defs>
+        </svg>
+        <div class="dispatch">
+          <div class="queue">
+            <p class="label">Next passenger · a message</p>
             <div class="prompt-card" id="promptCard"><span class="who">Developer</span><p id="promptText"></p></div>
-            <p class="label">Task type</p>
+            <div class="waiting"><i></i><i></i><i></i><span>3 more waiting</span></div>
+            <p class="label">The judgement</p>
             <p class="task" id="taskText"></p>
           </div>
-          <div class="judge">
-            <svg viewBox="0 0 300 180" class="dial">
-              <defs><linearGradient id="dialGrad" x1="0" x2="1"><stop offset="0" stop-color="#3cb474"/><stop offset="0.55" stop-color="#d0a63c"/><stop offset="1" stop-color="#b39bff"/></linearGradient></defs>
-              <path d="M30 160 A120 120 0 0 1 270 160" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="18" stroke-linecap="round"/>
-              <path id="dialArc" d="M30 160 A120 120 0 0 1 270 160" fill="none" stroke="url(#dialGrad)" stroke-width="18" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/>
-              <g id="needle" style="transform-origin:150px 160px"><line x1="150" y1="160" x2="150" y2="62" stroke="#ebeced" stroke-width="4" stroke-linecap="round"/><circle cx="150" cy="160" r="9" fill="#ebeced"/></g>
+          <div class="tower">
+            <span class="bot-q">?</span>
+            <svg class="bot" viewBox="0 0 300 330" aria-hidden="true">
+              <polygon class="scan-beam" points="150,92 -330,10 -330,190" fill="url(#scanGrad)"/>
+              <ellipse cx="150" cy="318" rx="92" ry="10" fill="rgba(0,0,0,0.5)"/>
+              <path d="M98 318 L112 248 L188 248 L202 318 Z" fill="url(#botBody)" stroke="#37cfab" stroke-opacity="0.35" stroke-width="2"/>
+              <rect x="96" y="160" width="108" height="96" rx="22" fill="url(#botBody)" stroke="#37cfab" stroke-opacity="0.35" stroke-width="2"/>
+              <rect x="116" y="182" width="68" height="10" rx="5" fill="#37cfab" opacity="0.6"><animate attributeName="opacity" values="0.25;0.8;0.25" dur="1.6s" repeatCount="indefinite"/></rect>
+              <rect x="116" y="200" width="44" height="8" rx="4" fill="#b39bff" opacity="0.5"/>
+              <g class="bot-arm"><rect x="200" y="176" width="70" height="14" rx="7" fill="#2a3036" stroke="#37cfab" stroke-opacity="0.4" stroke-width="2"/><circle cx="276" cy="183" r="11" fill="#37cfab"><animate attributeName="opacity" values="1;0.4;1" dur="0.9s" repeatCount="indefinite"/></circle></g>
+              <line x1="150" y1="34" x2="150" y2="10" stroke="#7d8790" stroke-width="4" stroke-linecap="round"/>
+              <circle cx="150" cy="8" r="7" fill="#e0564e"><animate attributeName="opacity" values="1;0.2;1" dur="1.2s" repeatCount="indefinite"/></circle>
+              <rect x="64" y="34" width="172" height="118" rx="44" fill="url(#botBody)" stroke="#37cfab" stroke-opacity="0.45" stroke-width="2.5"/>
+              <rect x="86" y="66" width="128" height="52" rx="26" fill="#05090b" stroke="#1d2a30" stroke-width="2"/>
+              <g id="botEye"><circle cx="150" cy="92" r="17" fill="#37cfab" opacity="0.35"/><circle cx="150" cy="92" r="11" fill="#5ff5d0"/><circle cx="154" cy="88" r="3.5" fill="#fff"/></g>
+              <rect x="52" y="78" width="14" height="30" rx="6" fill="#2a3036"/><rect x="234" y="78" width="14" height="30" rx="6" fill="#2a3036"/>
+              <text x="150" y="146" text-anchor="middle" class="bot-sign">DISPATCH</text>
             </svg>
-            <p class="level"><span id="levelNum">–</span><small>/10</small></p>
-            <p class="label">Difficulty · <span id="confText">confidence –</span></p>
-            <p class="judge-note">Scored on every message by a decision model: TypeSafe Jev, or Laya on your own machine.</p>
+            <div class="holo">
+              <span class="label">Difficulty</span>
+              <p class="holo-num"><b id="levelNum">–</b><small>/10</small></p>
+              <div class="holo-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <p class="holo-conf" id="confText">confidence –</p>
+            </div>
           </div>
-          <div class="lanes">
-            <div class="lane" data-lane="light"><span class="model">Light</span><span class="price">$</span><span class="tag">questions · git · small edits</span><span class="count">0</span><span class="prov"><i class="c">Claude Haiku</i><i class="o">OpenAI gpt-6-luna</i><i class="k">Kiro auto</i></span></div>
-            <div class="lane" data-lane="standard"><span class="model">Standard</span><span class="price">$$</span><span class="tag">features across files</span><span class="count">0</span><span class="prov"><i class="c">Claude Sonnet</i><i class="o">OpenAI gpt-6.1-sol</i><i class="k">Kiro gpt-5.6-sol</i></span></div>
-            <div class="lane" data-lane="deep"><span class="model">Deep</span><span class="price">$$$</span><span class="tag">debugging · planning</span><span class="count">0</span><span class="prov"><i class="c">Claude Opus</i><i class="o">OpenAI gpt-6-astra</i><i class="k">Kiro claude-opus-5</i></span></div>
-            <p class="label lanes-foot">One mapping per agent: Claude Code, Pi (OpenAI) and Kiro</p>
+          <div class="rank">
+            <div class="bay" data-lane="light">
+              <div class="bay-info"><p><b>Light</b><span class="price">$</span></p><small>questions · git · small edits</small><span class="prov"><i class="c">Claude Haiku</i><i class="o">OpenAI gpt-6-luna</i><i class="k">Kiro auto</i></span></div>
+              <div class="road"><svg class="cab" viewBox="0 0 320 120" aria-hidden="true">
+                <polygon class="beam" points="262,74 330,58 330,92" fill="url(#beamGrad)"/>
+                <ellipse class="thrust" cx="165" cy="104" rx="72" ry="10" fill="url(#thrustTeal)"/>
+                <path d="M84 80 C84 52 118 36 166 36 C214 36 246 52 258 68 C266 80 258 90 242 90 L104 90 C92 90 84 87 84 80 Z" fill="url(#cabBody)" stroke="#37cfab" stroke-width="2.5"/>
+                <path d="M126 58 C138 44 176 42 204 46 C222 50 234 58 238 66 L130 68 Z" fill="url(#cabGlass)"/>
+                <rect x="104" y="76" width="140" height="4" rx="2" fill="#37cfab"/>
+                <circle cx="256" cy="74" r="4.5" fill="#fff"/>
+                <text x="168" y="88" text-anchor="middle" class="cab-tag">TAXI</text>
+              </svg></div>
+              <b class="count">0</b>
+            </div>
+            <div class="bay" data-lane="standard">
+              <div class="bay-info"><p><b>Standard</b><span class="price">$$</span></p><small>features across files</small><span class="prov"><i class="c">Claude Sonnet</i><i class="o">OpenAI gpt-6.1-sol</i><i class="k">Kiro gpt-5.6-sol</i></span></div>
+              <div class="road"><svg class="cab" viewBox="0 0 320 120" aria-hidden="true">
+                <polygon class="beam" points="286,72 340,54 340,92" fill="url(#beamGrad)"/>
+                <ellipse class="thrust" cx="110" cy="104" rx="56" ry="9" fill="url(#thrustPurple)"/>
+                <ellipse class="thrust" cx="230" cy="104" rx="56" ry="9" fill="url(#thrustPurple)"/>
+                <path d="M40 86 L46 66 C52 56 70 50 96 48 L132 34 C170 28 214 30 236 42 L262 54 C280 58 290 66 290 78 C290 86 284 92 272 92 L56 92 C46 92 40 90 40 86 Z" fill="url(#cabBody)" stroke="#b39bff" stroke-width="2.5"/>
+                <path d="M104 50 L136 38 C160 34 186 34 200 38 L204 54 Z" fill="url(#cabGlass)"/>
+                <path d="M210 40 C226 42 240 48 250 56 L212 56 Z" fill="url(#cabGlass)"/>
+                <path d="M40 70 L22 60 L30 78 Z" fill="#b39bff"/>
+                <rect x="60" y="74" width="214" height="4" rx="2" fill="#b39bff"/>
+                <circle cx="282" cy="72" r="4.5" fill="#fff"/>
+                <text x="160" y="89" text-anchor="middle" class="cab-tag">TAXI</text>
+              </svg></div>
+              <b class="count">0</b>
+            </div>
+            <div class="bay" data-lane="deep">
+              <div class="bay-info"><p><b>Deep</b><span class="price">$$$</span></p><small>debugging · planning</small><span class="prov"><i class="c">Claude Opus</i><i class="o">OpenAI gpt-6-astra</i><i class="k">Kiro claude-opus-5</i></span></div>
+              <div class="road"><svg class="cab" viewBox="0 0 320 120" aria-hidden="true">
+                <polygon class="beam" points="304,70 360,50 360,92" fill="url(#beamGrad)"/>
+                <ellipse class="thrust" cx="80" cy="106" rx="50" ry="10" fill="url(#thrustAmber)"/>
+                <ellipse class="thrust" cx="170" cy="106" rx="50" ry="10" fill="url(#thrustAmber)"/>
+                <ellipse class="thrust" cx="260" cy="106" rx="44" ry="10" fill="url(#thrustAmber)"/>
+                <path d="M14 90 L18 60 C22 48 40 42 64 40 L112 26 C160 18 228 20 262 32 L292 46 C308 52 312 64 310 78 C308 88 300 94 286 94 L28 94 C18 94 14 92 14 90 Z" fill="url(#cabBody)" stroke="#d0a63c" stroke-width="2.5"/>
+                <path d="M74 42 L114 30 C140 26 160 25 176 26 L178 46 Z" fill="url(#cabGlass)"/>
+                <path d="M186 26 C214 26 238 30 256 38 L262 48 L188 48 Z" fill="url(#cabGlass)"/>
+                <path d="M18 56 L0 34 L6 66 Z" fill="#d0a63c"/><path d="M30 52 L18 24 L28 54 Z" fill="#d0a63c" opacity="0.7"/>
+                <rect x="30" y="70" width="270" height="5" rx="2.5" fill="#d0a63c"/>
+                <rect x="30" y="80" width="270" height="2" rx="1" fill="#d0a63c" opacity="0.5"/>
+                <circle cx="302" cy="70" r="5" fill="#fff"/>
+                <text x="160" y="91" text-anchor="middle" class="cab-tag">TAXI</text>
+              </svg></div>
+              <b class="count">0</b>
+            </div>
           </div>
+          <i class="rider" id="rider"></i>
         </div>
         <div class="facts" data-step="1">
           <p><b>10 levels, your mapping.</b> Each level picks the model and thinking effort for Claude, OpenAI or Kiro.</p>
@@ -100,31 +174,35 @@
           <p class="eyebrow"><span class="chip">2</span> Connection pools of subscriptions</p>
           <h2>Use every seat <em>you already pay for.</em></h2>
         </header>
-        <div class="pool">
-          <div class="turn-token" id="turnToken">turn</div>
-          <div class="accounts">
-            <div class="account" data-acc="0"><span class="acc-name"><i class="dot c"></i>Claude</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
-            <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <div class="account" data-acc="1"><span class="acc-name"><i class="dot o"></i>ChatGPT · A</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
-            <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <div class="account" data-acc="2"><span class="acc-name"><i class="dot k"></i>Bedrock</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
-            <svg class="hop" viewBox="0 0 80 20"><path d="M2 10 H70 M62 3 L72 10 L62 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <div class="account" data-acc="3"><span class="acc-name"><i class="dot l"></i>Local model</span><div class="quota"><i></i></div><span class="acc-state">ready</span></div>
+        <div class="office">
+          <canvas width="3280" height="1000" aria-label="Three teams working at their desks"></canvas>
+          <div class="office-pencil" hidden></div>
+          <svg class="pipes" viewBox="0 0 1640 500" aria-hidden="true">
+            <path class="pipe pool-a" data-from="claude" d="M395 106 C395 128 273 122 273 146"/>
+            <path class="pipe pool-a" data-from="claude" d="M395 106 C395 128 820 122 820 146"/>
+            <path class="pipe pool-a" data-from="chatgpt" d="M665 106 C665 128 273 122 273 146"/>
+            <path class="pipe pool-a" data-from="chatgpt" d="M665 106 C665 128 820 122 820 146"/>
+            <path class="pipe pool-b" data-from="bedrock" d="M1235 106 C1235 128 1367 122 1367 146"/>
+            <path class="pipe pool-b" data-from="local" d="M1485 106 C1485 128 1367 122 1367 146"/>
+          </svg>
+          <div class="pool-box a" style="left:250px;width:560px"><span class="pool-name">Pool · Product</span>
+            <div class="seat" style="left:20px"><p><i class="dot c"></i>Claude<span class="seat-state">ready</span></p><div class="quota"><i></i></div></div>
+            <div class="seat" style="left:290px"><p><i class="dot o"></i>ChatGPT<span class="seat-state">ready</span></p><div class="quota"><i></i></div></div>
           </div>
-          <p class="pool-log" id="poolLog">&nbsp;</p>
-        </div>
-        <div class="relay" data-step="1">
-          <div class="relay-node"><span class="label">Relay</span><b>Holds the sign-ins</b><small>Passes on model requests only, never account routes</small></div>
-          <div class="beams"><i></i><i></i><i></i></div>
-          <div class="members">
-            <span>Dana's laptop</span><span>Omer's laptop</span><span>Build server</span>
+          <div class="pool-box b" style="left:1100px;width:520px"><span class="pool-name">Pool · Platform</span>
+            <div class="seat" style="left:20px"><p><i class="dot k"></i>Bedrock<span class="seat-state">ready</span></p><div class="quota"><i></i></div></div>
+            <div class="seat" style="left:270px"><p><i class="dot l"></i>Local model<span class="seat-state">no limit</span></p><div class="quota"><i></i></div></div>
           </div>
-          <p class="relay-note">Members get a placeholder token that works only on their own machine. <b>No access or refresh token ever reaches them.</b></p>
+          <div class="team" style="left:128px"><b>Payments team</b><small>project Checkout · Product pool</small><div class="team-meter"><i></i></div><span class="spend">$0.00 today</span></div>
+          <div class="team" style="left:675px"><b>Mobile team</b><small>project App · Product pool</small><div class="team-meter"><i></i></div><span class="spend">$0.00 today</span></div>
+          <div class="team" style="left:1222px"><b>Platform team</b><small>project Infra · Platform pool</small><div class="team-meter"><i></i></div><span class="spend">$0.00 today</span></div>
         </div>
-        <div class="facts" data-step="2">
-          <p><b>Failover in order.</b> Same provider first, then the next provider, each with its own mapped model.</p>
-          <p><b>Never pays twice.</b> Switches only before any output or tool call. Work is never replayed.</p>
-          <p><b>Any scope.</b> Everywhere, a workspace, a cluster, one project or one conversation.</p>
+        <p class="office-log">&nbsp;</p>
+        <div class="facts" data-step="1">
+          <p><b>Pools per team.</b> Assign one everywhere, to a workspace, a cluster, a project or a conversation.</p>
+          <p><b>Failover in order.</b> Same provider first, then the next, each with its own mapped model.</p>
+          <p><b>Never pays twice.</b> Switches only before any output or tool call.</p>
+          <p><b>Sign-ins stay on the relay.</b> Members get a placeholder token, never an access token.</p>
         </div>
         <button class="clip-btn" type="button" data-clip="pools">▶ See it in the app <kbd>V</kbd></button>
       </section>
@@ -135,32 +213,70 @@
           <p class="eyebrow"><span class="chip">3</span> Budgets and limits</p>
           <h2>A limit for every team, <em>project and task.</em></h2>
         </header>
-        <div class="budget">
-          <div class="scopes">
-            <div class="scope s1"><span>Cluster</span><b>$2,000 / month</b></div>
-            <div class="scope s2"><span>Workspace · Payments team</span><b>$600 / month</b></div>
-            <div class="scope s3"><span>Project · Checkout</span><b>$20 / day</b></div>
-            <div class="scope s4"><span>Conversation</span><b>$5 / total</b></div>
-            <p class="label scopes-foot">A turn starts only when every level still has room. Owners can tighten, never loosen.</p>
+        <div class="tanks">
+          <div class="cluster-tank">
+            <span class="label">Cluster</span>
+            <b class="tank-limit">$2,000<small>/ month</small></b>
+            <div class="column" data-base="1130" data-limit="2000"><i class="liquid"><span class="wave"></span></i><span class="tick" style="bottom:80%">80%</span></div>
+            <b class="tank-value" data-money>$1,130</b>
           </div>
-          <div class="meter">
-            <svg viewBox="0 0 260 260" class="ring">
-              <circle cx="130" cy="130" r="108" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="20"/>
-              <circle id="ringArc" cx="130" cy="130" r="108" fill="none" stroke="#37cfab" stroke-width="20" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 130 130)"/>
-            </svg>
-            <div class="meter-copy"><span class="label">Checkout · today</span><b id="spendNum">$0.00</b><small>of $20.00</small></div>
-            <div class="warn" id="warn80">80% · warning</div>
+          <div class="ws" data-base="388" data-limit="600">
+            <header><p><b>Payments team</b><span>workspace</span></p><b class="ws-limit">$600 / month</b></header>
+            <div class="ws-gauge"><i></i></div>
+            <div class="tubes">
+              <div class="tube main" data-limit="20" data-to="20" id="checkoutTube">
+                <div class="glass"><i class="liquid"><span class="wave"></span><span class="bubbles"><i></i><i></i><i></i><i></i></span></i><span class="tick" style="bottom:80%">80%</span><span class="lid">LOCKED</span><span class="badge-warn">80% · warning</span><b class="tube-value">$0.00</b></div>
+                <p><b>Checkout</b><small>$20 / day</small></p>
+              </div>
+              <div class="vials">
+                <span class="label">Conversations · $5 each</span>
+                <div class="vial" data-limit="5" data-to="3.1"><div class="glass"><i class="liquid"></i></div></div>
+                <div class="vial" data-limit="5" data-to="4.4"><div class="glass"><i class="liquid"></i></div></div>
+                <div class="vial" data-limit="5" data-to="1.8"><div class="glass"><i class="liquid"></i></div></div>
+              </div>
+              <div class="tube" data-limit="15" data-to="6.2">
+                <div class="glass"><i class="liquid"><span class="wave"></span><span class="bubbles"><i></i><i></i><i></i></span></i><span class="tick" style="bottom:80%">80%</span><b class="tube-value">$0.00</b></div>
+                <p><b>Refunds</b><small>$15 / day</small></p>
+              </div>
+            </div>
+          </div>
+          <div class="ws" data-base="291" data-limit="500">
+            <header><p><b>Mobile team</b><span>workspace</span></p><b class="ws-limit">$500 / month</b></header>
+            <div class="ws-gauge"><i></i></div>
+            <div class="tubes">
+              <div class="tube" data-limit="25" data-to="14.5">
+                <div class="glass"><i class="liquid"><span class="wave"></span><span class="bubbles"><i></i><i></i><i></i></span></i><span class="tick" style="bottom:80%">80%</span><b class="tube-value">$0.00</b></div>
+                <p><b>App</b><small>$25 / day</small></p>
+              </div>
+              <div class="tube" data-limit="10" data-to="3.2">
+                <div class="glass"><i class="liquid"><span class="wave"></span><span class="bubbles"><i></i><i></i></span></i><span class="tick" style="bottom:80%">80%</span><b class="tube-value">$0.00</b></div>
+                <p><b>Push</b><small>$10 / day</small></p>
+              </div>
+            </div>
+          </div>
+          <div class="ws" data-base="236" data-limit="400">
+            <header><p><b>Platform team</b><span>workspace</span></p><b class="ws-limit">$400 / month</b></header>
+            <div class="ws-gauge"><i></i></div>
+            <div class="tubes">
+              <div class="tube" data-limit="15" data-to="9.6">
+                <div class="glass"><i class="liquid"><span class="wave"></span><span class="bubbles"><i></i><i></i><i></i></span></i><span class="tick" style="bottom:80%">80%</span><b class="tube-value">$0.00</b></div>
+                <p><b>Infra</b><small>$15 / day</small></p>
+              </div>
+              <div class="tube" data-limit="12" data-to="8.4">
+                <div class="glass"><i class="liquid"><span class="wave"></span><span class="bubbles"><i></i><i></i><i></i></span></i><span class="tick" style="bottom:80%">80%</span><b class="tube-value">$0.00</b></div>
+                <p><b>CI</b><small>$12 / day</small></p>
+              </div>
+            </div>
           </div>
           <div class="refusal" id="refusal">
             <span class="label">Turn refused</span>
             <p>Budget reached: the daily limit of $20.00 for project Checkout is used up…</p>
-            <small>Resets at 00:00 · queued prompts stay queued</small>
+            <small>Resets at 00:00 · <span class="queued">1 prompt queued</span></small>
           </div>
         </div>
-        <div class="periods" data-step="1"><span>hour</span><span>day</span><span>week</span><span>month</span><span>year</span><span>total</span></div>
         <div class="facts" data-step="1">
           <p><b>Stops runaway work.</b> A running turn is stopped within about a minute.</p>
-          <p><b>Same rules everywhere.</b> Pushed to every member, reset together on calendar periods.</p>
+          <p><b>Same rules everywhere.</b> Hour, day, week, month, year or total, reset together.</p>
           <p><b>See every dollar.</b> Costs by project, model, skill and difficulty.</p>
         </div>
         <button class="clip-btn" type="button" data-clip="budgets">▶ See it in the app <kbd>V</kbd></button>
@@ -172,32 +288,25 @@
           <p class="eyebrow"><span class="chip">4</span> Self-learning</p>
           <h2>Every mistake is paid for <em>once.</em></h2>
         </header>
-        <div class="flow" id="flow">
-          <div class="fstep"><i>1</i><b>Conversation</b><small>an agent hits a problem</small></div>
-          <span class="fline"><i></i></span>
-          <div class="fstep"><i>2</i><b>Summary spots it</b><small>the same problem, twice</small></div>
-          <span class="fline"><i></i></span>
-          <div class="fstep"><i>3</i><b>Rule suggested</b><small>with its evidence</small></div>
-          <span class="fline"><i></i></span>
-          <div class="fstep"><i>4</i><b>You accept</b><small>nothing is installed alone</small></div>
-          <span class="fline"><i></i></span>
-          <div class="fstep"><i>5</i><b>Every agent knows</b><small>.agents/knowledge/, synced</small></div>
-        </div>
-        <div class="learn-low">
-          <div class="chart">
-            <p class="label">Retries on known problems</p>
-            <div class="bars" id="bars">
-              <div class="bar" data-v="12"><b>12</b><i></i><small>this week</small></div>
-              <div class="bar" data-v="7"><b>7</b><i></i><small>next week</small></div>
-              <div class="bar" data-v="3"><b>3</b><i></i><small>week 3</small></div>
-              <div class="bar" data-v="1"><b>1</b><i></i><small>a month in</small></div>
-            </div>
+        <p class="learn-path"><span>An agent hits a problem</span><span>the summary spots it twice</span><span>a rule is suggested</span><span>you accept it</span><span>every agent knows</span></p>
+        <div class="hive-wrap">
+          <div class="sources">
+            <p class="label">The team's conversations</p>
+            <div class="source"><b>Claude · checkout-api</b><small>timed out on the dev database</small><i class="emitter"></i></div>
+            <div class="source"><b>Pi · billing</b><small>port 5432 refused, again</small><i class="emitter"></i></div>
+            <div class="source"><b>Kiro · mobile</b><small>the same migration error twice</small><i class="emitter"></i></div>
           </div>
-          <div class="rule-card" data-step="1">
-            <p class="label">.agents/knowledge/database-access.md</p>
-            <h3>Connect to the dev database through the SSH tunnel on port 5433.</h3>
-            <p>Direct connections time out.</p>
-            <small>Evidence: 3 conversations timed out connecting directly</small>
+          <div class="hive-box"><svg width="700" height="440" viewBox="0 0 700 440" aria-label="Honeycomb of learned rules"></svg></div>
+          <div class="hive-side">
+            <div class="hive-stats">
+              <p><span class="label">Rules learned</span><b id="rulesCount">0</b></p>
+              <p><span class="label">Retries on known problems</span><b id="retriesCount" class="falling">12</b></p>
+            </div>
+            <div class="rule-card" data-step="1">
+              <p class="label">.agents/knowledge/database-access.md</p>
+              <h3>Connect to the dev database through the SSH tunnel on port 5433.</h3>
+              <small>Evidence: 3 conversations timed out connecting directly</small>
+            </div>
           </div>
         </div>
         <div class="facts" data-step="2">
@@ -251,6 +360,6 @@
   <aside class="notes" id="notes" hidden></aside>
   <div class="timeline"><i id="timeline"></i></div>
 
-  <script src="deck.js"></script>
+  <script type="module" src="deck.js"></script>
 </body>
 </html>
