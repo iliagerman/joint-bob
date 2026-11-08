@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.235.0 — 2026-11-08
+
+- Each project on the control center's board is drawn in its own color, the one chosen in the project's settings, so projects tell apart at a glance. Its chip in the project filter and its messages in Bob's chat have the same color. A project without a color gets one from the same palette; choose another in its settings when two look alike.
+- Bob's chat now sits on the left of the board. **⇄** in its header still moves it to the right, and the board remembers that.
+
 ## 2.234.0 — 2026-11-08
 
 - Every message in Bob's chat now has **Reply**, **Done** and **Dismiss** besides its own buttons. A reply to a message about a conversation goes into that conversation as you, even when it runs on your other machine; a reply to anything else goes to Bob. Done closes the conversation, and Dismiss only clears the message. What you type in a reply stays while new messages arrive.
