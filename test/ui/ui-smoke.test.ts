@@ -757,12 +757,8 @@ test("a top toast stays above the mobile composer", async () => {
     await project.click();
     await mobilePage.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
     await mobilePage.locator("#messageInput").waitFor();
-    await mobilePage.evaluate(() => {
-      const toast = document.createElement("div");
-      toast.className = "toast";
-      toast.innerHTML = '<span class="toast-message">Representative toast</span>';
-      document.body.append(toast);
-    });
+    // Shown the way the app shows one: notices live in a stack, and an error stays until dismissed.
+    await waitInPage(mobilePage, async () => { (await import("/app/shell.js")).toast.error("Representative toast"); return true; });
     await mobilePage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const layout = await mobilePage.evaluate(() => {
       const toast = document.querySelector(".toast")!.getBoundingClientRect();
