@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.241.0 — 2026-11-08
+
+- Webhooks now let you choose their machine while creating them and transfer them to another trusted cluster machine with their settings, files, skills, memory and call history. A transfer gives you a new address for the sender; active runs must finish first. Scheduled tasks show their machine and offer an explicit transfer action.
+
 ## 2.240.1 — 2026-11-08
 
 - Included the quality analytics page in the offline app assets so releases pass packaging checks.

@@ -207,9 +207,13 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   return sessionId;
 }
 
+const pendingWebhookDeliveries = new Map<string, number>();
+export const webhookDeliveryPending = (id: string): boolean => pendingWebhookDeliveries.has(id);
+
 /** Accepts a call for delivery; the outcome lands in the webhook's call history. */
 export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): void {
   announceWebhookCall(webhook, call);
+  pendingWebhookDeliveries.set(webhook.id, (pendingWebhookDeliveries.get(webhook.id) ?? 0) + 1);
   const requestId = randomUUID();
   call = { ...call, requestId };
   void (async () => {
@@ -233,5 +237,9 @@ export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): void {
         if (!call.started) recordWebhookDelivery(database, webhook.id, "failed", detail);
       } catch { /* history is best effort */ }
     }
-  })().catch(error => console.error(`Webhook ${webhook.id} execution setup failed`, error));
+  })().catch(error => console.error(`Webhook ${webhook.id} execution setup failed`, error)).finally(() => {
+    const remaining = pendingWebhookDeliveries.get(webhook.id)! - 1;
+    if (remaining) pendingWebhookDeliveries.set(webhook.id, remaining);
+    else pendingWebhookDeliveries.delete(webhook.id);
+  });
 }

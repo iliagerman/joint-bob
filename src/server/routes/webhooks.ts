@@ -37,7 +37,9 @@ import {
 import { Feature, isClusterOriginUrl, requireFeature, sendError } from "../http-auth.js";
 import { listProjectSessionsWithReviewState } from "../sessions-helpers.js";
 import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
-import { acceptWebhookCall } from "../webhooks.js";
+import { acceptWebhookCall, webhookDeliveryPending } from "../webhooks.js";
+import { exportWebhookTransfer, installWebhookTransfer, removeTransferredWebhook, webhookTransferSchema } from "../../webhook-transfer.js";
+import { ensureAutomationExecutionSchema } from "../../automation-executions.js";
 import { updateWebhookHistory } from "../webhook-history.js";
 import { getPersonalAssistant } from "../../personal-assistants.js";
 import { handleTelegramCallHeader, handleTelegramUpdate } from "../telegram.js";
@@ -93,6 +95,7 @@ async function handleHook(request: IncomingMessage, response: ServerResponse, se
   let payload: Awaited<ReturnType<typeof readWebhookPayload>>;
   try { payload = await readWebhookPayload(String(request.headers["content-type"] ?? ""), body, webhook.attachments); }
   catch (error) { reply(response, error instanceof WebhookError ? error.statusCode : 400, error instanceof Error ? error.message : "The body could not be read"); return; }
+  if (!getWebhook(database, webhook.id)?.enabled) { reply(response, 409, "Webhook changed while reading the call; try its current address"); return; }
   if (webhook.reply === "telegram") {
     // Answered at once, so Telegram doesn't retry while the assistant works.
     response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end("{}");
@@ -109,6 +112,7 @@ async function handleHook(request: IncomingMessage, response: ServerResponse, se
   }
   const query = (request.url ?? "").split("?", 2)[1] ?? "";
   const local = await getClusterNode();
+  if (!getWebhook(database, webhook.id)?.enabled) { reply(response, 409, "Webhook changed while reading the call; try its current address"); return; }
   acceptWebhookCall(webhook, {
     method: request.method ?? "POST", headers: flatHeaders(request), query: query.slice(0, 1000), body: payload.text, attachments: payload.attachments,
     resourceSnapshot: snapshotWebhookResources(database, webhook.id, local.id),
@@ -258,6 +262,8 @@ const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("sessions"), projectId: z.string().min(1).max(240) }).strict(),
   z.object({ action: z.literal("create"), input: webhookInputSchema }).strict(),
   z.object({ action: z.literal("update"), id: z.string().uuid(), input: webhookInputSchema }).strict(),
+  z.object({ action: z.literal("transfer"), id: z.string().uuid(), nodeId: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("install-transfer"), bundle: webhookTransferSchema }).strict(),
   z.object({ action: z.literal("regenerate"), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal("deliveries"), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal("delete"), id: z.string().uuid() }).strict(),
@@ -285,6 +291,7 @@ function decodeResourceData(data: string): Buffer {
 async function manage(command: Command): Promise<unknown> {
   const db = await clusterV2Database();
   if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation") : [] };
+  if ("id" in command && transferring.has(command.id)) throw new WebhookError(409, "Webhook transfer is in progress; wait before changing it");
   // The webhook behind a connected Telegram bot is managed from the assistant, not here.
   if ("id" in command && typeof command.id === "string" && command.action !== "deliveries" && getWebhook(db, command.id)?.reply) throw new WebhookError(409, "Manage this webhook from the assistant's Telegram settings");
   if (command.action === "list") return { webhooks: listWebhooks(db).filter(hook => !hook.reply), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
@@ -350,6 +357,20 @@ async function manage(command: Command): Promise<unknown> {
     setWebhookMemoryEnabled(db, webhook.id, command.enabled);
     return { enabled: command.enabled };
   }
+  if (command.action === "transfer") return transferWebhook(command);
+  if (command.action === "install-transfer") {
+    const input = command.bundle.input;
+    await checkTarget(input);
+    if (input.providerProfileId) {
+      if (!input.creatorAccountId) throw new WebhookError(400, "Sign in to select a profile");
+      accessibleProviderProfile(input.creatorAccountId, input.providerProfileId, "automation");
+    }
+    const project = (await getProject(input.target.projectId))!;
+    const local = await getClusterNode();
+    const workspace = automationWorkspaceIdentity(db, local.id, project.type ?? "personal");
+    validateAutomationTagAssignments(db, workspace.workspaceId, input.tags, workspace.ownerNodeId);
+    return { ...await installWebhookTransfer(db, command.bundle), bases: await urlBases() };
+  }
   if (command.action === "create" || command.action === "update") {
     const existing = command.action === "update" ? getWebhook(db, command.id) : undefined;
     if (existing) {
@@ -382,6 +403,31 @@ async function manage(command: Command): Promise<unknown> {
   return { ok: true };
 }
 
+const transferring = new Set<string>();
+async function transferWebhook(command: Extract<Command, { action: "transfer" }>) {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  if (command.nodeId === local.id) throw new WebhookError(400, "Choose a different machine");
+  if (!(await twinOwners()).some(peer => peer.id === command.nodeId)) throw new WebhookError(403, "Choose an active cluster twin");
+  const hook = getWebhook(db, command.id);
+  if (!hook) throw new WebhookError(404, "Webhook not found");
+  assertAutomationCreator(hook.creatorAccountId, command.creatorAccountId);
+  ensureAutomationExecutionSchema(db);
+  if (transferring.has(hook.id) || webhookDeliveryPending(hook.id) || db.prepare("SELECT 1 FROM automation_executions WHERE source_kind='webhook' AND source_id=? AND status IN ('queued','running') LIMIT 1").get(hook.id)) throw new WebhookError(409, "Wait for active webhook runs to finish before transferring");
+  transferring.add(hook.id);
+  // Fail closed on any uncertain remote result. Never restore the source automatically.
+  db.prepare("UPDATE webhooks SET enabled=0 WHERE id=?").run(hook.id);
+  try {
+    const bundle = await exportWebhookTransfer(db, hook.id);
+    const result = await dispatchWebhookCommand(command.nodeId, { action: "install-transfer", bundle }) as { webhook: typeof hook; secret: string; bases: Array<{ id: string; label: string; base: string }> };
+    await removeTransferredWebhook(db, hook.id);
+    const input = { ...bundle.input, enabled: hook.enabled };
+    const updated = await dispatchWebhookCommand(command.nodeId, { action: "update", id: hook.id, input }) as { webhook: typeof hook };
+    return { ...result, webhook: updated.webhook };
+  } catch (error) {
+    throw new WebhookError(error instanceof WebhookError ? error.statusCode : 409, `Transfer did not finish: ${error instanceof Error ? error.message : String(error)}. Check both machines; the source is paused or already moved. Do not retry blindly.`);
+  } finally { transferring.delete(hook.id); }
+}
+
 async function twinOwners() {
   const db = await clusterV2Database(), local = await getClusterNode();
   return (await listRuntimePeers()).filter(peer => isTrustedTwin(db, local.id, peer.id));
@@ -399,14 +445,18 @@ const route = (request: Request, command: Command): Promise<unknown> => runWebho
 export async function runWebhookCommand(nodeId: string | undefined, command: Command): Promise<unknown> {
   if (command.action === "profiles") command.accountId = actingAccount()?.accountId ?? null;
   if (command.action === "create" || command.action === "update") command.input.creatorAccountId = actingAccount()?.accountId ?? null;
-  if (isWebhookResourceCommand(command)) command.creatorAccountId = actingAccount()?.accountId ?? null;
+  if (isWebhookResourceCommand(command) || command.action === "transfer") command.creatorAccountId = actingAccount()?.accountId ?? null;
+  return dispatchWebhookCommand(nodeId, command);
+}
+
+async function dispatchWebhookCommand(nodeId: string | undefined, command: Command): Promise<unknown> {
   const local = await getClusterNode();
   if (!nodeId || nodeId === local.id) return manage(command);
   const peer = (await twinOwners()).find(peer => peer.id === nodeId);
   if (!peer) throw new WebhookError(403, "Webhook owner must be this machine or an active twin");
   const target = "/api/cluster/v2/webhooks", body = Buffer.from(JSON.stringify(command));
   try {
-    const timeout = isWebhookResourceCommand(command) ? 210_000 : 10_000;
+    const timeout = isWebhookResourceCommand(command) || command.action === "transfer" || command.action === "install-transfer" ? 210_000 : 10_000;
     const reply = await peerFetch(new URL(target, peer.url), {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(timeout), body,
       headers: { "Content-Type": "application/json", Authorization: signClusterRequest(await clusterV2Database(), local.id, peer.id, "POST", target, body) },
@@ -499,6 +549,10 @@ app.post("/api/webhooks/:id/memory", handle(async (request, response) => {
 }));
 app.put("/api/webhooks/:id", handle(async (request, response) => {
   response.json(await route(request, { action: "update", id: z.string().uuid().parse(request.params.id), input: webhookInputSchema.parse(request.body) }));
+}));
+app.post("/api/webhooks/:id/transfer", handle(async (request, response) => {
+  const body = z.object({ nodeId: z.string().uuid() }).strict().parse(request.body);
+  response.json(await route(request, { action: "transfer", id: webhookIdParam(request), nodeId: body.nodeId }));
 }));
 app.post("/api/webhooks/:id/regenerate", handle(async (request, response) => {
   response.json(await route(request, { action: "regenerate", id: z.string().uuid().parse(request.params.id) }));

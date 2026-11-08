@@ -131,7 +131,8 @@ async function refreshTasks() {
     // A dated run is on the day it names: days of the week and quiet hours shape only a repeating rhythm.
     const rhythm = task.schedule.frequency === "once" || task.schedule.frequency === "monthly" ? [] : [["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
       ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"]];
-    const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
+    const machine = [...field("ownerNodeId").options].find(option => option.value === task.ownerNodeId);
+    const execution = [["Machine", machine ? machine.textContent : task.ownerNodeId], ["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
       ...calendar, ...rhythm, ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["Auto reply", task.autoRespond ? `${task.autoRespond.modelId} · ${task.autoRespond.maxResponses ?? "Unlimited"} replies` : "Off"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview ? "Counts toward review" : "Silent"], ["Conversation history", task.hideFromHistory ? "Hidden" : "Visible when Show scheduled is on"]];
     const entries = task.enabled
       ? [["Next run", nextRunText(task)], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
@@ -174,6 +175,11 @@ async function refreshTasks() {
       notice.textContent = "Paused after a node restart to prevent a duplicate run. Edit it, resume the schedule, or run it now when safe.";
       row.append(notice);
     }
+    if (!task.assistantId) actions.append(action("Transfer to another machine", "cron-transfer", async () => {
+      await editTask(task);
+      field("ownerNodeId").focus();
+      errorText.textContent = "Choose the destination machine and save. The schedule and run history move together; active runs must finish first.";
+    }));
     row.append(actions);
     list.append(row);
   }
@@ -183,7 +189,7 @@ function action(label, testid, callback) {
   button.type = "button"; button.className = "ghost compact"; button.textContent = label; button.dataset.testid = testid;
   button.addEventListener("click", async () => {
     button.disabled = true;
-    try { await callback(); } catch (error) { errorText.textContent = error.message; toast.error(error.message); }
+    try { await callback(); } catch (error) { errorText.textContent = error.message; toast(error.message); }
     finally { button.disabled = false; }
   });
   return button;

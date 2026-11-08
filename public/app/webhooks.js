@@ -59,6 +59,60 @@ const say = (message, kind = "info") => showStatus(status, message, kind);
 
 const profilePicker = createAutomationProfilePicker(field.model.closest("label"), "webhooks-provider-profile", () => api(endpoint("/profiles")));
 const tagPicker = createAutomationTagPicker(byId("webhooksAutomationTags"), "webhooks-tags");
+const machineLabel = makeNode("label", "", "Machine");
+const machineSelect = document.createElement("select");
+machineSelect.dataset.testid = "webhooks-machine-select";
+machineLabel.append(machineSelect);
+field.name.closest("label").before(machineLabel);
+const transferButton = makeTwoStepButton({ label: "Transfer to selected machine", armedLabel: "Move and replace address?", testid: "webhooks-transfer-button", onConfirm: () => run(transferToMachine) });
+machineLabel.after(transferButton);
+field.owner.closest("label").title = "Filter webhooks by their owner machine. Choose or transfer a machine inside the webhook editor.";
+
+function renderMachine() {
+  machineSelect.replaceChildren(...[...field.owner.options].map(option => new Option(option.textContent, option.value)));
+  machineSelect.value = field.owner.value;
+  machineSelect.disabled = Boolean(assistantTarget);
+  transferButton.hidden = !editing;
+  transferButton.disabled = true;
+}
+
+async function transferToMachine() {
+  if (dirty) throw new Error("Save or discard your changes before transferring");
+  const destination = machineSelect.value;
+  if (destination === field.owner.value) throw new Error("Choose a different machine");
+  const result = await api(endpoint(`/${editing.id}/transfer`), { method: "POST", body: JSON.stringify({ nodeId: destination }) });
+  field.owner.value = destination;
+  // Reveal immediately: a later refresh failure must not lose the new address.
+  closeDetail();
+  showUrls(`Transferred “${result.webhook.name}”. Replace the sender's address; the old one no longer works.`, result.secret, result.bases);
+  await Promise.all([loadProjects(), loadOptions(), refresh()]);
+}
+
+machineSelect.addEventListener("change", () => {
+  if (editing) { transferButton.disabled = dirty || machineSelect.value === field.owner.value; return; }
+  void run(async () => {
+    ownerReady = false;
+    field.save.disabled = true;
+    machineSelect.disabled = true;
+    field.owner.value = machineSelect.value;
+    ++ownerRevision;
+    const project = field.project.value;
+    try {
+      await Promise.all([loadProjects(), loadOptions(), profilePicker.refresh(null)]);
+      fillProjects(project);
+      const selectedProject = await api(`/api/projects/${encodeURIComponent(field.project.value)}`);
+      await tagPicker.setWorkspace(selectedProject.project.type ?? "personal");
+      selectedSecretIds.clear();
+      renderSecrets();
+      syncKind();
+      ownerReady = true;
+      say("Machine changed. Check the model, profile and secret accounts before creating.");
+    } finally {
+      machineSelect.disabled = false;
+      field.save.disabled = !ownerReady;
+    }
+  });
+});
 
 /** One guarded action at a time; failures land in the status line. */
 async function run(work) {
@@ -232,6 +286,7 @@ async function loadOptions() {
 
 function markDirty() {
   dirty = true;
+  transferButton.disabled = true;
   updateSavebar();
 }
 
@@ -410,6 +465,7 @@ function showTab(name) {
 }
 
 function renderDetailHead() {
+  renderMachine();
   byId("webhooksDetailTitle").textContent = editing?.name ?? "New webhook";
   byId("webhooksDetailState").replaceChildren(...(editing ? [makeBadge(editing.enabled ? "On" : "Off", editing.enabled ? "ok" : "")] : []));
   const actions = byId("webhooksDetailActions");
@@ -609,7 +665,7 @@ function wire() {
     void fillFields(editing).catch((error) => say(errorText(error), "error"));
   });
   for (const panel of [byId("webhooksSetupPanel"), byId("webhooksAccessPanel")]) {
-    const onEdit = (event) => { if (event.target !== field.secretSearch) markDirty(); };
+    const onEdit = (event) => { if (event.target !== field.secretSearch && event.target !== machineSelect) markDirty(); };
     panel.addEventListener("input", onEdit);
     panel.addEventListener("change", onEdit);
   }
