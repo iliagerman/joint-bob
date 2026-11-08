@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.238.1 — 2026-11-08
+
+- A release pushed from your homeserver is now deployed to both machines when an earlier deployment from the Mac is still waiting for a busy machine. Before, that deployment stopped and both machines stayed on the old release until the next push from the Mac.
+
 ## 2.238.0 — 2026-11-08
 
 - Bob's chat keeps up with what each conversation does now. A message about a conversation shows where it stands, as on the board: **Running now**, **Waits for you** or **Done · ready for review**. It changes as soon as the board does, so a conversation that started again after an update no longer looks stopped.
