@@ -52,7 +52,7 @@ export async function loadBoard(session: AuthSession): Promise<LoadedBoard> {
   // Auto respond that stopped on something only the person can settle; stopping it themselves, or a failed turn nobody can fix by answering, is not one.
   const autoStopped = new Map(autoResponders.filter((state) => state.status === "stopped" && state.stopKind && !["user-stopped"].includes(state.stopKind)).map((state) => [`${state.projectId}:${state.conversationId}`, { kind: state.stopKind!, reason: state.stopReason ?? "" }]));
   const reviews = allPendingGuardianReviews();
-  const checks = new Map(listReviewChecks(await bobDatabase()).map(({ projectId, conversationId, verdict, reason, by, pushes, pushPending, needsYou }) => [`${projectId}:${conversationId}`, { verdict, reason, by, pushes, pushPending, needsYou }]));
+  const checks = new Map(listReviewChecks(await bobDatabase()).map(({ projectId, conversationId, verdict, reason, by, pushes, pushPending, needsYou, checkedAt }) => [`${projectId}:${conversationId}`, { verdict, reason, by, pushes, pushPending, needsYou, checkedAt }]));
   // Other people's agents are read-only and have their own tab (Clusters); nothing on this board can act on them.
   const theirs = await otherPersonsMachine();
   const groups = await Promise.all(projects.map(async (project) => ({

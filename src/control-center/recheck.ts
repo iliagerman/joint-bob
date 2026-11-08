@@ -4,8 +4,9 @@ import type { BobAction, BobMessage } from "./bob-store.js";
 
 /**
  * Bob's open items are checked again every few minutes, and at once when the person reviews or closes a conversation, so the
- * chat only shows what still waits for them. What the facts settle (the conversation was marked done, looked at, answered or
- * moved on, a newer item about it came, the Guardian step was answered) is cleared at once. What they cannot settle, the
+ * chat only shows what still waits for them. What the facts settle (the conversation was marked done, answered or moved on, a
+ * newer item about it came, the Guardian step was answered; a note that only told the person something, once they looked at
+ * the conversation) is cleared at once. Looking at a conversation does not answer what it asks. What they cannot settle, the
  * decision model judges from the log of what happened since: the person's later messages, Bob's answers, and the items cleared
  * after it. Unsure means the item stays.
  */
@@ -69,9 +70,9 @@ export function settledByFacts(item: BobMessage, facts: ItemFacts): string | nul
   const now = facts.conversation;
   if (!now) return null;
   if (now.state === "done") return "It was marked done.";
-  if (now.state === "reviewed") return "You looked at it.";
-  // A note that Bob pushed it on is about the turn that runs now; an item that asks the person is settled by their answer.
-  if (item.importance === "fyi") return null;
+  // A note that Bob pushed it on is about the turn that runs now, and is seen once the person looked; an item that asks the
+  // person is settled only by their answer.
+  if (item.importance === "fyi") return now.state === "reviewed" ? "You looked at it." : null;
   if (now.state === "running") return "It is running again.";
   if (now.updatedAt && Date.parse(now.updatedAt) > Date.parse(item.createdAt) + MOVED_ON_MS) return "It moved on since.";
   return null;

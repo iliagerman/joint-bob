@@ -31,7 +31,7 @@ test("a card opens its conversation over the board to watch; taking control lets
       const path = new URL(String(args[0]), location.href).pathname;
       const reply = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
       if (path === '/api/control-center/board') {
-        return reply({ projects: [{ id: real.projectId, name: real.projectName }], cards: [{ ...real, column: 'running', agentId: 'claude', agentLabel: 'Claude', agentModel: null, executionNodeId: null, updatedAt: null, turnRunning: true, backgroundRunning: false, summary: null, autoRespondActive: true, startedBy: 'bob', pendingReviews: [], autoRespondStop: null, controlledBy: window.__held }] });
+        return reply({ projects: [{ id: real.projectId, name: real.projectName }], cards: [{ ...real, column: window.__column || 'running', agentId: 'claude', agentLabel: 'Claude', agentModel: null, executionNodeId: null, updatedAt: null, turnRunning: true, backgroundRunning: false, summary: null, autoRespondActive: true, startedBy: 'bob', pendingReviews: [], autoRespondStop: null, controlledBy: window.__held }] });
       }
       if (path === '/api/control-center/summary') return reply({ waiting: 0 });
       if (path === '/api/control-center/lease') {
@@ -95,4 +95,13 @@ test("a card opens its conversation over the board to watch; taking control lets
   await held.getByTestId("control-card-action-give-back").click();
   await page.getByTestId("control-card-action-take-control").waitFor();
   assert.deepEqual(await page.evaluate("window.__lease"), ["take", "release", "take", "release", "release"]);
+
+  // A card that waits for the person opens with them in control, ready to answer, without pressing Take control.
+  await page.evaluate("window.__column = 'needs-you'; window.dispatchEvent(new CustomEvent('control-center-changed'))");
+  await page.locator('[data-testid="control-center-card"][data-column="needs-you"]').waitFor();
+  await page.getByTestId("control-center-card").locator(".control-title").click();
+  await page.getByTestId("control-lease-banner").waitFor({ state: "visible" });
+  await composer.waitFor({ state: "visible" });
+  assert.match(await mode.innerText(), /You're in it/);
+  assert.deepEqual(await page.evaluate("window.__lease"), ["take", "release", "take", "release", "release", "take"]);
 });

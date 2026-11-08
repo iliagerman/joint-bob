@@ -61,7 +61,7 @@ async function eventually<T>(read: () => Promise<T | undefined>, label: string):
 
 interface Listed { title: string; path: string; updatedAt?: string; doneAt?: string }
 
-test("Bob clears what no longer waits for the person: a pressed item, a reply, Done and Dismiss, one about a conversation they looked at, and one the log settles", { timeout: 240_000 }, async () => {
+test("Bob clears what no longer waits for the person: a pressed item, a reply, Done and Dismiss, and one the log settles; looking at a conversation is not answering it", { timeout: 240_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-recheck-"));
   const classifier = await decisionModel();
   let child: ChildProcess | undefined;
@@ -89,7 +89,8 @@ test("Bob clears what no longer waits for the person: a pressed item, a reply, D
     assert.deepEqual([pressed.body.pressed.resolution, pressed.body.pressed.actions], ["You chose “Done”.", []]);
     assert.ok((await sessions()).find((entry) => entry.title === "fix the mobile menu in Joint Bob")?.doneAt, "the conversation is marked done");
 
-    // Looked at: reviewing the conversation in its project clears Bob's item about it, and the badge stops counting it.
+    // Looked at: opening a conversation that waits for the person does not answer it. Bob's item stays, and so does its card
+    // under Needs you, until they answer it, close it or dismiss the item.
     await start("fix the login page in Joint Bob");
     const login = await itemAbout("fix the login page in Joint Bob");
     assert.ok((await api<{ waiting: number }>(node, auth, "GET", "/control-center/summary")).body.waiting >= 1);
@@ -98,9 +99,13 @@ test("Bob clears what no longer waits for the person: a pressed item, a reply, D
       method: "PUT", headers: { Cookie: auth.cookie, "x-csrf-token": auth.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ sessionPath: listed.path, updatedAt: listed.updatedAt }),
     });
     assert.equal(reviewed.status, 204);
-    const looked = await eventually(async () => (await timeline()).find((message) => message.id === login.id && message.resolvedAt), "the item about the reviewed conversation was cleared");
-    assert.deepEqual([looked.resolution, looked.actions], ["You looked at it.", []]);
-    assert.equal((await api<{ waiting: number }>(node, auth, "GET", "/control-center/summary")).body.waiting, 0);
+    // The check that follows a review has run by now.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    assert.equal((await timeline()).find((message) => message.id === login.id)?.resolvedAt, null, "looking at it is not answering it");
+    const board = (await api<{ cards: Array<{ title: string; column: string }> }>(node, auth, "GET", "/control-center/board")).body.cards;
+    assert.equal(board.find((card) => card.title === "fix the login page in Joint Bob")?.column, "needs-you", "its card stays under Needs you");
+    const dismissedLogin = await api<{ pressed: BobMessage }>(node, auth, "POST", "/control-center/bob/item", { messageId: login.id, how: "dismiss" });
+    assert.equal(dismissedLogin.body.pressed.resolution, "You dismissed it.");
 
     // Answered in place: a quick reply goes into the conversation as the person, and clears the item.
     await start("fix the search page in Joint Bob");

@@ -78,7 +78,7 @@ test("a conversation waiting for the person's OK, or whose auto respond stopped 
 });
 
 test("a conversation Bob checked and found not done for the person goes to Needs you; one he found done stays ready for review", () => {
-  const check = (needsYou: boolean, verdict: "done" | "continue" | "needs-user") => ({ verdict, reason: "It asks which plan to use", by: "Decision model 94%", pushes: 0, pushPending: false, needsYou });
+  const check = (needsYou: boolean, verdict: "done" | "continue" | "needs-user") => ({ verdict, reason: "It asks which plan to use", by: "Decision model 94%", pushes: 0, pushPending: false, needsYou, checkedAt: "2026-11-05T10:00:30.000Z" });
   const projects: BoardProject[] = [{ projectId: "p", projectName: "Julian", sessions: [
     session({ id: "waits", conversationId: "c-waits", running: false, reviewState: "needs_review" }),
     session({ id: "done", conversationId: "c-done", running: false, reviewState: "needs_review" }),
@@ -93,4 +93,18 @@ test("a conversation Bob checked and found not done for the person goes to Needs
   assert.equal(byId.waits.reviewCheck?.reason, "It asks which plan to use");
   assert.equal(byId.done.column, "review");
   assert.equal(byId.pushed.column, "running", "a conversation Bob pushed on is running again");
+});
+
+test("a conversation that waits for the person stays under Needs you after they look at it, until they answer it", () => {
+  const check = { verdict: "needs-user" as const, reason: "Which country list?", by: "Decision model 97%", pushes: 0, pushPending: false, needsYou: true, checkedAt: "2026-11-05T10:00:30.000Z" };
+  const projects: BoardProject[] = [{ projectId: "p", projectName: "DAK", sessions: [
+    session({ id: "looked", conversationId: "c-looked", running: false, reviewState: "reviewed", updatedAt: "2026-11-05T10:00:00.000Z" }),
+    session({ id: "answered", conversationId: "c-answered", running: false, reviewState: "reviewed", updatedAt: "2026-11-05T10:05:00.000Z" }),
+    session({ id: "closed", conversationId: "c-closed", running: false, reviewState: "reviewed", updatedAt: "2026-11-05T10:00:00.000Z", doneAt: "2026-11-05T10:01:00.000Z" }),
+  ] }];
+  const cards = buildBoard(projects, { ...sources, reviewCheck: () => check });
+  const byId = Object.fromEntries(cards.map((card) => [card.sessionId, card]));
+  assert.equal(byId.looked?.column, "needs-you", "looking at it is not answering it");
+  assert.equal(byId.answered, undefined, "answered after Bob's check, and looked at since: it has left the board");
+  assert.equal(byId.closed, undefined, "marked done: it has left the board");
 });

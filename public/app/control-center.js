@@ -148,7 +148,11 @@ function renderCard(card) {
     root.append(row);
   }
   decorateCard(root, card);
-  root.addEventListener("click", () => openCard(card).catch((error) => toast(error.message)));
+  // A card that waits for the person opens with them in control, ready to answer; any other opens to watch.
+  root.addEventListener("click", () => {
+    const take = card.column === "needs-you" ? cardActionList(card).find((action) => action.id === "take-control") : null;
+    Promise.resolve(take ? take.run(card) : openCard(card)).catch((error) => toast(error.message));
+  });
   return root;
 }
 

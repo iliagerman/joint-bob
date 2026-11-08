@@ -7,7 +7,7 @@ export interface BoardReview { id: string; title: string; subject: string; detai
 /** Why auto respond stopped, when it stopped on something the person has to look at. */
 export interface BoardAutoRespondStop { kind: string; reason: string }
 /** What Bob found when the conversation stopped for review: done, pushed on, or waiting for the person. */
-export interface BoardReviewCheck { verdict: "done" | "continue" | "needs-user"; reason: string; by: string; pushes: number; pushPending: boolean; needsYou: boolean }
+export interface BoardReviewCheck { verdict: "done" | "continue" | "needs-user"; reason: string; by: string; pushes: number; pushPending: boolean; needsYou: boolean; checkedAt: string }
 
 export interface BoardCard {
   projectId: string;
@@ -58,6 +58,9 @@ export interface BoardSources {
   activityOf(projectId: string, conversationId: string): string | null;
 }
 
+/** The conversation has activity after the moment given: someone wrote to it, or it ran. */
+const movedOnSince = (updatedAt: string | undefined, since: string): boolean => Boolean(updatedAt) && Date.parse(updatedAt!) > Date.parse(since);
+
 /** Running conversations and finished ones waiting for review, newest activity first. */
 export function buildBoard(projects: BoardProject[], sources: BoardSources): BoardCard[] {
   const cards: BoardCard[] = [];
@@ -68,12 +71,13 @@ export function buildBoard(projects: BoardProject[], sources: BoardSources): Boa
       const pendingReviews = sources.pendingReviews(project.projectId, conversationId);
       const needsReview = session.reviewState === "needs_review";
       const autoRespondStop = needsReview && !running ? sources.autoRespondStop(project.projectId, conversationId) : null;
-      if (!running && !needsReview && !pendingReviews.length) continue;
+      const reviewCheck = sources.reviewCheck(project.projectId, conversationId);
+      // Bob checked it and found it waits for the person: it stays under Needs you until they answer it (it moves on after the
+      // check), close it, or tell Bob to leave it. Opening it to look is not answering it.
+      const checkedForYou = !running && Boolean(reviewCheck?.needsYou) && !movedOnSince(session.updatedAt, reviewCheck!.checkedAt);
+      if (!running && !needsReview && !pendingReviews.length && !checkedForYou) continue;
       // Marked done, from its project or from the board: it has left the board, until it runs again.
       if (session.doneAt && !running) continue;
-      const reviewCheck = sources.reviewCheck(project.projectId, conversationId);
-      // Bob checked it and it is not done: it waits for the person, so it is not just ready for review.
-      const checkedForYou = needsReview && !running && Boolean(reviewCheck?.needsYou);
       cards.push({
         projectId: project.projectId,
         projectName: project.projectName,

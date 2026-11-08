@@ -5,6 +5,7 @@ import { appearanceContext, applyAppearance } from "./appearance.js";
 import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { elements } from "./elements.js";
 import { focusProject, openConversation, projectColor, refreshControlCenter, saveControlCenter, seeCardOff } from "./control-center.js";
+import { takeControl } from "./control-lease.js";
 import { vanish } from "./control-vanish.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { state } from "./state.js";
@@ -61,6 +62,15 @@ const SOURCE_WORDS = {
   "Auto respond ended": "Auto respond stopped",
   Organize: "Bob",
 };
+
+/**
+ * Opens the conversation a message is about. One that waits for the person (a question, a step to allow) opens with them in
+ * control, ready to answer, as its card on the board does; anything else opens to read.
+ */
+function openFrom(message, open) {
+  if (message.importance === "needs-you" || message.importance === "needs-ok") return takeControl({ ...open, projectName: message.projectName });
+  return openConversation(open);
+}
 
 /** The message without the conversation's name it starts with: the card already shows it on top. */
 function withoutTitle(text, title) {
@@ -207,7 +217,7 @@ function renderConversationNotice(message, about) {
   if (about.open) {
     name.type = "button";
     name.title = "Open this conversation";
-    name.addEventListener("click", () => { openConversation(about.open).catch((error) => toast(error.message)); });
+    name.addEventListener("click", () => { openFrom(message, about.open).catch((error) => toast(error.message)); });
   }
   source.append(element("span", "control-entry-project", message.projectName ?? "General"), name);
   const { label, detail } = sourceOf(message);
@@ -332,7 +342,7 @@ function loadMessages() {
 
 async function runAction(message, action, button) {
   // Opening a conversation and undoing a display change happen in the page; every other button is answered by the server.
-  if (action.data?.open) { openConversation(action.data.open).catch((error) => toast(error.message)); return; }
+  if (action.data?.open) { openFrom(message, action.data.open).catch((error) => toast(error.message)); return; }
   if (action.data?.appearance) { applyAppearance(action.data.appearance); toast("Display settings put back"); return; }
   button.disabled = true;
   try {

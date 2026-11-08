@@ -46,7 +46,7 @@ test("the facts settle an item when its conversation was closed, looked at, answ
   const settle = (message: BobMessage, now?: ConversationNow, replaced = false, guardianPending?: boolean) => settledByFacts(message, { conversation: now, replaced, guardianPending });
   assert.equal(settle(item(), conversation("waiting")), null, "still waiting");
   assert.equal(settle(item(), conversation("done")), "It was marked done.");
-  assert.equal(settle(item(), conversation("reviewed")), "You looked at it.");
+  assert.equal(settle(item(), conversation("reviewed")), null, "looking at a conversation does not answer what it asks");
   assert.equal(settle(item(), conversation("running")), "It is running again.");
   assert.equal(settle(item(), conversation("waiting", later(30))), null, "activity right after the item is the turn it is about");
   assert.equal(settle(item(), conversation("waiting", later(90))), "It moved on since.");

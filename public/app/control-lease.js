@@ -56,7 +56,8 @@ async function renew() {
   await send("take", held);
 }
 
-async function takeControl(card) {
+/** Takes control of a conversation and opens it over the board with its message box. */
+export async function takeControl(card) {
   if (held) await release();
   const target = { projectId: card.projectId, conversationId: card.conversationId };
   await send("take", target);
