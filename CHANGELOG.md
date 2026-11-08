@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.234.0 — 2026-11-08
+
+- Every message in Bob's chat now has **Reply**, **Done** and **Dismiss** besides its own buttons. A reply to a message about a conversation goes into that conversation as you, even when it runs on your other machine; a reply to anything else goes to Bob. Done closes the conversation, and Dismiss only clears the message. What you type in a reply stays while new messages arrive.
+- Messages in Bob's chat that had lost their buttons without being cleared, left behind by an older version on one of your machines, are cleared automatically.
+- Switching projects quickly in the project overview no longer shows the previous project's conversations, so opening one opens the right one.
+
 ## 2.233.2 — 2026-11-08
 
 - Conversation titles read in title case in every list, the chat header and the Review jump, and abbreviations such as UX and API stay in capitals. Titles you type keep their stored text.
