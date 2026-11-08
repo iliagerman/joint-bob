@@ -28,6 +28,7 @@ test(`the need queue works through a ${ROWS.toLocaleString("en")}-row delete bac
     seeded: number; timings: Record<string, number>; heapPeakMb: number; first: number; second: number; overlap: number;
     actions: string[]; foldersFirst: number; pendingFiles: number; restored: number;
     downloads: number; downloadShares: string[]; whilePulling: number; unsplitProjectItems: number;
+    heldCreates: string[]; retryingCreates: string[];
   };
   t.diagnostic(JSON.stringify({ timings: result.timings, heapPeakMb: result.heapPeakMb }));
   assert.equal(result.seeded, ROWS);
@@ -41,6 +42,11 @@ test(`the need queue works through a ${ROWS.toLocaleString("en")}-row delete bac
   assert.deepEqual([result.downloads, result.downloadShares], [50, ["project:p2"]]);
   // While the big share is still pulling, the other shares' local work is read without it.
   assert.equal(result.whilePulling, 0);
+  const projectFiles = Array.from({ length: 50 }, (_, file) => `project:p2/src/module-${file}.ts`).sort();
+  assert.deepEqual(result.heldCreates, projectFiles);
+  assert.deepEqual(result.retryingCreates, projectFiles);
+  assert.ok(result.timings.downloadsWithCreateShareHeldBack! < 1000, `downloads behind a held create backlog took ${result.timings.downloadsWithCreateShareHeldBack} ms`);
+  assert.ok(result.timings.downloadsWithCreateBackoff! < 1000, `downloads behind a retrying create backlog took ${result.timings.downloadsWithCreateBackoff} ms`);
   assert.ok(result.timings.nextNeeds! < 400, `nextNeeds took ${result.timings.nextNeeds} ms`);
   assert.ok(result.timings.nextNeedsWithFirstInFlight! < 400, `nextNeeds with a batch in flight took ${result.timings.nextNeedsWithFirstInFlight} ms`);
   assert.ok(result.timings.prioritizeShareAgain! < 1500, `five more whole-share prioritizes took ${result.timings.prioritizeShareAgain} ms`);

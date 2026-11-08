@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed built-in file sync upgrades to preserve existing sync state while enabling the faster backlog picker.
+
 ## 2.240.0 — 2026-11-08
 
 - Added opt-in machine-local quality analytics with Claude and Jev, historical backfill, issue drill-down, and retained lessons and metrics without a transcript archive.

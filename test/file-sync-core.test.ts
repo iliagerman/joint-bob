@@ -281,6 +281,49 @@ test("an index from before schema 3 loses its held deletions and keeps its rows"
   assert.equal((after.prepare("SELECT COUNT(*) AS n FROM shares").get() as { n: number }).n, 1);
 });
 
+for (const hasPickerIndex of [false, true]) {
+  test(`schema 4 upgrades without losing sync state, picker index ${hasPickerIndex ? "present" : "absent"}`, (t) => {
+    const file = dbFile(t);
+    const raw = new DatabaseSync(file);
+    raw.exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)");
+    for (const script of MIGRATIONS.slice(0, 4)) raw.exec(script);
+    raw.exec("CREATE INDEX IF NOT EXISTS need_pick ON need(blocked, priority, action = 'delete', t_size, share, path)");
+    if (!hasPickerIndex) raw.exec("DROP INDEX need_pick");
+    raw.exec(`INSERT INTO meta VALUES ('schema_version', '4'), ('node_id', '${NODE}'), ('clock', '5000000')`);
+    raw.exec("INSERT INTO shares(share, project_id, kind, root, index_id, digest, max_seq, full_scan_at) VALUES ('project:x', 'x', 'project', '/x', 'generation-x', 'digest-x', 7, 1)");
+    raw.exec(`INSERT INTO entries(share, path, parent, type, size, mtime_ms, mode, deleted, version, modified_by, seq)
+      VALUES ('project:x', 'local.txt', '', 0, 4, 1, 420, 0, '{"node-a":5000000}', 'node-a', 7)`);
+    raw.exec(`INSERT INTO remote(share, peer, path, type, size, mtime_ms, mode, deleted, version, modified_by, seq)
+      VALUES ('project:x', 'node-b', 'remote.txt', 0, 4, 1, 420, 0, '{"node-b":10}', 'node-b', 10)`);
+    raw.exec("INSERT INTO cursors(share, peer, index_id, seq, peer_index_id, peer_max_seq, listed, updated_at) VALUES ('project:x', 'node-b', 'generation-b', 10, 'generation-b', 10, 1, 1)");
+    const insert = raw.prepare(`INSERT INTO need(share, path, action, priority, attempts, next_at, last_error, blocked, blocked_at,
+      t_type, t_size, t_mtime_ms, t_mode, t_deleted, t_version, t_modified_by)
+      VALUES (?, ?, 'fetch', 2, 3, ?, 'transfer stalled', ?, ?, 0, 4, 1, 420, 0, '{"node-b":10}', 'node-b')`);
+    insert.run("project:x", "a.txt", 0, 0, null);
+    insert.run("project:x", "b.txt", 0, 0, null);
+    insert.run("project:x", "retry.txt", 20, 0, null);
+    insert.run("project:x", "blocked.txt", 0, 1, 5);
+    insert.run("project:away", "away.txt", 0, 0, null);
+    const tables = ["shares", "entries", "remote", "cursors", "need"];
+    const before = tables.map((table) => raw.prepare(`SELECT * FROM ${table}`).all());
+    raw.close();
+
+    // Opening it again must not rebuild a schema newer than SCHEMA_VERSION or rerun an unsafe migration.
+    for (let open = 0; open < 2; open++) {
+      const db = new FileSyncDb(file, NODE);
+      try {
+        assert.deepEqual(db.needCreates(2, { size: -1, share: "", path: "" }, 1, ["project:x"], 10, "fetch").map((row) => row.path), ["a.txt"]);
+        assert.deepEqual(db.needCreates(2, { size: 4, share: "project:x", path: "a.txt" }, 10, ["project:x"], 10, "fetch").map((row) => row.path), ["b.txt"]);
+        assert.equal(db.meta("schema_version"), String(SCHEMA_VERSION));
+        assert.equal(db.meta("clock"), "5000000");
+      } finally { db.close(); }
+      const after = new DatabaseSync(file, { readOnly: true });
+      try { assert.deepEqual(tables.map((table) => after.prepare(`SELECT * FROM ${table}`).all()), before); }
+      finally { after.close(); }
+    }
+  });
+}
+
 test("a data directory moved to another node starts a fresh index", (t) => {
   const file = dbFile(t);
   const first = new FileSyncDb(file, "node-a");

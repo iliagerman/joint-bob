@@ -11,7 +11,7 @@ import { bump, raiseClock } from "./vectors.js";
    schema from a newer release is dropped and rebuilt rather than migrated down. The node clock in
    meta is the one value kept across such a rebuild: counters must never go back. */
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** Index entry plus what only this node needs: the on-disk spelling and the stat fingerprint. */
 export interface LocalEntry extends IndexEntry {
@@ -131,7 +131,6 @@ export const MIGRATIONS: ReadonlyArray<string> = [
     t_sha256 TEXT, t_target TEXT, t_deleted INTEGER NOT NULL, t_version TEXT NOT NULL, t_modified_by TEXT NOT NULL,
     PRIMARY KEY(share, path));
   CREATE INDEX IF NOT EXISTS need_order ON need(blocked, priority, action = 'delete', t_size);
-  CREATE INDEX IF NOT EXISTS need_pick ON need(blocked, priority, action = 'delete', t_size, share, path);
   CREATE INDEX IF NOT EXISTS need_sha ON need(t_sha256);
   CREATE TABLE IF NOT EXISTS held(share TEXT NOT NULL, path TEXT NOT NULL, held_at INTEGER NOT NULL, PRIMARY KEY(share, path)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS expected(share TEXT NOT NULL, prefix TEXT NOT NULL, until INTEGER NOT NULL, PRIMARY KEY(share, prefix));
@@ -159,6 +158,10 @@ export const MIGRATIONS: ReadonlyArray<string> = [
   CREATE INDEX IF NOT EXISTS need_from ON need(share, from_path) WHERE from_path IS NOT NULL;
   CREATE TABLE IF NOT EXISTS trash_index(file TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, at INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS trash_index_sha ON trash_index(sha256);
+  `,
+  // 5: the keyset picker index, including existing schema-4 databases that never ran the updated first migration.
+  `
+  CREATE INDEX IF NOT EXISTS need_pick ON need(blocked, priority, action = 'delete', t_size, share, path);
   `,
 ];
 

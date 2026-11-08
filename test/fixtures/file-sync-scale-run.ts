@@ -4,6 +4,7 @@
 // line with what each operation took; running out of heap ends the process instead.
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { FileSyncDb, type NeedRow } from "../../src/file-sync/db.js";
 import { NeedEngine, type NeedShare } from "../../src/file-sync/need.js";
 import { DIRECTORY, FILE, type Clock } from "../../src/file-sync/types.js";
@@ -120,7 +121,23 @@ for (const item of order) {
   for (let at = item.path.lastIndexOf("/"); at > 0; at = item.path.lastIndexOf("/", at - 1)) if (seen.has(item.path.slice(0, at))) foldersFirst++;
   seen.add(item.path);
 }
+// A large create backlog must not stall a small project while the worktree index is pulling or its transfers back off.
+db.writeTx(() => {
+  db.deleteNeeds(key);
+  for (let file = 0; file < total; file++) {
+    const wanted = row(`new-worktree/src/file-${String(file).padStart(6, "0")}.ts`, "fetch", 2, FILE, false);
+    wanted.target.size = 1_000;
+    db.putNeed(key, wanted);
+  }
+});
+const heldCreates = measure("downloadsWithCreateShareHeldBack", () => need.nextNeeds({ limit, availablePeers: ["p1"], actions: "fetch", shares: [project] }).items);
+const raw = new DatabaseSync(db.file);
+raw.prepare("UPDATE need SET next_at = ? WHERE share = ?").run(now + 60_000, key);
+raw.close();
+const retryingCreates = measure("downloadsWithCreateBackoff", () => need.nextNeeds({ limit, availablePeers: ["p1"], actions: "fetch" }).items);
+
 process.stdout.write(`${JSON.stringify({
+  heldCreates: heldCreates.map((item) => `${item.share}/${item.path}`), retryingCreates: retryingCreates.map((item) => `${item.share}/${item.path}`),
   seeded: seeded + creates, timings, heapPeakMb, first: first.length, second: second.length, overlap: second.filter((item) => first.some((other) => other.path === item.path)).length,
   actions: [...new Set(order.map((item) => item.action))], foldersFirst, pendingFiles: pending.files, restored,
   downloads: downloads.length, downloadShares: [...new Set(downloads.map((item) => item.share))], whilePulling: whilePulling.length,
