@@ -56,7 +56,11 @@ for (const dismiss of ["Not now", "Escape"]) {
     await discover();
     await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor({ state: "attached" });
     if (dismiss === "Not now") await dialog.getByTestId("browser-login-dismiss").click();
-    else await page.keyboard.press("Escape");
+    else {
+      // Desktop starts full screen: first Escape returns to the compact view.
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Escape");
+    }
     await dialog.waitFor({ state: "detached" });
     const commandsAfterDismissal = commands.length;
     await selectOtherConversation();

@@ -10,8 +10,8 @@ const pageId = "33333333-3333-4333-8333-333333333333";
 const requestId = "44444444-4444-4444-8444-444444444444";
 const frameWidth = 1200, frameHeight = 800;
 
-// Desktop sign-in can expand from inline to full screen and back. Phones
-// open directly in full screen and hide this toggle (covered by the mobile suite).
+// Sign-in opens full screen so the actual website is usable. Desktop can
+// return to the compact conversation view; phones keep full screen.
 test("sign-in panel expands to full screen and back", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const liveSockets = new Set<WebSocketRoute>();
@@ -65,6 +65,10 @@ test("sign-in panel expands to full screen and back", { timeout: 120_000 }, asyn
   await dialog.waitFor();
   const screen = dialog.getByTestId("browser-screen");
   await screen.waitFor({ state: "visible" });
+
+  const initial = await dialog.boundingBox();
+  assert.ok(initial && initial.width >= 1439 && initial.height >= 899, "desktop sign-in must start with room for the actual website");
+  await dialog.getByTestId("browser-login-expand").click();
 
   // Keep the desktop toggle available; a phone has no inline mode.
   await page.setViewportSize({ width: 900, height: 730 });

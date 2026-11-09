@@ -619,9 +619,8 @@ test("a fast finger drag is coalesced into few scroll commands", { timeout: 120_
   assert.ok(sustained.reduce((sum, m) => sum + m.command.y, 0) > 0, "the throttled drag must keep its direction");
 });
 
-// The sign-in is drawn from the page's own fields, not the live stream: on a
-// phone the cropped remote page is unusable, so the native form must replace it.
-test("a phone sign-in shows the page's fields as a native form and hides the cropped stream", { timeout: 120_000 }, async (t) => {
+// Sign-in stays on the actual website rather than a reconstructed credential form.
+test("a phone sign-in keeps the real page instead of reconstructing login fields", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const commands: any[] = [];
   const form = {
@@ -666,18 +665,14 @@ test("a phone sign-in shows the page's fields as a native form and hides the cro
 
   const dialog = page.getByTestId("browser-login-panel");
   await dialog.waitFor();
-  const formBox = dialog.getByTestId("browser-login-form");
-  await formBox.waitFor({ state: "visible" });
-  assert.equal(await formBox.locator("input").count(), 2, "both sign-in fields must be real inputs");
-  assert.equal(await formBox.locator("input[type=password]").count(), 1, "the password field must be a password input");
-  assert.equal(await formBox.getByTestId("browser-login-submit").textContent(), "Sign in");
-  assert.equal(await dialog.getByTestId("browser-screen").isVisible(), false, "the cropped live page must be hidden while the form is shown");
-  assert.ok(commands.some(c => c.action === "loginForm"), "the viewer must read the form from the page");
+  await dialog.getByTestId("browser-take-control").filter({ hasText: "You have control" }).waitFor({ state: "attached" });
+  assert.equal(await dialog.getByTestId("browser-login-form").count(), 0);
+  assert.equal(await dialog.locator(".browser-stage").isVisible(), true);
+  assert.equal(commands.some(c => c.action === "loginForm"), false);
 });
 
-// The sign-in is drawn from the page's own fields, not the live stream: on a
-// phone the cropped remote page is unusable, so the native form must replace it.
-test("a desktop sign-in shows the page's fields as a native form and hides the cropped stream", { timeout: 120_000 }, async (t) => {
+// Desktop uses the same live website flow, including challenge and alternative-method pages.
+test("a desktop sign-in keeps the real page instead of reconstructing login fields", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const commands: any[] = [];
   const form = {
@@ -722,13 +717,10 @@ test("a desktop sign-in shows the page's fields as a native form and hides the c
 
   const dialog = page.getByTestId("browser-login-panel");
   await dialog.waitFor();
-  const formBox = dialog.getByTestId("browser-login-form");
-  await formBox.waitFor({ state: "visible" });
-  assert.equal(await formBox.locator("input").count(), 2, "both sign-in fields must be real inputs");
-  assert.equal(await formBox.locator("input[type=password]").count(), 1, "the password field must be a password input");
-  assert.equal(await formBox.getByTestId("browser-login-submit").textContent(), "Sign in");
-  assert.equal(await dialog.getByTestId("browser-screen").isVisible(), false, "the cropped live page must be hidden while the form is shown");
-  assert.ok(commands.some(c => c.action === "loginForm"), "the viewer must read the form from the page");
+  await dialog.getByTestId("browser-take-control").filter({ hasText: "You have control" }).waitFor({ state: "attached" });
+  assert.equal(await dialog.getByTestId("browser-login-form").count(), 0);
+  assert.equal(await dialog.locator(".browser-stage").isVisible(), true);
+  assert.equal(commands.some(c => c.action === "loginForm"), false);
 });
 
 // A page still phone-sized from an earlier sign-in must be sized back up on a wide window, or the

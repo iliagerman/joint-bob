@@ -67,6 +67,9 @@ test("embedded sign-in panel hides browser chrome until full screen", { timeout:
   await dialog.waitFor();
   await dialog.getByTestId("browser-screen").waitFor({ state: "visible" });
 
+  // Desktop starts full screen; the compact view remains available.
+  await dialog.getByTestId("browser-login-expand").click();
+
   // Inline: only the caption row and the page. No session context, no help
   // sentence, no back/reload, no Send Tab.
   for (const hidden of ["browser-login-context", "browser-back", "browser-reload", "browser-send-tab", "browser-send-shift-tab"]) {

@@ -188,14 +188,3 @@ body.browser-visible #browserPanel { position: fixed; z-index: 35; inset: 12% 8p
 @media (pointer: coarse) {
   .browser-viewer input:not(.browser-typing), .browser-viewer select { font-size: 16px; }
 }
-
-/* Native sign-in: the page's own fields drawn here; the live page returns on a challenge or "Show page". */
-.browser-login-form { display: flex; flex-direction: column; gap: 14px; max-width: 360px; width: 100%; margin: 12px auto; padding: 20px; border: 1px solid var(--border, #8884); border-radius: var(--radius); background: var(--panel); }
-.browser-login-form[hidden] { display: none; }
-.browser-login-brand { display: flex; align-items: center; gap: 10px; font-size: 15px; }
-.browser-login-brand img { width: 28px; height: 28px; border-radius: 6px; object-fit: contain; }
-.browser-login-fields { display: flex; flex-direction: column; gap: 10px; }
-.browser-login-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-.browser-login-fields input { font-size: 14px; padding: 8px 10px; }
-.browser-login-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.browser-login-form-active .browser-stage, .browser-login-form-active [data-part="keyboard"] { display: none; }

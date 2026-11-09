@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.247.3 — 2026-11-09
+
+- Browser sign-in now uses the actual website throughout multi-step authentication instead of copied login fields, and opens full-screen on desktop with manual confirmation before returning control.
+
 ## 2.247.2 — 2026-11-09
 
 - Back on a phone now goes up one level instead of replaying every screen visited, and does nothing on the Projects screen. The control center returns to Projects.
