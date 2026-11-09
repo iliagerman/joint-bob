@@ -23,11 +23,44 @@ export const isMobile = () => matchMedia("(max-width: 760px)").matches;
 let router = () => {};
 export function setRouter(render) { router = render; }
 
+const rootUrl = () => new URL(location.pathname, location.origin);
+let shown = location.search;
+export function markShown() { shown = location.search; }
+
+/** The screen one level up: a group returns to the groups list, a request to the requests list, the lists and everything else to the first screen. */
+function parentUrl() {
+  const current = new URLSearchParams(shown);
+  const parent = rootUrl();
+  if (isMobile()) {
+    if (current.has("group") || current.get("screen") === "invitations") parent.searchParams.set("screen", "groups");
+    else if (current.has("thread")) parent.searchParams.set("screen", "requests");
+  }
+  return parent;
+}
+
+/**
+ * History holds the first screen as its base entry and exactly one entry above it for the current screen, so Back climbs
+ * one level instead of replaying every screen visited, and Back on the first screen stays on the page.
+ */
+export function installBackModel() {
+  const here = new URL(location.href);
+  history.replaceState({}, "", rootUrl());
+  history.pushState({ top: true }, "", here);
+  window.addEventListener("popstate", event => {
+    if (!event.state?.top) {
+      history.replaceState({}, "", rootUrl());
+      history.pushState({ top: true }, "", parentUrl());
+    }
+    closeOverlay();
+    router();
+  });
+}
+
 /** Moves to another screen. Known keys: id, view, screen, group, thread. */
-export function navigate(params, { replace = false } = {}) {
-  const target = new URL(location.pathname, location.origin);
+export function navigate(params) {
+  const target = rootUrl();
   for (const [key, value] of Object.entries(params)) if (value) target.searchParams.set(key, value);
-  if (replace) history.replaceState({}, "", target); else history.pushState({}, "", target);
+  history.replaceState({ top: true }, "", target);
   closeOverlay();
   return router();
 }

@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.247.2 — 2026-11-09
+
+- Back on a phone now goes up one level instead of replaying every screen visited, and does nothing on the Projects screen. The control center returns to Projects.
+- The personal assistant page follows the same Back rule: a group or request returns to its list, and the first screen stays put.
+
 ## 2.247.1 — 2026-11-09
 
 - Kept browser sign-in popups dismissible while connecting, with a retry button when the browser machine is unavailable.

@@ -67,25 +67,20 @@ export function toggleControlView() {
   setMobileView("control");
 }
 
-/** The view one level up: a conversation or the board returns to its project's list, the list to the projects, and the control center to where it was opened from. */
+/** The view one level up: a conversation or the board returns to its project's list, and the list and the control center to the projects. */
 function parentView(view) {
   if (view === "chat" || view === "board") return state.activeProjectId ? "sessions" : "projects";
-  if (view === "sessions") return "projects";
-  if (view === "control") return controlExitView();
+  if (view === "sessions" || view === "control") return "projects";
   return null;
 }
 function controlExitView() {
   return state.viewBeforeControl || (state.activeProjectId ? "sessions" : "projects");
 }
 
-// History holds the projects view as its base entry and at most one entry above it for the current
-// view, so Back always climbs one level instead of replaying every place visited.
-let skipNextPop = false;
+// History holds the base entry and exactly one entry above it for the current view, so Back always climbs one level
+// instead of replaying every place visited, and Back on the projects view stays in the app.
 function recordView(view) {
-  const onTop = Boolean(history.state?.appTop);
-  if (view === "projects") {
-    if (onTop) { skipNextPop = true; history.back(); }
-  } else if (onTop) history.replaceState({ ...history.state, mobileView: view, appTop: true }, "");
+  if (history.state?.appTop) history.replaceState({ ...history.state, mobileView: view, appTop: true }, "");
   else history.pushState({ ...history.state, mobileView: view, appTop: true }, "");
 }
 
@@ -111,18 +106,11 @@ export function setMobileView(view, updateHistory = true) {
 
 history.replaceState({ ...history.state, mobileView: "projects", appTop: false }, "");
 window.addEventListener("popstate", (event) => {
-  if (skipNextPop) {
-    skipNextPop = false;
-    // A view chosen while the step back to the base was pending still needs its entry above the base.
-    if (currentMobileView() !== "projects") history.pushState({ ...history.state, mobileView: currentMobileView(), appTop: true }, "");
-    return;
-  }
   if (event.state?.appTop) { setMobileView(event.state.mobileView, false); return; }
-  // Back from any deeper view lands on the base entry: show the parent, and keep an entry above the base until the top.
+  // Back lands on the base entry: show the parent, or stay on the projects view, and put the entry above the base back.
   const parent = parentView(currentMobileView());
-  if (!parent) return;
-  setMobileView(parent, false);
-  if (currentMobileView() !== "projects") history.pushState({ ...history.state, mobileView: currentMobileView(), appTop: true }, "");
+  if (parent) setMobileView(parent, false);
+  recordView(currentMobileView());
 });
 
 export function selectedProject() {

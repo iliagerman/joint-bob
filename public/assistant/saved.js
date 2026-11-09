@@ -29,7 +29,7 @@ async function clearShare() {
     transaction.objectStore("pending").delete(params().get("share"));
     transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error);
   });
-  const url = new URL(location.href); url.searchParams.delete("share"); history.replaceState({}, "", url);
+  const url = new URL(location.href); url.searchParams.delete("share"); history.replaceState(history.state, "", url);
   sharedImages = [];
 }
 

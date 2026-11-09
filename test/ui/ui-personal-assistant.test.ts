@@ -54,7 +54,10 @@ test("personal assistant opens from conversation and saves a link with its scree
     assert.equal(await page.locator("#capture").isVisible(), false, "saved-item capture is separate from chat");
     await page.goBack();
     await page.locator("#chooser").waitFor({ state: "visible" });
-    await page.goForward();
+    await page.goBack().catch(() => {});
+    assert.equal(new URL(page.url()).pathname, "/assistant.html", "Back on the first screen stays on the page");
+    await page.locator("#chooser").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Phone assistant", exact: true }).click();
     await page.locator("#chat-form").waitFor({ state: "visible" });
     await page.reload();
     await page.locator("#chat-form").waitFor({ state: "visible" });

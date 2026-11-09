@@ -2,7 +2,7 @@ import { request, setCsrf, subscribe } from "./assistant/api.js";
 import { activityChanged, activityCounts, activityOpen, loadActivity, openActivity } from "./assistant/activity.js";
 import { showActions } from "./assistant/actions.js";
 import { bindChat, showTranscript, showWaitingStrip } from "./assistant/chat.js";
-import { app, closeOverlay, fail, isMobile, navigate, notify, setRouter } from "./assistant/context.js";
+import { app, closeOverlay, fail, installBackModel, isMobile, markShown, navigate, notify, setRouter } from "./assistant/context.js";
 import { bot, h, icon, rowText } from "./assistant/dom.js";
 import { currentGroup, leftGroupScreen, loadGroups, openNewGroupSheet, pendingInvitations, showGroup, showInvitations } from "./assistant/groups.js";
 import { loadMe, showFind, showYou } from "./assistant/people.js";
@@ -93,7 +93,7 @@ function openAssistant(id, keepShare = false) {
   const target = new URL(location.pathname, location.origin);
   if (keepShare) for (const key of ["share", "url", "title", "text"]) if (params().has(key)) target.searchParams.set(key, params().get(key));
   target.searchParams.set("id", id);
-  history.pushState({}, "", target);
+  history.replaceState({ top: true }, "", target);
   closeOverlay();
   render().catch(fail);
 }
@@ -136,6 +136,7 @@ function showChooser() {
 // ---- Routing ----
 
 async function render() {
+  markShown();
   for (const id of ["#chooser", "#detail", "#social-view"]) $(id).classList.add("hidden");
   document.body.classList.remove("in-detail");
   const current = params();
@@ -189,7 +190,6 @@ function bindShell() {
   }
   $("#detail-back").addEventListener("click", () => navigate({}));
   $("#activity-button").addEventListener("click", openActivity);
-  window.addEventListener("popstate", () => render().catch(fail));
   bindChat();
   bindSettings();
   bindSaved(showTranscript);
@@ -212,6 +212,7 @@ async function boot() {
   }
   setCsrf(status.csrfToken);
   bindShell();
+  installBackModel();
   const { assistants } = await request("/api/personal-assistants");
   app.assistants = assistants;
   await loadSocial();
