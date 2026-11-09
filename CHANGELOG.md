@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.247.1 — 2026-11-09
+
+- Kept browser sign-in popups dismissible while connecting, with a retry button when the browser machine is unavailable.
+
 ## 2.247.0 — 2026-11-08
 
 - Added Settings → System AI for internal agent choices, saved system decision credentials and login profiles, shared with trusted twins without exposing keys to project agents.

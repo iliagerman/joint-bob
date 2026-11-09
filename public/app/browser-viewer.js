@@ -62,6 +62,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
           <button class="primary" type="button" data-testid="browser-login-done">Done</button>
           <button class="ghost compact" type="button" data-testid="browser-login-expand" aria-pressed="false">Full screen</button>
           <button class="ghost compact" type="button" data-testid="browser-login-dismiss">Not now</button>
+          <button class="ghost compact" type="button" data-testid="browser-login-retry" hidden>Retry connection</button>
         </div>
       </section>
       <div class="browser-setup">
@@ -236,7 +237,14 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   function render() {
     updateLink();
     const request = session?.loginRequest;
-    get("login-notice").hidden = !request;
+    get("login-notice").hidden = !request && !loginMode;
+    get("login-retry").hidden = !loginMode || Boolean(session);
+    get("login-retry").disabled = busy;
+    if (loginMode && !session) {
+      part("login-label").textContent = "Connecting to sign-in browser…";
+      part("login-help").textContent = "You can dismiss this popup without resuming the agent, or retry if the browser machine is unavailable.";
+      part("frame-hint").textContent = "Connecting to the browser on its original machine…";
+    }
     if (request) {
       part("login-label").textContent = request.label || session.profileLabel || "Browser sign-in";
       part("login-origin").textContent = request.expectedOrigin || "";
@@ -924,6 +932,8 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     for (const selector of [".browser-setup", ".browser-machines", "[data-testid='browser-profiles-details']", "[data-testid='browser-open-tab']"]) root.querySelector(selector)?.setAttribute("hidden", "");
   }
   updateLink(); controls();
+  if (loginMode) render();
+  get("login-retry").addEventListener("click", () => void refresh());
   if (!identity?.conversationId && !sessionId) {
     error("Open an existing conversation before starting its browser."); get("session-status").textContent = "No conversation selected.";
   } else void refresh();
