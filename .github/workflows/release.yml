@@ -147,6 +147,13 @@ jobs:
           files: |
             joint-bob.tar.gz
             joint-bob.tar.gz.sha256
+      - name: Mirror release for existing installations
+        if: github.repository == 'iliagerman/joint-bob' && vars.LEGACY_RELEASE_REPOSITORY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEGACY_RELEASE_TOKEN: ${{ secrets.LEGACY_RELEASE_TOKEN }}
+          LEGACY_RELEASE_REPOSITORY: ${{ vars.LEGACY_RELEASE_REPOSITORY }}
+        run: node scripts/mirror-release.mjs
       - name: Publish to npm when configured
         if: steps.release.outputs.publish == 'true' && vars.NPM_PUBLISH_ENABLED == 'true'
         run: |
